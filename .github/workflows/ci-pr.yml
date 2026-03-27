@@ -17,12 +17,12 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref }}
         run: |
-          PATTERN='^(feature|fix|chore|docs|refactor|test)/.+'
+          PATTERN='^(feature|fix|chore|docs|refactor|test|spec|design|research)/.+'
           if [[ "$BRANCH" =~ $PATTERN ]]; then
             echo "Branch name OK: $BRANCH"
           else
             echo "::error::Branch name '$BRANCH' does not match required pattern."
-            echo "::error::Expected format: feature/<slug>, fix/<slug>, chore/<slug>, docs/<slug>, refactor/<slug>, or test/<slug>"
+            echo "::error::Expected format: feature/<slug>, fix/<slug>, chore/<slug>, docs/<slug>, refactor/<slug>, test/<slug>, spec/<slug>, design/<slug>, or research/<slug>"
             exit 1
           fi
 
@@ -34,13 +34,13 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          PATTERN='^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .+'
+          PATTERN='^(feat|fix|docs|style|refactor|test|chore|spec|design|research)(\(.+\))?: .+'
           if [[ "$PR_TITLE" =~ $PATTERN ]]; then
             echo "PR title OK: $PR_TITLE"
           else
             echo "::error::PR title '$PR_TITLE' does not follow Conventional Commits format."
             echo "::error::Expected: <type>(<scope>): <description>"
-            echo "::error::Types: feat, fix, docs, style, refactor, test, chore"
+            echo "::error::Types: feat, fix, docs, style, refactor, test, chore, spec, design, research"
             echo "::error::Example: feat(gameplay): add player jump mechanic"
             exit 1
           fi
