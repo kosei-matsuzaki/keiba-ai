@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Game Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO(engine-selection): Replace this placeholder after Issue #1 is resolved.
+      # --- Unity ---
+      # - name: Build (Unity)
+      #   uses: game-ci/unity-builder@v4
+      #   with:
+      #     targetPlatform: StandaloneWindows64
+      #     unityVersion: auto
+      #   env:
+      #     UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      #     UNITY_EMAIL:   ${{ secrets.UNITY_EMAIL }}
+      #     UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      #
+      # --- Godot ---
+      # - name: Build (Godot)
+      #   uses: firebelley/godot-export@v6
+      #   with:
+      #     godot_executable_download_url: https://github.com/godotengine/godot/releases/download/4.x.x-stable/Godot_v4.x.x-stable_linux.x86_64.zip
+      #     godot_export_templates_download_url: https://github.com/godotengine/godot/releases/download/4.x.x-stable/Godot_v4.x.x-stable_export_templates.tpz
+      #     relative_project_path: ./
+
+      - name: Placeholder (engine not yet selected)
+        run: |
+          echo "Build pipeline is a placeholder."
+          echo "Complete Issue #1 (engine selection) and update this workflow."
+          echo "See TODO comments in this file for Unity / Godot build steps."

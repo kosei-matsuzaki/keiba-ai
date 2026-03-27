@@ -1,0 +1,31 @@
+name: Docs Lint
+
+on:
+  push:
+    paths:
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run markdownlint
+        run: |
+          npx --yes markdownlint-cli@0.39.0 \
+            "docs/**/*.md" \
+            ".github/ISSUE_TEMPLATE/*.md" \
+            --config .markdownlint.json 2>/dev/null \
+            || npx --yes markdownlint-cli@0.39.0 \
+            "docs/**/*.md" \
+            ".github/ISSUE_TEMPLATE/*.md"

@@ -1,0 +1,20 @@
+name: Project Automation
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    name: Add to GitHub Project
+    runs-on: ubuntu-latest
+    # Requires GH_PROJECT_TOKEN secret (PAT with 'project' scope)
+    # Setup: Settings -> Secrets and variables -> Actions -> New repository secret
+    if: ${{ secrets.GH_PROJECT_TOKEN != '' }}
+    steps:
+      - uses: actions/add-to-project@v0.6.1
+        with:
+          project-url: https://github.com/users/kosei-matsuzaki/projects/1
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
