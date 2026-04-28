@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
+# Import all models so Base.metadata is fully populated
+import keiba_ai.db.models  # noqa: F401
+from keiba_ai.db.base import Base
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -28,3 +33,29 @@ def race_result_html() -> str:
 @pytest.fixture()
 def robots_txt() -> str:
     return (FIXTURES_DIR / "robots.txt").read_text(encoding="utf-8")
+
+
+# ── ORM fixtures ─────────────────────────────────────────────────────────────
+
+@pytest.fixture()
+def in_memory_engine():
+    """SQLite in-memory engine with all tables created."""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    # Enable FK enforcement for in-memory DB
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _set_fk(dbapi_conn, _):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(engine)
+    yield engine
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+@pytest.fixture()
+def db_session(in_memory_engine):
+    """ORM Session over in-memory engine. Each test gets a fresh session."""
+    with Session(in_memory_engine) as session:
+        yield session
