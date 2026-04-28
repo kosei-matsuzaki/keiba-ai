@@ -61,9 +61,11 @@ def evaluate(
     top1_hits: list[int] = []
     place_hits: list[int] = []
 
-    # Betting simulation
+    # Betting simulation — payback rate convention (回収率): gross_payout / invested
+    # 1.00 = break-even, 1.10 = 10% profit, 0.80 = 20% loss
     win_bets = 0
-    win_returns = 0.0
+    win_gross_payout = 0.0  # 払戻金合計（賭け金は含まない）
+    win_invested = 0.0      # 賭け金合計
 
     race_ids = frame["race_id"].unique()
     for race_id in race_ids:
@@ -103,9 +105,9 @@ def evaluate(
             ev = row["win_prob"] * odds
             if ev > WIN_EV_THRESHOLD:
                 win_bets += 1
+                win_invested += 100
                 if row.get("finish_position") == 1:
-                    win_returns += odds * 100
-                win_returns -= 100  # cost of bet
+                    win_gross_payout += odds * 100
 
     n_races = len(ndcg1_list)
     metrics = {
@@ -113,9 +115,13 @@ def evaluate(
         "ndcg1": float(np.mean(ndcg1_list)) if ndcg1_list else float("nan"),
         "ndcg3": float(np.mean(ndcg3_list)) if ndcg3_list else float("nan"),
         "top1_hit": float(np.mean(top1_hits)) if top1_hits else float("nan"),
+        # 上位 3 推奨のうち少なくとも 1 頭が実際に 3 着以内に入ったレース割合
         "place_hit": float(np.mean(place_hits)) if place_hits else float("nan"),
         "win_bets": win_bets,
-        "roi_win": (win_returns / (win_bets * 100)) if win_bets > 0 else float("nan"),
+        "win_invested": win_invested,
+        "win_gross_payout": win_gross_payout,
+        # 回収率 = 払戻金合計 / 賭け金合計（1.00 が損益分岐）
+        "payback_win": (win_gross_payout / win_invested) if win_invested > 0 else float("nan"),
     }
 
     log.info("Evaluation metrics: %s", metrics)

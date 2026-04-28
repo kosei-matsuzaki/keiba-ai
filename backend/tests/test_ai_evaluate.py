@@ -30,10 +30,26 @@ def test_evaluate_returns_all_metric_keys(trained_scenario):
     db_file, model_dir = trained_scenario
     metrics = evaluate(model_path=model_dir, db=db_file)
 
-    required_keys = {"ndcg1", "ndcg3", "top1_hit", "place_hit", "roi_win", "n_races"}
+    required_keys = {
+        "ndcg1", "ndcg3", "top1_hit", "place_hit",
+        "win_bets", "win_invested", "win_gross_payout", "payback_win", "n_races",
+    }
     assert required_keys.issubset(metrics.keys()), (
         f"Missing keys: {required_keys - metrics.keys()}"
     )
+
+
+def test_evaluate_payback_semantics(trained_scenario):
+    """payback_win = gross_payout / invested。1.0 が損益分岐点。"""
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+
+    if metrics["win_bets"] == 0:
+        return  # ベットが発生しない synthetic データの場合はスキップ
+
+    expected = metrics["win_gross_payout"] / metrics["win_invested"]
+    assert abs(metrics["payback_win"] - expected) < 1e-9
+    assert metrics["payback_win"] >= 0.0  # 払戻金は非負
 
 
 def test_evaluate_n_races_positive(trained_scenario):

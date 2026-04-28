@@ -214,7 +214,16 @@ def _cli() -> None:
     parser.add_argument("--train-end", default=None, help="Training end date YYYY-MM-DD")
     parser.add_argument("--valid-months", type=int, default=12, help="Validation window (months)")
     parser.add_argument("--test-months", type=int, default=6, help="Test window (months)")
-    parser.add_argument("--params-json", type=Path, default=None, help="JSON file with LGB params")
+    parser.add_argument(
+        "--params-json",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file overriding LightGBM params. "
+            "Default uses synthetic-friendly min_data_in_leaf=5; "
+            'for production data set {"min_data_in_leaf": 50}.'
+        ),
+    )
     args = parser.parse_args()
 
     result = train(
