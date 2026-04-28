@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-    wait_fixed,
-)
 
 from keiba_ai.core.config import Settings
 from keiba_ai.core.logging import get_logger
@@ -17,24 +12,16 @@ from keiba_ai.scraper import cache as cache_module
 from keiba_ai.scraper import stop_flag as stop_flag_module
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
 from keiba_ai.scraper.robots import RobotsCache
+from keiba_ai.scraper.stop_flag import ScraperStopped
 
 logger = get_logger(__name__)
 
-_RETRY_ATTEMPTS = 4
-_BACKOFF_MULTIPLIER = 2
+# 5xx / Timeout 用の指数バックオフ秒数。リスト長 = 最大リトライ回数
+_BACKOFF_DELAYS = (4, 8, 16, 30)
+
+# 429 受信時のペナルティ秒と最大リトライ回数（5xx の retry slot とは独立）
 _PENALTY_429_SECONDS = 60
-
-
-def _is_retryable(exc: BaseException) -> bool:
-    if isinstance(exc, httpx.TimeoutException):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
-    return False
-
-
-def _is_429(exc: BaseException) -> bool:
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
+_MAX_429_RETRIES = 3
 
 
 class NetkeibaClient:
@@ -74,7 +61,6 @@ class NetkeibaClient:
             raise PermissionError(f"robots.txt disallows: {url}")
 
         if stop_flag_module.is_stopped():
-            from keiba_ai.scraper.stop_flag import ScraperStopped
             raise ScraperStopped("stop flag set before fetching")
 
         html = await self._fetch_with_retry(url)
@@ -82,15 +68,12 @@ class NetkeibaClient:
         return html
 
     async def _fetch_with_retry(self, url: str) -> str:
-        """Perform rate-limited HTTP GET with exponential backoff retry."""
-        import asyncio
+        """Rate-limited GET with exponential backoff for 5xx/Timeout and a separate 429 penalty loop."""
+        backoff_idx = 0
+        n_429 = 0
 
-        last_exc: Exception | None = None
-        delays = [4, 8, 16, 30]
-
-        for attempt, delay in enumerate(delays + [None], start=1):  # type: ignore[arg-type]
+        while True:
             if stop_flag_module.is_stopped():
-                from keiba_ai.scraper.stop_flag import ScraperStopped
                 raise ScraperStopped("stop flag set during retry loop")
 
             await self._rate.acquire()
@@ -101,24 +84,36 @@ class NetkeibaClient:
                     follow_redirects=True,
                     timeout=30.0,
                 )
-                if response.status_code == 429:
-                    logger.warning("429 on %s — sleeping %ds", url, _PENALTY_429_SECONDS)
-                    await asyncio.sleep(_PENALTY_429_SECONDS)
-                    last_exc = httpx.HTTPStatusError(
-                        "429", request=response.request, response=response
-                    )
-                    continue
-                response.raise_for_status()
-                return response.text
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
-                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-                    raise  # 4xx (except 429 handled above) — do not retry
-                last_exc = exc
-                if delay is not None:
-                    logger.warning(
-                        "Attempt %d failed for %s: %s — retrying in %ds",
-                        attempt, url, exc, delay,
-                    )
-                    await asyncio.sleep(delay)
+            except httpx.TimeoutException:
+                if backoff_idx >= len(_BACKOFF_DELAYS):
+                    raise
+                delay = _BACKOFF_DELAYS[backoff_idx]
+                backoff_idx += 1
+                logger.warning("Timeout on %s — retrying in %ds", url, delay)
+                await asyncio.sleep(delay)
+                continue
 
-        raise last_exc or RuntimeError(f"All retries exhausted for {url}")
+            status = response.status_code
+
+            if status == 429:
+                n_429 += 1
+                if n_429 > _MAX_429_RETRIES:
+                    response.raise_for_status()
+                logger.warning(
+                    "429 on %s (attempt %d/%d) — sleeping %ds",
+                    url, n_429, _MAX_429_RETRIES, _PENALTY_429_SECONDS,
+                )
+                await asyncio.sleep(_PENALTY_429_SECONDS)
+                continue
+
+            if 500 <= status < 600:
+                if backoff_idx >= len(_BACKOFF_DELAYS):
+                    response.raise_for_status()
+                delay = _BACKOFF_DELAYS[backoff_idx]
+                backoff_idx += 1
+                logger.warning("HTTP %d on %s — retrying in %ds", status, url, delay)
+                await asyncio.sleep(delay)
+                continue
+
+            response.raise_for_status()
+            return response.text
