@@ -32,7 +32,13 @@ def _make_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 @contextmanager
 def session_scope(engine: Engine) -> Iterator[Session]:
-    """Context manager that provides a Session, committing on success and rolling back on error."""
+    """Single-transaction Session: commit on success, rollback on error.
+
+    Use one scope per logical unit of work (e.g. a single race ingest). Loaded
+    attributes remain accessible after commit (expire_on_commit=False) but
+    relationship lazy-loads outside the scope will fail — re-fetch in a new
+    scope instead.
+    """
     factory = _make_session_factory(engine)
     session = factory()
     try:

@@ -23,4 +23,6 @@ class ModelRun(Base):
     valid_range: Mapped[str | None] = mapped_column(String)
     metrics_json: Mapped[str | None] = mapped_column(String)
     notes: Mapped[str | None] = mapped_column(String)
-    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0/1 flag
+    is_active: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )  # 0/1 flag — model と migration の default を揃える
