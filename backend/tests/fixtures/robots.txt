@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /member/
+Disallow: /cart/
+Disallow: /search/
+
+User-agent: BadBot
+Disallow: /
