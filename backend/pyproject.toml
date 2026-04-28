@@ -9,6 +9,11 @@ dependencies = [
     "lxml>=5.2",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
+    "lightgbm>=4.0",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "shap>=0.45",
 ]
 
 [project.scripts]
