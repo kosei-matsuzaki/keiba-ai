@@ -1,33 +1,51 @@
-"""SQLite connection helpers."""
+"""SQLAlchemy engine and session factory.
+
+Replaces the sqlite3-based connect/transaction helpers from M2.
+"""
 
 from __future__ import annotations
 
-import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
+
+from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    """Open a SQLite connection with sensible defaults.
+def make_engine(db_path: Path) -> Engine:
+    """Create a SQLite engine with FK enforcement and WAL journal mode."""
+    url = f"sqlite:///{db_path}"
+    engine = create_engine(url, echo=False, future=True)
 
-    - row_factory = sqlite3.Row  (column access by name)
-    - PRAGMA foreign_keys = ON
-    - PRAGMA journal_mode = WAL  (better concurrent read access)
-    """
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn, _connection_record):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+        dbapi_conn.execute("PRAGMA journal_mode=WAL")
+
+    return engine
+
+
+def _make_session_factory(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 @contextmanager
-def transaction(conn: sqlite3.Connection) -> Generator[sqlite3.Connection, None, None]:
-    """Context manager that commits on success and rolls back on exception."""
+def session_scope(engine: Engine) -> Iterator[Session]:
+    """Single-transaction Session: commit on success, rollback on error.
+
+    Use one scope per logical unit of work (e.g. a single race ingest). Loaded
+    attributes remain accessible after commit (expire_on_commit=False) but
+    relationship lazy-loads outside the scope will fail — re-fetch in a new
+    scope instead.
+    """
+    factory = _make_session_factory(engine)
+    session = factory()
     try:
-        yield conn
-        conn.commit()
+        yield session
+        session.commit()
     except Exception:
-        conn.rollback()
+        session.rollback()
         raise
+    finally:
+        session.close()
