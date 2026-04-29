@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.predict import predict_race
@@ -38,9 +39,9 @@ def get_predictions(
     result_df = predict_race(model, frame)
 
     # Resolve model_runs id for the active model
-    active_run = (
-        session.query(ModelRun).filter(ModelRun.is_active == 1).first()
-    )
+    active_run = session.scalars(
+        select(ModelRun).where(ModelRun.is_active == 1).limit(1)
+    ).first()
     model_id = active_run.id if active_run else 0
 
     predictions = [

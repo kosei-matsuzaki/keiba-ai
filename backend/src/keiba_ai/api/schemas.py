@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class HealthResponse(BaseModel):
@@ -148,5 +148,5 @@ class TrainRequest(BaseModel):
 # ── Scraper run request schema ────────────────────────────────────────────────
 
 class ScraperRunRequest(BaseModel):
-    date: str
-    limit: int | None = None
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")
+    limit: int | None = Field(default=None, ge=1)

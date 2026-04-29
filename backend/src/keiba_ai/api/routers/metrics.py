@@ -7,6 +7,7 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from keiba_ai.api.deps import get_session
@@ -22,14 +23,14 @@ def get_metrics_summary(
     range: str = "30d",  # noqa: A002 — parameter name matches API contract
 ) -> MetricsSummary:
     # Return metrics from the currently active model run
-    active_run = session.query(ModelRun).filter(ModelRun.is_active == 1).first()
+    active_run = session.scalars(
+        select(ModelRun).where(ModelRun.is_active == 1).limit(1)
+    ).first()
     if active_run is None:
         # Fall back to the most recent run
-        active_run = (
-            session.query(ModelRun)
-            .order_by(ModelRun.created_at.desc())
-            .first()
-        )
+        active_run = session.scalars(
+            select(ModelRun).order_by(ModelRun.created_at.desc()).limit(1)
+        ).first()
     if active_run is None:
         return MetricsSummary(
             ndcg1=None,
@@ -73,12 +74,9 @@ def get_metrics_timeseries(
     }
     json_key = _key_map.get(metric, metric)
 
-    runs = (
-        session.query(ModelRun)
-        .order_by(ModelRun.created_at)
-        .limit(100)
-        .all()
-    )
+    runs = session.scalars(
+        select(ModelRun).order_by(ModelRun.created_at).limit(100)
+    ).all()
 
     points: list[TimeseriesPoint] = []
     for run in runs:

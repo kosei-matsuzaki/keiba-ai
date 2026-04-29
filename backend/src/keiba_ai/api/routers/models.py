@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.registry import set_active
@@ -47,7 +49,9 @@ def _run_to_schema(run: ModelRun) -> ModelMeta:
 def get_models(
     session: Annotated[Session, Depends(get_session)],
 ) -> list[ModelMeta]:
-    runs = session.query(ModelRun).order_by(ModelRun.created_at.desc()).all()
+    runs = session.scalars(
+        select(ModelRun).order_by(ModelRun.created_at.desc())
+    ).all()
     return [_run_to_schema(r) for r in runs]
 
 
@@ -71,7 +75,6 @@ def activate_model(
     if run is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
-    from pathlib import Path
     set_active(Path(run.model_path), session)
     # Refresh after flush so is_active reflects the change
     session.refresh(run)

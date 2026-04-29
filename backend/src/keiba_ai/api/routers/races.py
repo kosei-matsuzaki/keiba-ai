@@ -55,7 +55,7 @@ def get_upcoming_races(
         .where(Race.date >= today, Race.date <= until)
         .order_by(Race.date)
     )
-    races = list(session.scalars(stmt).all())
+    races = session.scalars(stmt).all()
     return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
 
 
