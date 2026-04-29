@@ -99,9 +99,10 @@ def test_predictions_success(
         "place_prob": [0.7, 0.5, 0.3],
     })
 
+    # fake_df does not include top_features — router uses list(row.get(...) or []) fallback
     with (
         patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race", return_value=fake_df),
+        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/PRED_RACE1")
@@ -113,4 +114,4 @@ def test_predictions_success(
     for p in data["predictions"]:
         assert "win_prob" in p
         assert "place_prob" in p
-        assert p["top_features"] == []
+        assert isinstance(p["top_features"], list)

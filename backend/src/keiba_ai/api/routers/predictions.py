@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.predict import predict_race
+from keiba_ai.ai.predict import predict_race_with_shap
 from keiba_ai.ai.registry import get_active, load_model
 from keiba_ai.api.deps import get_session
 from keiba_ai.api.schemas import HorsePrediction, PredictionResponse
@@ -36,7 +36,7 @@ def get_predictions(
         raise HTTPException(status_code=404, detail=f"No entries found for race {race_id!r}")
 
     model = load_model(active_path)
-    result_df = predict_race(model, frame)
+    result_df = predict_race_with_shap(model, frame)
 
     # Resolve model_runs id for the active model
     active_run = session.scalars(
@@ -50,7 +50,7 @@ def get_predictions(
             score=float(row["score"]),
             win_prob=float(row["win_prob"]),
             place_prob=float(row["place_prob"]),
-            top_features=[],  # SHAP is M6+
+            top_features=list(row.get("top_features") or []),
         )
         for _, row in result_df.iterrows()
     ]

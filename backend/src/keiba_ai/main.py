@@ -18,6 +18,7 @@ from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.routers import (
     health,
     internal,
+    jobs,
     metrics,
     models,
     predictions,
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     application.include_router(metrics.router, prefix="/api")
     application.include_router(models.router, prefix="/api")
     application.include_router(scraper.router, prefix="/api")
+    application.include_router(jobs.router, prefix="/api")
     application.include_router(settings.router, prefix="/api")
     application.include_router(internal.router, prefix="/api")
 
