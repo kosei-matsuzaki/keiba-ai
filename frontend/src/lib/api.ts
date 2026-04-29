@@ -12,8 +12,12 @@ import type {
   MetricsSummary,
   MetricsTimeseries,
   ModelMeta,
+  JobAccepted,
   ScraperStatus,
+  ScraperRunRequest,
   SettingsResponse,
+  SettingsUpdate,
+  TrainRequest,
 } from '@/types/api';
 
 const API_BASE = import.meta.env.VITE_KEIBA_API_BASE_URL ?? 'http://127.0.0.1:8765';
@@ -54,10 +58,30 @@ export function fetchModel(id: number): Promise<ModelMeta> {
   return apiClient.get(`models/${id}`).json<ModelMeta>();
 }
 
+export function activateModel(id: number): Promise<ModelMeta> {
+  return apiClient.post(`models/${id}/activate`).json<ModelMeta>();
+}
+
+export function trainModel(body: TrainRequest): Promise<JobAccepted> {
+  return apiClient.post('models/train', { json: body }).json<JobAccepted>();
+}
+
 export function fetchScraperStatus(): Promise<ScraperStatus> {
   return apiClient.get('scraper/status').json<ScraperStatus>();
 }
 
+export function runScraper(body: ScraperRunRequest): Promise<JobAccepted> {
+  return apiClient.post('scraper/run', { json: body }).json<JobAccepted>();
+}
+
+export function stopScraper(): Promise<{ stopped: boolean }> {
+  return apiClient.post('scraper/stop').json<{ stopped: boolean }>();
+}
+
 export function fetchSettings(): Promise<SettingsResponse> {
   return apiClient.get('settings').json<SettingsResponse>();
+}
+
+export function updateSettings(body: SettingsUpdate): Promise<SettingsResponse> {
+  return apiClient.put('settings', { json: body }).json<SettingsResponse>();
 }
