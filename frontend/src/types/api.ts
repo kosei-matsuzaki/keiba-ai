@@ -111,6 +111,17 @@ export interface JobAccepted {
   started_at: string;
 }
 
+export interface TrainRequest {
+  train_end?: string;
+  valid_months?: number;
+  test_months?: number;
+}
+
+export interface ScraperRunRequest {
+  date?: string;
+  limit?: number;
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {
