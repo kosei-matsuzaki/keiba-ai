@@ -1,9 +1,13 @@
 /**
  * API client using ky.
- * Base URL is read from VITE_KEIBA_API_BASE_URL env var, defaulting to the
- * development backend address.
+ *
+ * The ky instance is lazily initialized on the first call so that the base
+ * URL can be resolved asynchronously — either from the Tauri invoke
+ * 'get_api_port' command (Tauri runtime) or from the VITE_KEIBA_API_BASE_URL
+ * env var (plain browser / dev server).
  */
 import ky from 'ky';
+import { getApiBaseUrl } from './tauri';
 import type {
   HealthResponse,
   UpcomingRacesResponse,
@@ -20,68 +24,84 @@ import type {
   TrainRequest,
 } from '@/types/api';
 
-const API_BASE = import.meta.env.VITE_KEIBA_API_BASE_URL ?? 'http://127.0.0.1:8765';
+// Lazily created ky instance — null until the first API call.
+let _client: ReturnType<typeof ky.create> | null = null;
 
-export const apiClient = ky.create({ prefixUrl: `${API_BASE}/api`, retry: 0 });
+async function getClient(): Promise<ReturnType<typeof ky.create>> {
+  if (!_client) {
+    const baseUrl = await getApiBaseUrl();
+    _client = ky.create({ prefixUrl: `${baseUrl}/api`, retry: 0 });
+  }
+  return _client;
+}
 
 export function fetchHealth(): Promise<HealthResponse> {
-  return apiClient.get('health').json<HealthResponse>();
+  return getClient().then((c) => c.get('health').json<HealthResponse>());
 }
 
 export function fetchUpcomingRaces(days = 7): Promise<UpcomingRacesResponse> {
-  return apiClient.get('races/upcoming', { searchParams: { days } }).json<UpcomingRacesResponse>();
+  return getClient().then((c) =>
+    c.get('races/upcoming', { searchParams: { days } }).json<UpcomingRacesResponse>()
+  );
 }
 
 export function fetchRaceDetail(raceId: string): Promise<RaceDetail> {
-  return apiClient.get(`races/${raceId}`).json<RaceDetail>();
+  return getClient().then((c) => c.get(`races/${raceId}`).json<RaceDetail>());
 }
 
 export function fetchPredictions(raceId: string): Promise<PredictionResponse> {
-  return apiClient.get(`predictions/${raceId}`).json<PredictionResponse>();
+  return getClient().then((c) => c.get(`predictions/${raceId}`).json<PredictionResponse>());
 }
 
 export function fetchMetricsSummary(range = '30d'): Promise<MetricsSummary> {
-  return apiClient.get('metrics/summary', { searchParams: { range } }).json<MetricsSummary>();
+  return getClient().then((c) =>
+    c.get('metrics/summary', { searchParams: { range } }).json<MetricsSummary>()
+  );
 }
 
-export function fetchMetricsTimeseries(metric = 'ndcg3', range = '180d'): Promise<MetricsTimeseries> {
-  return apiClient
-    .get('metrics/timeseries', { searchParams: { metric, range } })
-    .json<MetricsTimeseries>();
+export function fetchMetricsTimeseries(
+  metric = 'ndcg3',
+  range = '180d'
+): Promise<MetricsTimeseries> {
+  return getClient().then((c) =>
+    c
+      .get('metrics/timeseries', { searchParams: { metric, range } })
+      .json<MetricsTimeseries>()
+  );
 }
 
 export function fetchModels(): Promise<ModelMeta[]> {
-  return apiClient.get('models').json<ModelMeta[]>();
+  return getClient().then((c) => c.get('models').json<ModelMeta[]>());
 }
 
 export function fetchModel(id: number): Promise<ModelMeta> {
-  return apiClient.get(`models/${id}`).json<ModelMeta>();
+  return getClient().then((c) => c.get(`models/${id}`).json<ModelMeta>());
 }
 
 export function activateModel(id: number): Promise<ModelMeta> {
-  return apiClient.post(`models/${id}/activate`).json<ModelMeta>();
+  return getClient().then((c) => c.post(`models/${id}/activate`).json<ModelMeta>());
 }
 
 export function trainModel(body: TrainRequest): Promise<JobAccepted> {
-  return apiClient.post('models/train', { json: body }).json<JobAccepted>();
+  return getClient().then((c) => c.post('models/train', { json: body }).json<JobAccepted>());
 }
 
 export function fetchScraperStatus(): Promise<ScraperStatus> {
-  return apiClient.get('scraper/status').json<ScraperStatus>();
+  return getClient().then((c) => c.get('scraper/status').json<ScraperStatus>());
 }
 
 export function runScraper(body: ScraperRunRequest): Promise<JobAccepted> {
-  return apiClient.post('scraper/run', { json: body }).json<JobAccepted>();
+  return getClient().then((c) => c.post('scraper/run', { json: body }).json<JobAccepted>());
 }
 
 export function stopScraper(): Promise<{ stopped: boolean }> {
-  return apiClient.post('scraper/stop').json<{ stopped: boolean }>();
+  return getClient().then((c) => c.post('scraper/stop').json<{ stopped: boolean }>());
 }
 
 export function fetchSettings(): Promise<SettingsResponse> {
-  return apiClient.get('settings').json<SettingsResponse>();
+  return getClient().then((c) => c.get('settings').json<SettingsResponse>());
 }
 
 export function updateSettings(body: SettingsUpdate): Promise<SettingsResponse> {
-  return apiClient.put('settings', { json: body }).json<SettingsResponse>();
+  return getClient().then((c) => c.put('settings', { json: body }).json<SettingsResponse>());
 }
