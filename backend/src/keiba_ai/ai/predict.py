@@ -84,7 +84,21 @@ def predict_race_with_shap(
     X = _prepare_features(frame)
 
     explainer = shap.TreeExplainer(model)
-    shap_values: np.ndarray = explainer.shap_values(X)
+    raw_shap = explainer.shap_values(X)
+
+    # LightGBM lambdarank は (n_samples, n_features) の 2D を返すが、
+    # multi-output モデル（例: 多クラス分類）では list of 2D / 3D が返る場合があるため
+    # 第 1 出力 (primary) を採用するガードを入れる。
+    if isinstance(raw_shap, list):
+        shap_values = np.asarray(raw_shap[0])
+    else:
+        shap_values = np.asarray(raw_shap)
+    if shap_values.ndim == 3:
+        shap_values = shap_values[..., 0]
+    if shap_values.ndim != 2:
+        raise ValueError(
+            f"Unexpected SHAP value shape {shap_values.shape}; expected 2D (n_samples, n_features)"
+        )
 
     top_features_list: list[list[str]] = []
     for i in range(len(X)):

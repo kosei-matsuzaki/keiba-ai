@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
+
+# netkeiba の race_id は JST 基準で YYYYMMDD を含むので JST 起算の date を使う
+_JST = ZoneInfo("Asia/Tokyo")
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -34,7 +38,7 @@ def _count_missing_dates(session: Session, days: int = 30) -> int:
     A day is considered 'completed' if at least one result URL for that date's
     compact prefix (YYYYMMDD) has status='ok' in scrape_log.
     """
-    today = date.today()
+    today = datetime.now(_JST).date()
     start = today - timedelta(days=days - 1)  # inclusive range of `days` days
 
     # Collect distinct date prefixes that have at least one 'ok' entry.

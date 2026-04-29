@@ -153,9 +153,12 @@ def evaluate(
                     place_bets += 1
                     place_invested += 100
                     finish_pos = row.get("finish_position")
+                    # 同着（finish_position が小数 = 1.5/2.5 等）は日本競馬で複勝対象外（返還）
+                    # のため整数着順のみカウントし、複勝 ROI を過大評価しないようにする。
                     if (
                         finish_pos is not None
                         and not pd.isna(finish_pos)
+                        and float(finish_pos) == int(finish_pos)
                         and int(finish_pos) in payout_place_map
                     ):
                         place_gross_payout += payout_place_map[int(finish_pos)]
