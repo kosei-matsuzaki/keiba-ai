@@ -150,3 +150,14 @@ class TrainRequest(BaseModel):
 class ScraperRunRequest(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")
     limit: int | None = Field(default=None, ge=1)
+
+
+# ── Job info schema ───────────────────────────────────────────────────────────
+
+class JobInfoSchema(BaseModel):
+    job_id: str
+    type: str
+    status: str
+    started_at: str
+    finished_at: str | None = None
+    error: str | None = None

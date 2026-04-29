@@ -113,6 +113,7 @@ def _build_entry_row(
         "horse_id": entry.horse_id,
         "date": race.date,
         "finish_position": entry.finish_position,
+        "payout_place": race.payout_place,
     }
     row.update(race_feats)
     row.update(odds_feats)

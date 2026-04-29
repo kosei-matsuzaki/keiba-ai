@@ -33,6 +33,22 @@ WIN_EV_THRESHOLD = 1.1   # Expected value threshold for win bet
 PLACE_EV_THRESHOLD = 1.05  # Expected value threshold for place bet
 
 
+def _parse_payout_place(json_str: str | None) -> dict[int, int]:
+    """Parse payout_place JSON string into {finish_position: payout_yen} dict.
+
+    Expected format: '{"1": 120, "2": 240, "3": 180}' where values are
+    payout per 100 yen bet (Japanese convention).
+    Returns empty dict if json_str is None or unparsable.
+    """
+    if not json_str:
+        return {}
+    try:
+        raw = json.loads(json_str)
+        return {int(k): int(v) for k, v in raw.items()}
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {}
+
+
 def evaluate(
     model_path: Path,
     db: Path | None = None,
@@ -66,6 +82,11 @@ def evaluate(
     win_bets = 0
     win_gross_payout = 0.0  # 払戻金合計（賭け金は含まない）
     win_invested = 0.0      # 賭け金合計
+
+    # Place betting simulation (複勝)
+    place_bets = 0
+    place_gross_payout = 0.0
+    place_invested = 0.0
 
     race_ids = frame["race_id"].unique()
     for race_id in race_ids:
@@ -109,6 +130,36 @@ def evaluate(
                 if row.get("finish_position") == 1:
                     win_gross_payout += odds * 100
 
+        # Place betting (複勝): requires payout_place data on the race frame
+        # race_frame may carry payout_place if the training frame includes it.
+        # Look it up from the race_frame column if present.
+        payout_place_raw: str | None = None
+        if "payout_place" in race_frame.columns:
+            vals = race_frame["payout_place"].dropna()
+            if not vals.empty:
+                payout_place_raw = vals.iloc[0]
+
+        payout_place_map = _parse_payout_place(payout_place_raw)
+        if payout_place_map:
+            # Determine the minimum payout across 1st/2nd/3rd place for EV calculation.
+            # Using min payout gives a conservative estimate of expected return.
+            min_payout = min(payout_place_map.values())
+            # min_payout is in yen per 100 yen bet, so odds = min_payout / 100
+            min_odds = min_payout / 100.0
+
+            for _, row in preds.iterrows():
+                ev = row["place_prob"] * min_odds
+                if ev > PLACE_EV_THRESHOLD:
+                    place_bets += 1
+                    place_invested += 100
+                    finish_pos = row.get("finish_position")
+                    if (
+                        finish_pos is not None
+                        and not pd.isna(finish_pos)
+                        and int(finish_pos) in payout_place_map
+                    ):
+                        place_gross_payout += payout_place_map[int(finish_pos)]
+
     n_races = len(ndcg1_list)
     metrics = {
         "n_races": n_races,
@@ -122,6 +173,13 @@ def evaluate(
         "win_gross_payout": win_gross_payout,
         # 回収率 = 払戻金合計 / 賭け金合計（1.00 が損益分岐）
         "payback_win": (win_gross_payout / win_invested) if win_invested > 0 else float("nan"),
+        # 複勝回収率
+        "place_bets": place_bets,
+        "place_invested": place_invested,
+        "place_gross_payout": place_gross_payout,
+        "payback_place": (
+            (place_gross_payout / place_invested) if place_invested > 0 else float("nan")
+        ),
     }
 
     log.info("Evaluation metrics: %s", metrics)
