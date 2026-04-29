@@ -24,15 +24,19 @@ import type {
   TrainRequest,
 } from '@/types/api';
 
-// Lazily created ky instance — null until the first API call.
-let _client: ReturnType<typeof ky.create> | null = null;
+// Cache the in-flight construction Promise (not the resolved client) so that
+// concurrent first-call invocations share a single ky instance and avoid
+// duplicate base-URL resolution.
+let _clientPromise: Promise<ReturnType<typeof ky.create>> | null = null;
 
-async function getClient(): Promise<ReturnType<typeof ky.create>> {
-  if (!_client) {
-    const baseUrl = await getApiBaseUrl();
-    _client = ky.create({ prefixUrl: `${baseUrl}/api`, retry: 0 });
+function getClient(): Promise<ReturnType<typeof ky.create>> {
+  if (!_clientPromise) {
+    _clientPromise = (async () => {
+      const baseUrl = await getApiBaseUrl();
+      return ky.create({ prefixUrl: `${baseUrl}/api`, retry: 0 });
+    })();
   }
-  return _client;
+  return _clientPromise;
 }
 
 export function fetchHealth(): Promise<HealthResponse> {

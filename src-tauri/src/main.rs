@@ -17,24 +17,15 @@ fn get_api_port(state: tauri::State<AppState>) -> u16 {
 }
 
 fn main() {
-    let port = sidecar::reserve_port().expect("Failed to reserve a free port for the API sidecar");
-
     tauri::Builder::default()
-        .setup(move |app| {
+        .setup(|app| {
             let handle = app.handle().clone();
 
-            let sidecar_handle =
-                sidecar::spawn(&handle, port).expect("Failed to spawn keiba-ai-backend sidecar");
-
-            // Wait up to 10 s for the backend health check to pass before
-            // the WebView becomes interactive (non-blocking in practice because
-            // setup runs before the main window is shown).
-            if !sidecar::wait_for_ready(port, 10_000, 200) {
-                eprintln!(
-                    "Warning: keiba-ai-backend did not become healthy within 10 s on port {}",
-                    port
-                );
-            }
+            // Reserve a port, spawn sidecar, and wait for /api/health.
+            // Retries up to 3 times with a fresh port to absorb port-race or
+            // slow-startup failures.
+            let (sidecar_handle, port) = sidecar::spawn_with_retry(&handle, 3, 10_000)
+                .expect("Failed to start keiba-ai-backend sidecar");
 
             app.manage(AppState {
                 api_port: port,

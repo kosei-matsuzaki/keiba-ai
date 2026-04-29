@@ -10,11 +10,61 @@ pub struct SidecarHandle {
 
 /// Bind to 127.0.0.1:0, record the assigned port, then drop the listener so
 /// the port is free when the sidecar process later binds to it.
+///
+/// There is a small race window between the listener being dropped and the
+/// sidecar binding to the port. In practice this is mitigated by the caller
+/// retrying via `spawn_with_retry` — if the sidecar fails to become healthy
+/// (e.g. another process grabbed the port), the caller obtains a fresh port.
 pub fn reserve_port() -> std::io::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     // listener is dropped here, releasing the port
     Ok(port)
+}
+
+/// Reserve a port, spawn the sidecar, and wait for it to become healthy.
+/// Retries up to `max_attempts` times with a fresh port if the sidecar fails
+/// to start (covers transient port races and slow startup).
+pub fn spawn_with_retry(
+    app: &AppHandle,
+    max_attempts: u32,
+    health_timeout_ms: u64,
+) -> Result<(SidecarHandle, u16), Box<dyn std::error::Error>> {
+    let mut last_err: Option<Box<dyn std::error::Error>> = None;
+
+    for attempt in 1..=max_attempts {
+        let port = match reserve_port() {
+            Ok(p) => p,
+            Err(e) => {
+                last_err = Some(Box::new(e));
+                continue;
+            }
+        };
+
+        let handle = match spawn(app, port) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("attempt {}/{}: spawn failed: {}", attempt, max_attempts, e);
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        if wait_for_ready(port, health_timeout_ms, 200) {
+            return Ok((handle, port));
+        }
+
+        eprintln!(
+            "attempt {}/{}: sidecar did not become healthy on port {} within {} ms — retrying",
+            attempt, max_attempts, port, health_timeout_ms
+        );
+        // Kill the unhealthy child before retrying with a new port.
+        shutdown(handle, port);
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        format!("sidecar failed to become healthy after {} attempts", max_attempts).into()
+    }))
 }
 
 /// Return the OS + arch target triple string used by Tauri's externalBin naming.
