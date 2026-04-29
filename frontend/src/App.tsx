@@ -9,7 +9,7 @@ export function App() {
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
+      <main aria-label="メインコンテンツ" className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
     </div>

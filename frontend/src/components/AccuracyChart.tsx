@@ -30,7 +30,7 @@ export function AccuracyChart({ points, metricLabel }: AccuracyChartProps) {
         <XAxis
           dataKey="date"
           tick={{ fontSize: 11 }}
-          tickFormatter={(v: string) => v.slice(5)} // MM-DD
+          tickFormatter={(v: string | number) => String(v).slice(5)} // MM-DD
         />
         <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
         <Tooltip

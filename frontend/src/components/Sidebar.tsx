@@ -19,11 +19,11 @@ const navItems: NavItem[] = [
 
 export function Sidebar() {
   return (
-    <aside className="flex h-full w-56 flex-col border-r bg-card">
+    <aside aria-label="サイドナビゲーション" className="flex h-full w-56 flex-col border-r bg-card">
       <div className="flex h-14 items-center border-b px-4">
         <span className="text-lg font-bold tracking-wide text-primary">KEIBA AI</span>
       </div>
-      <nav className="flex-1 space-y-1 p-2">
+      <nav aria-label="主要画面" className="flex-1 space-y-1 p-2">
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
