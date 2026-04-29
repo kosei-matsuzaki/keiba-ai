@@ -27,8 +27,11 @@ export function IngestRunDialog({ onSubmit, isPending }: IngestRunDialogProps) {
   const [date, setDate] = useState(todayString());
   const [limit, setLimit] = useState('');
 
+  const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
+
   function handleSubmit() {
-    const req: ScraperRunRequest = { date: date || undefined };
+    if (!isValidDate) return;
+    const req: ScraperRunRequest = { date };
     if (limit) req.limit = Number(limit);
     onSubmit(req);
     setOpen(false);
@@ -72,7 +75,9 @@ export function IngestRunDialog({ onSubmit, isPending }: IngestRunDialogProps) {
           <Button variant="outline" onClick={() => setOpen(false)}>
             キャンセル
           </Button>
-          <Button onClick={handleSubmit}>実行</Button>
+          <Button onClick={handleSubmit} disabled={!isValidDate}>
+            実行
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

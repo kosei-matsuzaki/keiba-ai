@@ -118,7 +118,7 @@ export interface TrainRequest {
 }
 
 export interface ScraperRunRequest {
-  date?: string;
+  date: string; // YYYY-MM-DD（バックエンドで pattern 検証）
   limit?: number;
 }
 
