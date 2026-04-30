@@ -31,6 +31,8 @@ from keiba_ai.db.session import make_engine, session_scope
 from keiba_ai.scraper import cache as cache_module
 from keiba_ai.scraper import stop_flag
 from keiba_ai.scraper.netkeiba import NetkeibaClient
+from keiba_ai.scraper.parsers.horse_detail import parse_horse_detail
+from keiba_ai.scraper.parsers.horse_pedigree import parse_horse_pedigree
 from keiba_ai.scraper.parsers.race_calendar import parse_race_ids_from_calendar
 from keiba_ai.scraper.parsers.race_result import ParsedRaceResult, parse_race_result
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
@@ -93,11 +95,16 @@ def _upsert_race(session: Session, result: ParsedRaceResult) -> None:
     session.execute(stmt)
 
 
-def _ensure_masters(session: Session, result: ParsedRaceResult) -> None:
+async def _ensure_masters(
+    session: Session,
+    result: ParsedRaceResult,
+    client: NetkeibaClient | None = None,
+) -> None:
     """Upsert horses, jockeys, trainers referenced by entries.
 
-    Saves name when available; preserves existing name when new value is None
-    (COALESCE semantics via on_conflict_do_update).
+    For new horses (no existing name in DB), additionally fetches the horse
+    detail page and pedigree page to populate name, sex, birth_date, sire, dam.
+    Fetching is best-effort: failures log a warning but do not fail the ingest.
     """
     horses_seen: set[str] = set()
     jockeys_seen: set[str] = set()
@@ -105,13 +112,49 @@ def _ensure_masters(session: Session, result: ParsedRaceResult) -> None:
 
     for e in result.entries:
         if e.horse_id and e.horse_id not in horses_seen:
-            stmt = sqlite_insert(Horse).values(horse_id=e.horse_id, name=e.horse_name)
+            horses_seen.add(e.horse_id)
+
+            # Check whether horse already has a name to decide if detail fetch is needed.
+            existing = session.get(Horse, e.horse_id)
+            need_detail = client is not None and (existing is None or existing.name is None)
+
+            horse_kwargs: dict[str, object] = {"horse_id": e.horse_id, "name": e.horse_name}
+
+            if need_detail:
+                try:
+                    detail_html = await client.fetch(
+                        f"https://db.netkeiba.com/horse/{e.horse_id}/"
+                    )
+                    detail = parse_horse_detail(detail_html, e.horse_id)
+                    if detail.name:
+                        horse_kwargs["name"] = detail.name
+                    horse_kwargs["sex"] = detail.sex
+                    horse_kwargs["birth_date"] = detail.birth_date
+                except Exception as exc:
+                    logger.warning("horse_detail fetch failed for %s: %s", e.horse_id, exc)
+
+                try:
+                    ped_html = await client.fetch(
+                        f"https://db.netkeiba.com/horse/ped/{e.horse_id}/"
+                    )
+                    ped = parse_horse_pedigree(ped_html, e.horse_id)
+                    horse_kwargs["sire"] = ped.sire_name
+                    horse_kwargs["dam"] = ped.dam_name
+                except Exception as exc:
+                    logger.warning("horse_pedigree fetch failed for %s: %s", e.horse_id, exc)
+
+            stmt = sqlite_insert(Horse).values(**horse_kwargs)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["horse_id"],
-                set_={"name": sa.func.coalesce(stmt.excluded.name, Horse.name)},
+                set_={
+                    "name": sa.func.coalesce(stmt.excluded.name, Horse.name),
+                    "sex": sa.func.coalesce(stmt.excluded.sex, Horse.sex),
+                    "birth_date": sa.func.coalesce(stmt.excluded.birth_date, Horse.birth_date),
+                    "sire": sa.func.coalesce(stmt.excluded.sire, Horse.sire),
+                    "dam": sa.func.coalesce(stmt.excluded.dam, Horse.dam),
+                },
             )
             session.execute(stmt)
-            horses_seen.add(e.horse_id)
 
         if e.jockey_id and e.jockey_id not in jockeys_seen:
             stmt = sqlite_insert(Jockey).values(jockey_id=e.jockey_id, name=e.jockey_name)
@@ -197,7 +240,7 @@ async def run_ingest(
             parsed.date = date_str
 
             _upsert_race(session, parsed)
-            _ensure_masters(session, parsed)
+            await _ensure_masters(session, parsed, client=client)
             _insert_entries(session, parsed)
             _record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
             session.commit()

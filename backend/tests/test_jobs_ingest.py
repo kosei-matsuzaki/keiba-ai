@@ -170,7 +170,8 @@ async def test_ingest_saves_passing(db_session, mock_client, tmp_path, monkeypat
     assert first.passing == "2-2"
 
 
-def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(db_session):
+@pytest.mark.asyncio
+async def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(db_session):
     """COALESCE(excluded.name, Horse.name) は新規 None で既存値を維持する。
 
     回帰防止: PR-A code-reviewer が「既存 'X' + 新規 None で NULL になる」と
@@ -183,7 +184,7 @@ def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(db_ses
     db_session.add(Horse(horse_id="HORSE_X", name="ExistingName"))
     db_session.commit()
 
-    # 2) horse_name=None の Entry を持つ ParsedRaceResult で再 ingest
+    # 2) horse_name=None の Entry を持つ ParsedRaceResult で再 ingest（client=None → detail fetch なし）
     parsed = ParsedRaceResult(
         race_id="R1",
         date="2024-01-01",
@@ -192,7 +193,7 @@ def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(db_ses
         distance=1600,
         entries=[ParsedEntry(race_id="R1", horse_id="HORSE_X", horse_name=None)],
     )
-    _ensure_masters(db_session, parsed)
+    await _ensure_masters(db_session, parsed)
     db_session.commit()
 
     # 既存 name は維持される
@@ -200,7 +201,8 @@ def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(db_ses
     assert horse.name == "ExistingName"
 
 
-def test_ensure_masters_coalesce_fills_missing_name(db_session):
+@pytest.mark.asyncio
+async def test_ensure_masters_coalesce_fills_missing_name(db_session):
     """既存 NULL + 新規 'X' で name が補完される。"""
     from keiba_ai.jobs.ingest import _ensure_masters
     from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
@@ -216,14 +218,15 @@ def test_ensure_masters_coalesce_fills_missing_name(db_session):
         distance=1600,
         entries=[ParsedEntry(race_id="R2", horse_id="HORSE_Y", horse_name="NewName")],
     )
-    _ensure_masters(db_session, parsed)
+    await _ensure_masters(db_session, parsed)
     db_session.commit()
 
     horse = db_session.get(Horse, "HORSE_Y")
     assert horse.name == "NewName"
 
 
-def test_ensure_masters_coalesce_overwrites_when_both_have_value(db_session):
+@pytest.mark.asyncio
+async def test_ensure_masters_coalesce_overwrites_when_both_have_value(db_session):
     """既存 'X' + 新規 'Y' は上書き（COALESCE 第一引数優先のため）。
 
     現仕様: netkeiba 側の表記揺れがあった場合、最新を採用する。
@@ -243,8 +246,148 @@ def test_ensure_masters_coalesce_overwrites_when_both_have_value(db_session):
         distance=1600,
         entries=[ParsedEntry(race_id="R3", horse_id="HORSE_Z", horse_name="NewName")],
     )
-    _ensure_masters(db_session, parsed)
+    await _ensure_masters(db_session, parsed)
     db_session.commit()
 
     horse = db_session.get(Horse, "HORSE_Z")
     assert horse.name == "NewName"
+
+
+# ── PR-B: horse_detail / horse_pedigree fetch tests ──────────────────────────
+
+DETAIL_HTML = (FIXTURES / "horse_detail_2022104732.html").read_text(encoding="utf-8")
+PEDIGREE_HTML = (FIXTURES / "horse_pedigree_2022104732.html").read_text(encoding="utf-8")
+
+
+def _build_fake_fetch_with_detail(
+    calendar_html: str,
+    result_html: str,
+    detail_html: str,
+    pedigree_html: str,
+):
+    """Fake fetch that routes horse/ped URLs to fixture HTML."""
+    async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
+        if "race_list" in url:
+            return calendar_html
+        if "/horse/ped/" in url:
+            return pedigree_html
+        if "/horse/" in url and "/race/" not in url:
+            return detail_html
+        return result_html
+    return fake_fetch
+
+
+@pytest.fixture()
+def mock_client_with_detail() -> NetkeibaClient:
+    import httpx
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_with_detail(  # type: ignore[method-assign]
+        CALENDAR_HTML, RESULT_HTML, DETAIL_HTML, PEDIGREE_HTML
+    )
+    return client
+
+
+@pytest.mark.asyncio
+async def test_ingest_skips_horse_detail_when_existing_name_present(db_session):
+    """既存 horses.name が埋まっている馬は detail/ped fetch をしない。
+
+    client.fetch の呼び出しを記録し、/horse/<id>/ と /horse/ped/<id>/ への
+    リクエストが発生していないことを確認する。
+    """
+    import httpx
+
+    from keiba_ai.jobs.ingest import _ensure_masters
+    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+
+    fetched_urls: list[str] = []
+
+    async def recording_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
+        fetched_urls.append(url)
+        return RESULT_HTML
+
+    client.fetch = recording_fetch  # type: ignore[method-assign]
+
+    # 既存馬（name 埋まり）を事前 insert
+    db_session.add(Horse(horse_id="2019105293", name="ドウデュース"))
+    db_session.commit()
+
+    parsed = ParsedRaceResult(
+        race_id="R1",
+        date="2024-01-01",
+        course="東京",
+        surface="芝",
+        distance=2400,
+        entries=[ParsedEntry(race_id="R1", horse_id="2019105293", horse_name="ドウデュース")],
+    )
+    await _ensure_masters(db_session, parsed, client=client)
+    db_session.commit()
+
+    # detail / ped fetch は一切発生しないはず
+    assert all("/horse/" not in url for url in fetched_urls), (
+        f"Unexpected detail/ped fetch for horse with existing name: {fetched_urls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingest_fetches_horse_detail_and_pedigree_for_new_horse(
+    db_session, mock_client_with_detail, tmp_path, monkeypatch
+):
+    """新規馬（DBにレコードなし）は詳細ページ + 血統ページをフェッチして sire/dam が埋まる。
+
+    race_result fixture 内の馬（ドウデュース等）を対象にフル ingest して確認する。
+    """
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client_with_detail, db_session, limit=1)
+
+    horses = db_session.execute(select(Horse)).scalars().all()
+    # 少なくとも1頭はフェッチされ、sire と dam が埋まっている
+    horses_with_sire = [h for h in horses if h.sire is not None]
+    assert len(horses_with_sire) >= 1, "At least one horse should have sire populated"
+    horse = horses_with_sire[0]
+    assert horse.sire == "ロードカナロア"
+    assert horse.dam == "スターハイネス"
+
+
+@pytest.mark.asyncio
+async def test_ingest_continues_on_horse_detail_fetch_failure(
+    db_session, tmp_path, monkeypatch
+):
+    """horse_detail fetch が例外を出しても全 race ingest は失敗しない。"""
+    import httpx
+
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+
+    async def failing_detail_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
+        if "race_list" in url:
+            return CALENDAR_HTML
+        if "/horse/" in url and "/race/" not in url:
+            raise RuntimeError("simulated network failure")
+        return RESULT_HTML
+
+    client.fetch = failing_detail_fetch  # type: ignore[method-assign]
+
+    counters = await run_ingest(DATE, client, db_session, limit=1)
+
+    # detail fetch が失敗しても race ingest 自体は成功する
+    assert counters["fetched"] == 1
+    assert counters["errors"] == 0
+
+    # 馬は name のみで登録される（detail fetch 失敗のため sire/dam は None）
+    horses = db_session.execute(select(Horse)).scalars().all()
+    assert len(horses) >= 1
