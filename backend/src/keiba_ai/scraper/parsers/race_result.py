@@ -3,38 +3,18 @@
 Target URL:
   https://db.netkeiba.com/race/<race_id>/
 
-Assumed HTML structure (to be verified against real pages in M2 manual QA):
-  Race info header:
-    <div class="RaceData01">
-      芝1600m / 天候:晴 / 馬場:良
-    </div>
-    <div class="RaceData02">
-      <span>東京</span><span>11R</span><span>G1</span>
-    </div>
+実 HTML 構造（2026 時点で確認済）:
+  - 出走馬テーブル: <table class="race_table_01 nk_tb_common">
+  - <thead> は無く、最初の <tr> の <th> が列ヘッダ
+  - premium 列（タイム指数 / 調教タイム / 厩舎コメント / 備考）が DOM に存在
+    （display:none 含む）。固定インデックスではなくヘッダ名 → 列番号の辞書で参照
+  - <diary_snap_cut> という非標準タグが <td> を囲む箇所があるが BS4 は
+    descendants 検索なので透過に拾える
+  - jockey/trainer のリンク URL は /jockey/result/recent/<id>/ 形式
+  - course は race_id の 5-6 桁目（JRA トラックコード）から導出可能
 
-  Results table:
-    <table class="race_table_01">
-      <thead><tr><th>着順</th><th>馬番</th><th>馬名</th>...></thead>
-      <tbody>
-        <tr>
-          <td>1</td>           <!-- finish_position -->
-          <td>5</td>           <!-- post_position -->
-          <td><a href="/horse/2019105293/">ホウオウビスケッツ</a></td>
-          <td>牡4</td>         <!-- sex + age -->
-          <td>57.0</td>        <!-- weight_carried -->
-          <td><a href="/jockey/01011/">横山武史</a></td>
-          <td>1:33.4</td>      <!-- finish_time -->
-          <td>...</td>         <!-- margin -->
-          <td>...</td>         <!-- horse_weight / diff -->
-          <td>2.8</td>         <!-- odds_win -->
-          <td>1</td>           <!-- popularity -->
-          <td><a href="/trainer/01096/">田中博康</a></td>
-        </tr>
-      </tbody>
-    </table>
-
-Selectors are intentionally lenient (row count checks, try/except per cell)
-so that partial parses still produce useful data.
+レースヘッダ（コース・距離・天候・馬場）は class 名が変動しやすいので、
+ページ全体のテキストから正規表現で抽出する。
 """
 
 from __future__ import annotations
@@ -50,10 +30,26 @@ from keiba_ai.scraper.parsers.payout import parse_payout
 
 logger = get_logger(__name__)
 
-_ID_FROM_HREF = re.compile(r"/(\w+)/(\w+)/?$")
 _TIME_RE = re.compile(r"(\d+):(\d+)\.(\d+)")
 _WEIGHT_RE = re.compile(r"(\d+)\(([+-]?\d+)\)")
-_SURFACE_DIST_RE = re.compile(r"(芝|ダ|障)(\d+)")
+
+# 実 HTML ヘッダ形式（2026 時点）:
+#   "中山1200m / 芝 : 良 / 天候 : 晴 / 発走 : 10:05"
+# 旧フィクスチャ形式:
+#   "芝1600m / 天候:晴 / 馬場:良"
+# 両方に対応するため lookahead で surface マッチを ":" or 直後の数字で限定
+_SURFACE_RE = re.compile(r"(芝|ダ|障)(?=\s*[:：]|\d)")
+_DISTANCE_RE = re.compile(r"(\d{3,4})\s*m")
+_WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
+# 馬場状態は「馬場 : 良」(旧) または surface に続く「芝 : 良」(新) のどちらか
+_TRACK_OLD_RE = re.compile(r"馬場\s*[:：]\s*([^\s/]+)")
+_TRACK_NEW_RE = re.compile(r"(?:芝|ダ|障)\s*[:：]\s*([^\s/]+)")
+
+# JRA トラックコード（race_id の 5-6 桁目）→ コース名
+_COURSE_CODE_MAP = {
+    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
+    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
+}
 
 
 class ParseError(Exception):
@@ -96,8 +92,16 @@ class ParsedRaceResult:
 
 
 def _extract_id_from_href(href: str, kind: str) -> str | None:
-    """Extract entity ID from a netkeiba path like /horse/<id>/ or /jockey/<id>/."""
-    m = re.search(rf"/{kind}/(\w+)", href)
+    """Extract entity ID from a netkeiba path.
+
+    Supports both:
+      - /horse/<id>/                          (馬は直接)
+      - /jockey/result/recent/<id>/           (騎手・調教師は result/recent 配下)
+      - /trainer/result/recent/<id>/
+
+    `/<kind>/` の後にある最初の連続数字を ID として返す。
+    """
+    m = re.search(rf"/{kind}/(?:[a-z_]+/)*(\d+)", href)
     return m.group(1) if m else None
 
 
@@ -109,30 +113,30 @@ def _parse_time_to_seconds(text: str) -> float | None:
     return minutes * 60 + secs + tenths / 10
 
 
-def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult) -> None:
-    """Extract race metadata from the page header area."""
-    data01 = soup.find(class_=re.compile(r"RaceData01"))
-    if data01:
-        text = data01.get_text(" ", strip=True)
-        m = _SURFACE_DIST_RE.search(text)
-        if m:
-            surface_char = m.group(1)
-            result.surface = "芝" if surface_char == "芝" else "ダ"
-            result.distance = int(m.group(2))
-        if "天候:" in text:
-            result.weather = text.split("天候:")[1].split()[0].rstrip("/ ")
-        if "馬場:" in text:
-            result.track_condition = text.split("馬場:")[1].split()[0].rstrip("/ ")
+def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -> None:
+    """Extract race metadata from race_id and page-wide text scan."""
+    # Course は race_id の 5-6 桁目（JRA トラックコード）から導出
+    if len(race_id) >= 6:
+        result.course = _COURSE_CODE_MAP.get(race_id[4:6])
 
-    data02 = soup.find(class_=re.compile(r"RaceData02"))
-    if data02:
-        spans = data02.find_all("span")
-        for span in spans:
-            t = span.get_text(strip=True)
-            if any(kw in t for kw in ["G1", "G2", "G3", "GI", "GII", "GIII", "条件", "特別", "オープン"]):
-                result.race_class = t
-            elif not result.course and len(t) in (2, 3) and not t.isdigit():
-                result.course = t
+    page_text = soup.get_text(" ", strip=True)
+
+    surface_m = _SURFACE_RE.search(page_text)
+    if surface_m:
+        result.surface = surface_m.group(1)
+
+    dist_m = _DISTANCE_RE.search(page_text)
+    if dist_m:
+        result.distance = int(dist_m.group(1))
+
+    weather_m = _WEATHER_RE.search(page_text)
+    if weather_m:
+        result.weather = weather_m.group(1)
+
+    # 旧形式（馬場:良）優先、無ければ新形式（芝 : 良）
+    track_m = _TRACK_OLD_RE.search(page_text) or _TRACK_NEW_RE.search(page_text)
+    if track_m:
+        result.track_condition = track_m.group(1)
 
 
 def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ParsedEntry]:
@@ -141,20 +145,24 @@ def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ParsedEntry]:
         logger.error("Race result table not found — netkeiba page structure may have changed")
         raise ParseError("Race result table not found")
 
-    # Map header column indices
+    # ヘッダ行を取得（<thead> が無く最初の <tr> の <th> が列名というケースが多い）
     headers: list[str] = []
     thead = table.find("thead")
     if thead:
         headers = [th.get_text(strip=True) for th in thead.find_all("th")]
+    if not headers:
+        first_tr = table.find("tr")
+        if first_tr:
+            headers = [th.get_text(strip=True) for th in first_tr.find_all("th")]
 
-    # Column name → index (lenient: use position if header missing)
-    COL = {name: idx for idx, name in enumerate(headers)}
-
-    def col(name: str, fallback: int) -> int:
-        return COL.get(name, fallback)
+    col: dict[str, int] = {name: idx for idx, name in enumerate(headers)}
+    if not col:
+        logger.warning("No table headers found; falling back to fixed column positions")
 
     entries: list[ParsedEntry] = []
-    for tr in table.find_all("tr")[1:]:  # skip header row
+    for tr in table.find_all("tr"):
+        if tr.find("th"):  # skip header row
+            continue
         tds = tr.find_all("td")
         if len(tds) < 5:
             continue
@@ -171,40 +179,33 @@ def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ParsedEntry]:
 def _parse_entry_row(
     tds: list[Tag],
     race_id: str,
-    col: "dict[str, int] | function",  # type: ignore[valid-type]
+    col: dict[str, int],
 ) -> ParsedEntry | None:
-    def safe_text(idx: int) -> str:
-        return tds[idx].get_text(strip=True) if idx < len(tds) else ""
+    def text_for(name: str, fallback_idx: int | None = None) -> str:
+        idx = col.get(name, fallback_idx)
+        if idx is None or idx >= len(tds):
+            return ""
+        return tds[idx].get_text(strip=True)
 
-    def safe_int(idx: int) -> int | None:
-        t = safe_text(idx)
+    def link_for(name: str, fallback_idx: int | None = None) -> Tag | None:
+        idx = col.get(name, fallback_idx)
+        if idx is None or idx >= len(tds):
+            return None
+        return tds[idx].find("a", href=True)
+
+    def to_int(text: str) -> int | None:
         try:
-            return int(t)
+            return int(text)
         except (ValueError, TypeError):
             return None
 
-    def safe_float(idx: int) -> float | None:
-        t = safe_text(idx)
+    def to_float(text: str) -> float | None:
         try:
-            return float(t)
+            return float(text)
         except (ValueError, TypeError):
             return None
 
-    # Column positions (assumed; adjust after M2 manual QA)
-    I_FINISH = 0
-    I_POST = 1
-    I_HORSE = 2
-    I_SEX_AGE = 3
-    I_WEIGHT_CARRIED = 4
-    I_JOCKEY = 5
-    I_TIME = 6
-    I_MARGIN = 7
-    I_HORSE_WEIGHT = 8
-    I_ODDS = 9
-    I_POPULARITY = 10
-    I_TRAINER = 11
-
-    horse_link = tds[I_HORSE].find("a", href=True) if I_HORSE < len(tds) else None
+    horse_link = link_for("馬名", 3)
     if horse_link is None:
         return None
     horse_id = _extract_id_from_href(horse_link["href"], "horse")
@@ -212,10 +213,10 @@ def _parse_entry_row(
         return None
 
     entry = ParsedEntry(race_id=race_id, horse_id=horse_id)
-    entry.finish_position = safe_int(I_FINISH)
-    entry.post_position = safe_int(I_POST)
+    entry.finish_position = to_int(text_for("着順", 0))
+    entry.post_position = to_int(text_for("馬番", 2))
 
-    sex_age = safe_text(I_SEX_AGE)
+    sex_age = text_for("性齢", 4)
     if sex_age:
         entry.sex = sex_age[0] if sex_age[0] in ("牡", "牝", "セ") else None
         try:
@@ -223,25 +224,25 @@ def _parse_entry_row(
         except (ValueError, IndexError):
             pass
 
-    entry.weight_carried = safe_float(I_WEIGHT_CARRIED)
+    entry.weight_carried = to_float(text_for("斤量", 5))
 
-    jockey_link = tds[I_JOCKEY].find("a", href=True) if I_JOCKEY < len(tds) else None
+    jockey_link = link_for("騎手", 6)
     if jockey_link:
         entry.jockey_id = _extract_id_from_href(jockey_link["href"], "jockey")
 
-    entry.finish_time = _parse_time_to_seconds(safe_text(I_TIME))
-    entry.margin = safe_text(I_MARGIN) or None
+    entry.finish_time = _parse_time_to_seconds(text_for("タイム", 7))
+    entry.margin = text_for("着差", 8) or None
 
-    hw_text = safe_text(I_HORSE_WEIGHT)
+    hw_text = text_for("馬体重")
     m = _WEIGHT_RE.search(hw_text)
     if m:
         entry.horse_weight = int(m.group(1))
         entry.horse_weight_diff = int(m.group(2))
 
-    entry.odds_win = safe_float(I_ODDS)
-    entry.popularity = safe_int(I_POPULARITY)
+    entry.odds_win = to_float(text_for("単勝"))
+    entry.popularity = to_int(text_for("人気"))
 
-    trainer_link = tds[I_TRAINER].find("a", href=True) if I_TRAINER < len(tds) else None
+    trainer_link = link_for("調教師")
     if trainer_link:
         entry.trainer_id = _extract_id_from_href(trainer_link["href"], "trainer")
 
@@ -257,7 +258,7 @@ def parse_race_result(html: str, race_id: str) -> ParsedRaceResult:
     soup = BeautifulSoup(html, "lxml")
     result = ParsedRaceResult(race_id=race_id)
 
-    _parse_header(soup, result)
+    _parse_header(soup, result, race_id)
     result.entries = _parse_entries(soup, race_id)
     result.n_runners = len(result.entries)
 
