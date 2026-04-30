@@ -15,8 +15,11 @@ from sqlalchemy import select
 
 from keiba_ai.core.config import Settings
 from keiba_ai.db.models.entry import Entry
+from keiba_ai.db.models.horse import Horse
+from keiba_ai.db.models.jockey import Jockey
 from keiba_ai.db.models.race import Race
 from keiba_ai.db.models.scrape_log import ScrapeLog
+from keiba_ai.db.models.trainer import Trainer
 from keiba_ai.jobs.ingest import run_ingest
 from keiba_ai.scraper.netkeiba import NetkeibaClient
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
@@ -110,3 +113,138 @@ async def test_ingest_stops_on_stop_flag(db_session, mock_client, tmp_path, monk
     from keiba_ai.scraper.stop_flag import ScraperStopped
     with pytest.raises(ScraperStopped):
         await run_ingest(DATE, mock_client, db_session)
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_horse_names(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    horses = db_session.execute(select(Horse)).scalars().all()
+    names = {h.name for h in horses}
+    assert "ドウデュース" in names
+    assert "タスティエーラ" in names
+    assert "シャフリヤール" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_jockey_names(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    jockeys = db_session.execute(select(Jockey)).scalars().all()
+    names = {j.name for j in jockeys}
+    assert "武豊" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_trainer_names(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    trainers = db_session.execute(select(Trainer)).scalars().all()
+    names = {t.name for t in trainers}
+    assert "友道康夫" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_agari_3f(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    entries = db_session.execute(select(Entry)).scalars().all()
+    agari_values = [e.agari_3f for e in entries]
+    assert any(v is not None for v in agari_values)
+    # first entry (finish_position=1) has agari_3f=35.1 in fixture
+    first = next(e for e in entries if e.finish_position == 1)
+    assert abs(first.agari_3f - 35.1) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_passing(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    entries = db_session.execute(select(Entry)).scalars().all()
+    first = next(e for e in entries if e.finish_position == 1)
+    assert first.passing == "2-2"
+
+
+def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(db_session):
+    """COALESCE(excluded.name, Horse.name) は新規 None で既存値を維持する。
+
+    回帰防止: PR-A code-reviewer が「既存 'X' + 新規 None で NULL になる」と
+    誤認したため、SQL COALESCE の挙動を直接ロックする。
+    """
+    from keiba_ai.jobs.ingest import _ensure_masters
+    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+
+    # 1) 既存馬を name 入りで insert
+    db_session.add(Horse(horse_id="HORSE_X", name="ExistingName"))
+    db_session.commit()
+
+    # 2) horse_name=None の Entry を持つ ParsedRaceResult で再 ingest
+    parsed = ParsedRaceResult(
+        race_id="R1",
+        date="2024-01-01",
+        course="中山",
+        surface="芝",
+        distance=1600,
+        entries=[ParsedEntry(race_id="R1", horse_id="HORSE_X", horse_name=None)],
+    )
+    _ensure_masters(db_session, parsed)
+    db_session.commit()
+
+    # 既存 name は維持される
+    horse = db_session.get(Horse, "HORSE_X")
+    assert horse.name == "ExistingName"
+
+
+def test_ensure_masters_coalesce_fills_missing_name(db_session):
+    """既存 NULL + 新規 'X' で name が補完される。"""
+    from keiba_ai.jobs.ingest import _ensure_masters
+    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+
+    db_session.add(Horse(horse_id="HORSE_Y", name=None))
+    db_session.commit()
+
+    parsed = ParsedRaceResult(
+        race_id="R2",
+        date="2024-01-01",
+        course="中山",
+        surface="芝",
+        distance=1600,
+        entries=[ParsedEntry(race_id="R2", horse_id="HORSE_Y", horse_name="NewName")],
+    )
+    _ensure_masters(db_session, parsed)
+    db_session.commit()
+
+    horse = db_session.get(Horse, "HORSE_Y")
+    assert horse.name == "NewName"
+
+
+def test_ensure_masters_coalesce_overwrites_when_both_have_value(db_session):
+    """既存 'X' + 新規 'Y' は上書き（COALESCE 第一引数優先のため）。
+
+    現仕様: netkeiba 側の表記揺れがあった場合、最新を採用する。
+    将来「name は一度入ったら不変」に変えたい場合は引数順を反転する。
+    """
+    from keiba_ai.jobs.ingest import _ensure_masters
+    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+
+    db_session.add(Horse(horse_id="HORSE_Z", name="OldName"))
+    db_session.commit()
+
+    parsed = ParsedRaceResult(
+        race_id="R3",
+        date="2024-01-01",
+        course="中山",
+        surface="芝",
+        distance=1600,
+        entries=[ParsedEntry(race_id="R3", horse_id="HORSE_Z", horse_name="NewName")],
+    )
+    _ensure_masters(db_session, parsed)
+    db_session.commit()
+
+    horse = db_session.get(Horse, "HORSE_Z")
+    assert horse.name == "NewName"

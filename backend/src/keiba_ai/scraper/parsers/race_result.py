@@ -64,9 +64,12 @@ class ParseError(Exception):
 class ParsedEntry:
     race_id: str
     horse_id: str
+    horse_name: str | None = None
     post_position: int | None = None
     jockey_id: str | None = None
+    jockey_name: str | None = None
     trainer_id: str | None = None
+    trainer_name: str | None = None
     weight_carried: float | None = None
     age: int | None = None
     sex: str | None = None
@@ -77,6 +80,8 @@ class ParsedEntry:
     finish_position: int | None = None
     finish_time: float | None = None
     margin: str | None = None
+    agari_3f: float | None = None
+    passing: str | None = None
 
 
 @dataclass
@@ -206,6 +211,16 @@ def _parse_entry_row(
         except (ValueError, TypeError):
             return None
 
+    def name_from_link(tag: Tag | None) -> str | None:
+        """Extract display name from an <a> tag via title attr or inner text."""
+        if tag is None:
+            return None
+        raw = tag.get("title") or tag.get_text(strip=True)
+        if not raw:
+            return None
+        cleaned = raw.strip().replace("　", "").replace(" ", "")
+        return cleaned or None
+
     horse_link = link_for("馬名", 3)
     if horse_link is None:
         return None
@@ -214,6 +229,8 @@ def _parse_entry_row(
         return None
 
     entry = ParsedEntry(race_id=race_id, horse_id=horse_id)
+    entry.horse_name = name_from_link(horse_link)
+
     entry.finish_position = to_int(text_for("着順", 0))
     entry.post_position = to_int(text_for("馬番", 2))
 
@@ -230,6 +247,7 @@ def _parse_entry_row(
     jockey_link = link_for("騎手", 6)
     if jockey_link:
         entry.jockey_id = _extract_id_from_href(jockey_link["href"], "jockey")
+        entry.jockey_name = name_from_link(jockey_link)
 
     entry.finish_time = _parse_time_to_seconds(text_for("タイム", 7))
     entry.margin = text_for("着差", 8) or None
@@ -246,6 +264,15 @@ def _parse_entry_row(
     trainer_link = link_for("調教師")
     if trainer_link:
         entry.trainer_id = _extract_id_from_href(trainer_link["href"], "trainer")
+        entry.trainer_name = name_from_link(trainer_link)
+
+    # 上り3F（<span>38.5</span> 等、innerTextをfloat変換）
+    agari_raw = text_for("上り")
+    entry.agari_3f = to_float(agari_raw)
+
+    # 通過（"2-2" 等の生文字列）
+    passing_raw = text_for("通過").strip()
+    entry.passing = passing_raw or None
 
     return entry
 
