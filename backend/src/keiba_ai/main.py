@@ -33,7 +33,9 @@ from keiba_ai.db.session import make_engine
 _DEFAULT_ORIGINS = [
     "http://localhost:5173",   # Vite dev server
     "http://localhost:1420",   # Tauri dev default
-    "tauri://localhost",       # Tauri production WebView
+    "tauri://localhost",       # Tauri production WebView (macOS/Linux)
+    "http://tauri.localhost",  # Tauri production WebView (Windows)
+    "https://tauri.localhost", # Tauri production WebView (Windows, https)
 ]
 
 

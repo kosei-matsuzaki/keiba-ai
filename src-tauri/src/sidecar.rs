@@ -2,10 +2,22 @@ use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use tauri::{AppHandle, Manager};
 
+/// Newtype around the Win32 HANDLE so the whole SidecarHandle can be moved
+/// across threads. The underlying handle is just an opaque kernel id; the
+/// Win32 calls we use against it (CloseHandle / SetInformationJobObject /
+/// AssignProcessToJobObject) are themselves thread-safe, so Send+Sync is sound.
+#[cfg(target_os = "windows")]
+struct JobHandle(windows::Win32::Foundation::HANDLE);
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for JobHandle {}
+#[cfg(target_os = "windows")]
+unsafe impl Sync for JobHandle {}
+
 pub struct SidecarHandle {
     pub child: Child,
     #[cfg(target_os = "windows")]
-    job_handle: windows::Win32::Foundation::HANDLE,
+    job_handle: JobHandle,
 }
 
 /// Bind to 127.0.0.1:0, record the assigned port, then drop the listener so
@@ -125,16 +137,36 @@ fn resolve_sidecar_path(app: &AppHandle) -> Result<std::path::PathBuf, Box<dyn s
 pub fn spawn(app: &AppHandle, port: u16) -> Result<SidecarHandle, Box<dyn std::error::Error>> {
     let binary_path = resolve_sidecar_path(app)?;
 
-    let child = Command::new(&binary_path)
+    // Tauri の release ビルドは windows_subsystem="windows" のため stdout/stderr の
+    // console handle が無効。Stdio::inherit() で渡すと子プロセス側で uvicorn の
+    // ログ初期化が失敗してすぐ落ちる。そのため明示的に null にする。
+    // ログが必要になったらファイルにリダイレクトする方針。
+
+    // PyInstaller 環境では keiba_ai/core/paths.py の _repo_root() が .git を
+    // 見つけられず Path.cwd() にフォールバックして二重パスを生成するため、
+    // Tauri 側から data 置き場を明示する（exe の隣 = games/keiba-ai/data）。
+    let data_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("data")));
+    if let Some(d) = &data_dir {
+        let _ = std::fs::create_dir_all(d);
+    }
+
+    let mut command = Command::new(&binary_path);
+    command
         .env("KEIBA_API_PORT", port.to_string())
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(d) = &data_dir {
+        command.env("KEIBA_DATA_DIR", d);
+    }
+    let child = command
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar '{}': {}", binary_path.display(), e))?;
 
     #[cfg(target_os = "windows")]
-    let job_handle = attach_job_object(&child)?;
+    let job_handle = JobHandle(attach_job_object(&child)?);
 
     Ok(SidecarHandle {
         child,
@@ -170,7 +202,7 @@ pub fn shutdown(mut handle: SidecarHandle, port: u16) {
     {
         use windows::Win32::Foundation::CloseHandle;
         unsafe {
-            let _ = CloseHandle(handle.job_handle);
+            let _ = CloseHandle(handle.job_handle.0);
         }
     }
 }
