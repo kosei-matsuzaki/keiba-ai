@@ -12,6 +12,7 @@ import asyncio
 import datetime
 
 import httpx
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -95,29 +96,40 @@ def _upsert_race(session: Session, result: ParsedRaceResult) -> None:
 def _ensure_masters(session: Session, result: ParsedRaceResult) -> None:
     """Upsert horses, jockeys, trainers referenced by entries.
 
-    Only inserts id; name/details are filled in by dedicated scraping (M4+).
-    This satisfies FK constraints for entries.horse_id, jockey_id, trainer_id.
+    Saves name when available; preserves existing name when new value is None
+    (COALESCE semantics via on_conflict_do_update).
     """
-    horse_ids = {e.horse_id for e in result.entries}
-    for horse_id in horse_ids:
-        stmt = sqlite_insert(Horse).values(horse_id=horse_id).on_conflict_do_nothing(
-            index_elements=["horse_id"]
-        )
-        session.execute(stmt)
+    horses_seen: set[str] = set()
+    jockeys_seen: set[str] = set()
+    trainers_seen: set[str] = set()
 
-    jockey_ids = {e.jockey_id for e in result.entries if e.jockey_id}
-    for jockey_id in jockey_ids:
-        stmt = sqlite_insert(Jockey).values(jockey_id=jockey_id).on_conflict_do_nothing(
-            index_elements=["jockey_id"]
-        )
-        session.execute(stmt)
+    for e in result.entries:
+        if e.horse_id and e.horse_id not in horses_seen:
+            stmt = sqlite_insert(Horse).values(horse_id=e.horse_id, name=e.horse_name)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["horse_id"],
+                set_={"name": sa.func.coalesce(stmt.excluded.name, Horse.name)},
+            )
+            session.execute(stmt)
+            horses_seen.add(e.horse_id)
 
-    trainer_ids = {e.trainer_id for e in result.entries if e.trainer_id}
-    for trainer_id in trainer_ids:
-        stmt = sqlite_insert(Trainer).values(trainer_id=trainer_id).on_conflict_do_nothing(
-            index_elements=["trainer_id"]
-        )
-        session.execute(stmt)
+        if e.jockey_id and e.jockey_id not in jockeys_seen:
+            stmt = sqlite_insert(Jockey).values(jockey_id=e.jockey_id, name=e.jockey_name)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["jockey_id"],
+                set_={"name": sa.func.coalesce(stmt.excluded.name, Jockey.name)},
+            )
+            session.execute(stmt)
+            jockeys_seen.add(e.jockey_id)
+
+        if e.trainer_id and e.trainer_id not in trainers_seen:
+            stmt = sqlite_insert(Trainer).values(trainer_id=e.trainer_id, name=e.trainer_name)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["trainer_id"],
+                set_={"name": sa.func.coalesce(stmt.excluded.name, Trainer.name)},
+            )
+            session.execute(stmt)
+            trainers_seen.add(e.trainer_id)
 
 
 def _insert_entries(session: Session, result: ParsedRaceResult) -> None:
@@ -142,6 +154,8 @@ def _insert_entries(session: Session, result: ParsedRaceResult) -> None:
             finish_position=e.finish_position,
             finish_time=e.finish_time,
             margin=e.margin,
+            agari_3f=e.agari_3f,
+            passing=e.passing,
         ))
 
 

@@ -15,8 +15,11 @@ from sqlalchemy import select
 
 from keiba_ai.core.config import Settings
 from keiba_ai.db.models.entry import Entry
+from keiba_ai.db.models.horse import Horse
+from keiba_ai.db.models.jockey import Jockey
 from keiba_ai.db.models.race import Race
 from keiba_ai.db.models.scrape_log import ScrapeLog
+from keiba_ai.db.models.trainer import Trainer
 from keiba_ai.jobs.ingest import run_ingest
 from keiba_ai.scraper.netkeiba import NetkeibaClient
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
@@ -110,3 +113,58 @@ async def test_ingest_stops_on_stop_flag(db_session, mock_client, tmp_path, monk
     from keiba_ai.scraper.stop_flag import ScraperStopped
     with pytest.raises(ScraperStopped):
         await run_ingest(DATE, mock_client, db_session)
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_horse_names(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    horses = db_session.execute(select(Horse)).scalars().all()
+    names = {h.name for h in horses}
+    assert "ドウデュース" in names
+    assert "タスティエーラ" in names
+    assert "シャフリヤール" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_jockey_names(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    jockeys = db_session.execute(select(Jockey)).scalars().all()
+    names = {j.name for j in jockeys}
+    assert "武豊" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_trainer_names(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    trainers = db_session.execute(select(Trainer)).scalars().all()
+    names = {t.name for t in trainers}
+    assert "友道康夫" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_agari_3f(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    entries = db_session.execute(select(Entry)).scalars().all()
+    agari_values = [e.agari_3f for e in entries]
+    assert any(v is not None for v in agari_values)
+    # first entry (finish_position=1) has agari_3f=35.1 in fixture
+    first = next(e for e in entries if e.finish_position == 1)
+    assert abs(first.agari_3f - 35.1) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_ingest_saves_passing(db_session, mock_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(DATE, mock_client, db_session, limit=1)
+
+    entries = db_session.execute(select(Entry)).scalars().all()
+    first = next(e for e in entries if e.finish_position == 1)
+    assert first.passing == "2-2"

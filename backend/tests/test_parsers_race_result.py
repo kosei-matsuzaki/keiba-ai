@@ -108,3 +108,33 @@ def test_first_entry_odds_win(parsed):
 
 def test_first_entry_popularity(parsed):
     assert parsed.entries[0].popularity == 2
+
+
+def test_first_entry_horse_name(parsed):
+    assert parsed.entries[0].horse_name == "ドウデュース"
+
+
+def test_first_entry_jockey_name(parsed):
+    assert parsed.entries[0].jockey_name == "武豊"
+
+
+def test_first_entry_trainer_name(parsed):
+    assert parsed.entries[0].trainer_name == "友道康夫"
+
+
+def test_first_entry_agari_3f(parsed):
+    assert parsed.entries[0].agari_3f == pytest.approx(35.1)
+
+
+def test_first_entry_passing(parsed):
+    assert parsed.entries[0].passing == "2-2"
+
+
+def test_entries_have_passing(parsed):
+    for e in parsed.entries:
+        assert e.passing is not None
+
+
+def test_entries_have_agari_3f(parsed):
+    for e in parsed.entries:
+        assert e.agari_3f is not None

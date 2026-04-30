@@ -48,6 +48,8 @@ class Entry(Base):
     finish_position: Mapped[int | None] = mapped_column(Integer)
     finish_time: Mapped[float | None] = mapped_column(Float)
     margin: Mapped[str | None] = mapped_column(String)
+    agari_3f: Mapped[float | None] = mapped_column(Float, nullable=True)
+    passing: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index("ix_entries_race_id_horse_id", "race_id", "horse_id"),
