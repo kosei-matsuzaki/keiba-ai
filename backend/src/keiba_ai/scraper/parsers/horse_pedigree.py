@@ -24,12 +24,18 @@ class ParsedPedigree:
 
 
 def parse_horse_pedigree(html: str, horse_id: str) -> ParsedPedigree:
-    """Parse pedigree page. Identifies sire and dam from blood_table rowspan structure.
+    """Parse pedigree page. Identifies sire and dam from blood_table tr/rowspan layout.
 
-    The blood_table uses rowspan to lay out generations. The largest rowspan TDs
-    are the parents (sire and dam). For a 3-generation table parent rowspan=8;
-    for 5-generation, 16. We pick the two TDs with the maximum rowspan as parents.
-    First = sire (父), second = dam (母).
+    blood_table の典型レイアウト:
+        行 0:           父(rowspan=N)  | 父父(rowspan=N/2) | 父父父...
+        行 1:                                                | 父父母...
+        ...
+        行 N/2 - 1:                     | 父母              | ...
+        行 N/2:         母(rowspan=N)  | 母父              | ...
+        ...
+
+    「行 0 の最初の <td> = 父」「その rowspan 番目の <tr> の最初の <td> = 母」で
+    3 代血統表（父 rowspan=4）でも 5 代（rowspan=16）でも確実に識別できる。
     """
     soup = BeautifulSoup(html, "lxml")
     result = ParsedPedigree(horse_id=horse_id)
@@ -39,43 +45,50 @@ def parse_horse_pedigree(html: str, horse_id: str) -> ParsedPedigree:
         logger.warning("blood_table not found for horse %s", horse_id)
         return result
 
-    # Collect all td rowspan values and pick the maximum.
-    parents: list = []
-    max_rs = 0
-    for td in table.find_all("td"):
-        rs_str = td.get("rowspan", "1") or "1"
-        try:
-            rs = int(rs_str)
-        except ValueError:
-            continue
-        if rs > max_rs:
-            max_rs = rs
-            parents = [td]
-        elif rs == max_rs:
-            parents.append(td)
-
-    if len(parents) < 2:
-        logger.warning(
-            "Could not identify sire/dam in blood_table for horse %s (max rowspan=%d, found %d parent TDs)",
-            horse_id,
-            max_rs,
-            len(parents),
-        )
+    # blood_table は <tr> + <td rowspan> による世代構造。レイアウトの典型:
+    #
+    #   行 0:    父(rowspan=N) | 父父(rowspan=N/2) | 父父父...
+    #   行 1:                                       | 父父母...
+    #   行 N/2-1:                | 父母              | ...
+    #   行 N/2:  母(rowspan=N) | 母父              | ...
+    #   ...
+    #
+    # 「最初の <tr> の最初の <td> = 父」「その rowspan 番目の <tr> の最初の
+    # <td> = 母」というロジックで、3 代 (父 rowspan=4) でも 5 代 (rowspan=16) でも
+    # 確実に父・母を識別できる。
+    trs = table.find_all("tr")
+    if not trs:
+        logger.warning("blood_table has no rows for horse %s", horse_id)
         return result
 
-    if len(parents) > 2:
-        # 3 代血統表では rowspan 最大の親 TD は 2 個（父・母）の想定。
-        # 3 つ以上ある場合は HTML 構造が想定外なので silent drop せず警告。
+    # 父 TD: 行 0 の最初の TD
+    sire_td = trs[0].find("td")
+    if sire_td is None:
+        logger.warning("first <tr> has no <td> for horse %s", horse_id)
+        return result
+
+    # 父の rowspan を取って母の行 index を決定
+    rs_str = sire_td.get("rowspan", "1") or "1"
+    try:
+        sire_rowspan = int(rs_str)
+    except ValueError:
+        sire_rowspan = 1
+
+    # 母 TD: 行 sire_rowspan の最初の TD
+    if sire_rowspan >= len(trs):
         logger.warning(
-            "Found %d parent TDs with max rowspan=%d for horse %s; using first 2 (sire, dam)",
-            len(parents),
-            max_rs,
+            "sire rowspan=%d exceeds total rows=%d for horse %s; cannot locate dam",
+            sire_rowspan,
+            len(trs),
             horse_id,
         )
+        dam_td = None
+    else:
+        dam_td = trs[sire_rowspan].find("td")
 
-    # First parent = sire, second = dam
-    sire_link = parents[0].find("a", href=_HORSE_HREF_RE)
-    dam_link = parents[1].find("a", href=_HORSE_HREF_RE)
+    # 父・母の <a href="/horse/<id>/"> リンクを抽出
+    sire_link = sire_td.find("a", href=_HORSE_HREF_RE)
+    dam_link = dam_td.find("a", href=_HORSE_HREF_RE) if dam_td is not None else None
 
     if sire_link:
         m = _HORSE_HREF_RE.search(sire_link.get("href", ""))
