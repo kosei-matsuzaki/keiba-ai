@@ -103,14 +103,15 @@ class ParsedRaceResult:
 def _extract_id_from_href(href: str, kind: str) -> str | None:
     """Extract entity ID from a netkeiba path.
 
-    Supports both:
-      - /horse/<id>/                          (馬は直接)
-      - /jockey/result/recent/<id>/           (騎手・調教師は result/recent 配下)
-      - /trainer/result/recent/<id>/
+    Supports:
+      - /horse/<id>/              (馬は直接、id は日本馬 10 桁数字 or 外国馬 10 文字英数字)
+      - /jockey/result/recent/<id>/    (騎手は result/recent 配下、5 桁数字)
+      - /trainer/result/recent/<id>/   (調教師も同様)
 
-    `/<kind>/` の後にある最初の連続数字を ID として返す。
+    `/<kind>/` の後（必要なら中継パスをスキップ）にある最初の英数字 ID を返す。
     """
-    m = re.search(rf"/{kind}/(?:[a-z_]+/)*(\d+)", href)
+    # 中継パス (result/recent/ 等) を 0 回以上スキップしてから英数字 ID を取る
+    m = re.search(rf"/{kind}/(?:[a-z_]+/)*([0-9a-zA-Z]+)", href)
     return m.group(1) if m else None
 
 

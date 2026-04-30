@@ -11,7 +11,10 @@ from keiba_ai.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_HORSE_HREF_RE = re.compile(r"/horse/(\d{10})/?")
+# 馬 ID は日本馬が 10 桁数字 (例: 2008103552)、外国馬が 10 文字英数字 (例: 000a01b93e)。
+# /horse/ped/<id>/ や /horse/sire/<id>/ はラベル文字列が間に入るので、{10} 制約で
+# 直接マッチしない（ped は 3 文字なので 10 文字契約に合わない）。
+_HORSE_HREF_RE = re.compile(r"/horse/([0-9a-zA-Z]{10})/?")
 
 
 @dataclass
