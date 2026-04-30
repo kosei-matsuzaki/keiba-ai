@@ -34,16 +34,20 @@ _TIME_RE = re.compile(r"(\d+):(\d+)\.(\d+)")
 _WEIGHT_RE = re.compile(r"(\d+)\(([+-]?\d+)\)")
 
 # 実 HTML ヘッダ形式（2026 時点）:
-#   "中山1200m / 芝 : 良 / 天候 : 晴 / 発走 : 10:05"
+#   "ダ右1200m / 天候:晴 / 馬場:良"
+#   "芝右 外1600m / 天候:晴 / 馬場:良"
+#   "障芝1200m" 等の障害競走
 # 旧フィクスチャ形式:
 #   "芝1600m / 天候:晴 / 馬場:良"
-# 両方に対応するため lookahead で surface マッチを ":" or 直後の数字で限定
-_SURFACE_RE = re.compile(r"(芝|ダ|障)(?=\s*[:：]|\d)")
-_DISTANCE_RE = re.compile(r"(\d{3,4})\s*m")
+# surface の直後にコース方向（右/左）、内外（内/外）、距離 が続く
+_SURFACE_DIST_RE = re.compile(r"(芝|ダ|障)(?:\s*[右左])?(?:\s*[内外])?\s*(\d{3,4})\s*m")
 _WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
-# 馬場状態は「馬場 : 良」(旧) または surface に続く「芝 : 良」(新) のどちらか
+# 馬場状態は「馬場 : 良」(旧フィクスチャ形式) または surface に続く形式（新）のどちらか
+# 新形式は芝→「芝 : 良」、ダート→「ダート : 良」、障害→「障 : 良」のように
+# surface 表記が異なる（"ダ" 1 文字ではなく "ダート" のフルスペル）。
+# 順序重要: 長い "ダート" を "ダ" より先に書かないと "ダ" だけマッチして失敗する
 _TRACK_OLD_RE = re.compile(r"馬場\s*[:：]\s*([^\s/]+)")
-_TRACK_NEW_RE = re.compile(r"(?:芝|ダ|障)\s*[:：]\s*([^\s/]+)")
+_TRACK_NEW_RE = re.compile(r"(?:ダート|芝|ダ|障)\s*[:：]\s*([^\s/]+)")
 
 # JRA トラックコード（race_id の 5-6 桁目）→ コース名
 _COURSE_CODE_MAP = {
@@ -121,13 +125,10 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
 
     page_text = soup.get_text(" ", strip=True)
 
-    surface_m = _SURFACE_RE.search(page_text)
-    if surface_m:
-        result.surface = surface_m.group(1)
-
-    dist_m = _DISTANCE_RE.search(page_text)
-    if dist_m:
-        result.distance = int(dist_m.group(1))
+    sd_m = _SURFACE_DIST_RE.search(page_text)
+    if sd_m:
+        result.surface = sd_m.group(1)
+        result.distance = int(sd_m.group(2))
 
     weather_m = _WEATHER_RE.search(page_text)
     if weather_m:
