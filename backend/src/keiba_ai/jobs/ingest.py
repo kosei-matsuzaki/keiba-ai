@@ -38,7 +38,7 @@ from keiba_ai.scraper.stop_flag import ScraperStopped
 
 logger = get_logger(__name__)
 
-_CALENDAR_URL = "https://race.netkeiba.com/top/race_list.html?kaisai_date={date}"
+_CALENDAR_URL = "https://db.netkeiba.com/race/list/{date}/"
 _RESULT_URL = "https://db.netkeiba.com/race/{race_id}/"
 
 
