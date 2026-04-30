@@ -3,10 +3,15 @@ backend/**/__pycache__/
 backend/.pytest_cache/
 backend/.ruff_cache/
 backend/.mypy_cache/
+backend/dist/
+backend/build/
+backend/keiba-ai-backend.spec
 frontend/node_modules/
 frontend/dist/
 src-tauri/target/
 src-tauri/binaries/
+src-tauri/gen/
+binaries/
 data/raw/
 data/keiba.db
 data/keiba.db-journal
