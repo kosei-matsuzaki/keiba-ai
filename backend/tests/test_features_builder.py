@@ -93,3 +93,70 @@ def test_build_training_frame_empty_db():
         df = build_training_frame(session)
     assert df.empty
     engine.dispose()
+
+
+# ── PR-C: new column / relative-feature tests ─────────────────────────────────
+
+NEW_HISTORY_COLS = [
+    "recent_avg_agari_3f",
+    "days_since_last_race",
+    "wins_same_course",
+    "recent_finish_1",
+    "recent_finish_2",
+    "recent_finish_3",
+]
+RELATIVE_COLS = [
+    "horse_weight_pct",
+    "odds_win_rank",
+    "weight_carried_pct",
+    "jockey_recent_win_rate_vs_field",
+    "course_place_rate_vs_field",
+    "odds_win_diff_from_favorite",
+]
+PEDIGREE_COLS = [
+    "sire_progeny_win_rate",
+    "dam_progeny_win_rate",
+]
+
+
+def test_new_feature_columns_present(syn_engine):
+    """All PR-C feature columns must appear in the training frame."""
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session)
+
+    for col in NEW_HISTORY_COLS + RELATIVE_COLS + PEDIGREE_COLS:
+        assert col in df.columns, f"PR-C column missing: {col}"
+
+
+def test_relative_features_per_race(syn_engine):
+    """odds_win_diff_from_favorite must be 0 for the favourite in each race."""
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session)
+
+    if df.empty:
+        pytest.skip("No data to test")
+
+    for race_id, group in df.groupby("race_id"):
+        valid = group.dropna(subset=["odds_win", "odds_win_diff_from_favorite"])
+        if valid.empty:
+            continue
+        favourite_row = valid.loc[valid["odds_win"].idxmin()]
+        diff = favourite_row["odds_win_diff_from_favorite"]
+        assert diff == pytest.approx(0.0, abs=1e-9), (
+            f"race {race_id}: favourite diff={diff} expected 0"
+        )
+
+
+def test_horse_weight_pct_bounded(syn_engine):
+    """horse_weight_pct must be in [0.0, 1.0] for all non-NaN rows."""
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session)
+
+    col = df["horse_weight_pct"].dropna()
+    assert (col >= 0.0).all(), "horse_weight_pct below 0"
+    assert (col <= 1.0).all(), "horse_weight_pct above 1"
+
+
+def test_feature_columns_count():
+    """FEATURE_COLUMNS should have exactly 38 columns (24 original + 14 new)."""
+    assert len(FEATURE_COLUMNS) == 38
