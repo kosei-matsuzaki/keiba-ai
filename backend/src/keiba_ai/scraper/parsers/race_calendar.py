@@ -1,11 +1,19 @@
 """Parse netkeiba race calendar page → list of race IDs.
 
 Target URL:
-  https://race.netkeiba.com/top/race_list.html?kaisai_date=YYYYMMDD
+  https://db.netkeiba.com/race/list/YYYYMMDD/
 
-Assumed HTML structure (to be verified against real pages in M2 manual QA):
-  <a class="RaceList_ItemTitle" href="/race/result.html?race_id=202412280101">...</a>
-  or any <a href> containing /race/ followed by a 12-digit race_id.
+実 HTML 構造（2026 時点で確認済）:
+  <dl class="race_top_data_info fc">
+    <dt>1R</dt>
+    <dd>
+      <a href="/race/202406050901/" title="...">...</a>
+      <a href="/race/movie/202406050901">...</a>  ← movie URL は除外
+    </dd>
+  </dl>
+
+`/race/movie/<id>` は `/race/(\d{12})` パターンに合致しない（`movie/` が間に入るため）
+ので自然に除外される。
 
 If zero race IDs are extracted, raise ParseError so the caller can log and
 decide whether to continue or abort.
