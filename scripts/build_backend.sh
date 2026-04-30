@@ -59,4 +59,13 @@ fi
 mkdir -p "$BINARIES_DIR"
 cp "$SRC_EXE" "$BINARIES_DIR/$DEST_NAME"
 
-echo "[build_backend] Done: $BINARIES_DIR/$DEST_NAME"
+# unbundled な Tauri 配布 EXE (games/keiba-ai/keiba-ai.exe) は実行時に
+# games/keiba-ai/binaries/ から sidecar を解決するので、Tauri 側にも同じ
+# サイドカーを配置しておく（PyInstaller 出力は src-tauri 側と完全に一致）。
+GAME_BINARIES_DIR="$GAME_DIR/binaries"
+mkdir -p "$GAME_BINARIES_DIR"
+cp "$SRC_EXE" "$GAME_BINARIES_DIR/$DEST_NAME"
+
+echo "[build_backend] Staged sidecar:"
+echo "  - $BINARIES_DIR/$DEST_NAME (Tauri externalBin)"
+echo "  - $GAME_BINARIES_DIR/$DEST_NAME (unbundled exe runtime)"
