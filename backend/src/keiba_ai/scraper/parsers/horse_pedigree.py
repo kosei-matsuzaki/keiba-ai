@@ -63,6 +63,16 @@ def parse_horse_pedigree(html: str, horse_id: str) -> ParsedPedigree:
         )
         return result
 
+    if len(parents) > 2:
+        # 3 代血統表では rowspan 最大の親 TD は 2 個（父・母）の想定。
+        # 3 つ以上ある場合は HTML 構造が想定外なので silent drop せず警告。
+        logger.warning(
+            "Found %d parent TDs with max rowspan=%d for horse %s; using first 2 (sire, dam)",
+            len(parents),
+            max_rs,
+            horse_id,
+        )
+
     # First parent = sire, second = dam
     sire_link = parents[0].find("a", href=_HORSE_HREF_RE)
     dam_link = parents[1].find("a", href=_HORSE_HREF_RE)
