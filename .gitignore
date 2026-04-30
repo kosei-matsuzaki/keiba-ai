@@ -18,3 +18,8 @@ data/keiba.db-journal
 data/keiba.db-wal
 data/keiba.db-shm
 data/models/
+
+# 調査用に curl で取得した HTML サンプル（コミット対象外）
+horse_sample.html
+horse_ped_sample.html
+*_sample.html
