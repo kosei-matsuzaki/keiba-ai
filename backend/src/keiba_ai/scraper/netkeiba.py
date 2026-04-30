@@ -116,4 +116,8 @@ class NetkeibaClient:
                 continue
 
             response.raise_for_status()
+            # netkeiba は EUC-JP で配信されるが Content-Type に charset が
+            # 含まれないことがあり、httpx のデフォルトデコード（utf-8）では
+            # 不正バイトが U+FFFD に置換されて壊れる。EUC-JP を明示する。
+            response.encoding = "euc-jp"
             return response.text
