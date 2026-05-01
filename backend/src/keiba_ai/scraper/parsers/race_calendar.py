@@ -1,4 +1,4 @@
-"""Parse netkeiba race calendar page → list of race IDs.
+r"""Parse netkeiba race calendar page → list of race IDs.
 
 Target URL:
   https://db.netkeiba.com/race/list/YYYYMMDD/
@@ -32,39 +32,69 @@ logger = get_logger(__name__)
 _RACE_ID_RE = re.compile(r"race_id=(\d{12})")
 _RACE_PATH_RE = re.compile(r"/race/(\d{12})")
 
+# JRA 中央競馬場のトラックコード (race_id の 5-6 桁目)。
+# 11 以上は地方 (NAR/JBA): 30=門別, 35=盛岡, 36=水沢, 42=浦和, 43=船橋, 44=大井,
+# 45=川崎, 46=金沢, 47=笠松, 48=名古屋, 50=園田, 51=姫路, 54=高知, 55=佐賀 など。
+# 中央予測モデル前提のため calendar 段階で地方を弾く。
+# 地方も含めたい場合は環境変数 KEIBA_INCLUDE_NAR=1 を設定する。
+_CENTRAL_TRACK_CODES = frozenset({"01", "02", "03", "04", "05", "06", "07", "08", "09", "10"})
+
 
 class ParseError(Exception):
     pass
 
 
-def parse_race_ids_from_calendar(html: str) -> list[str]:
+def _is_central_race(race_id: str) -> bool:
+    """Return True if the race_id encodes a JRA central track (codes 01-10)."""
+    return len(race_id) >= 6 and race_id[4:6] in _CENTRAL_TRACK_CODES
+
+
+def parse_race_ids_from_calendar(html: str, *, include_nar: bool = False) -> list[str]:
     """Extract race IDs from a kaisai_date calendar page.
 
     Searches all <a> tags whose href contains a 12-digit race_id in either of:
       - ?race_id=<id> query parameter
       - /race/<id>/ path segment
 
+    By default, only JRA central races are returned (track codes 01-10);
+    NAR / 地方 races are filtered out. Pass include_nar=True to keep them.
+
     Raises:
-        ParseError: If no race IDs could be found (likely a selector change).
+        ParseError: If no central race IDs could be found (likely a selector change).
     """
     soup = BeautifulSoup(html, "lxml")
     race_ids: list[str] = []
     seen: set[str] = set()
+    nar_skipped = 0
 
     for a in soup.find_all("a", href=True):
         href: str = a["href"]
         m = _RACE_ID_RE.search(href) or _RACE_PATH_RE.search(href)
-        if m:
-            race_id = m.group(1)
-            if race_id not in seen:
-                seen.add(race_id)
-                race_ids.append(race_id)
+        if not m:
+            continue
+        race_id = m.group(1)
+        if race_id in seen:
+            continue
+        seen.add(race_id)
+        if not include_nar and not _is_central_race(race_id):
+            nar_skipped += 1
+            continue
+        race_ids.append(race_id)
 
     if not race_ids:
         logger.error(
-            "No race IDs found in calendar HTML — netkeiba page structure may have changed"
+            "No central race IDs found in calendar HTML — netkeiba page structure may have changed "
+            "(skipped %d NAR ids)",
+            nar_skipped,
         )
         raise ParseError("No race IDs found in calendar HTML")
 
-    logger.info("Extracted %d race IDs from calendar", len(race_ids))
+    if nar_skipped:
+        logger.info(
+            "Extracted %d central race IDs from calendar (skipped %d NAR)",
+            len(race_ids),
+            nar_skipped,
+        )
+    else:
+        logger.info("Extracted %d race IDs from calendar", len(race_ids))
     return race_ids

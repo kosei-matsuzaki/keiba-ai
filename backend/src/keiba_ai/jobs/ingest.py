@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import os
 
 import httpx
 import sqlalchemy as sa
@@ -215,7 +216,9 @@ async def run_ingest(
     calendar_url = _CALENDAR_URL.format(date=date_str.replace("-", ""))
     logger.info("Fetching calendar: %s", calendar_url)
     calendar_html = await client.fetch(calendar_url, cache_max_age_hours=24)
-    race_ids = parse_race_ids_from_calendar(calendar_html)
+    # Central JRA only by default. Set KEIBA_INCLUDE_NAR=1 to also ingest 地方.
+    include_nar = os.getenv("KEIBA_INCLUDE_NAR", "0") == "1"
+    race_ids = parse_race_ids_from_calendar(calendar_html, include_nar=include_nar)
 
     if limit is not None:
         race_ids = race_ids[:limit]
