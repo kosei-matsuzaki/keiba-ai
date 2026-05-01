@@ -21,8 +21,10 @@ RESULT_HTML = (FIXTURES_DIR / "race_result_202406010101.html").read_text(encodin
 
 def _build_fake_fetch(calendar_html: str, result_html: str):
     async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24) -> str:
-        if "race_list" in url:
+        if "/race/list/" in url:
             return calendar_html
+        if "/horse/" in url:
+            raise RuntimeError(f"basic mock has no horse fixture for {url}")
         return result_html
     return fake_fetch
 
