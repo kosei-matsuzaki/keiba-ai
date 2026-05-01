@@ -82,3 +82,42 @@ def test_content_hash_consistency():
 
 def test_content_hash_differs_for_different_content():
     assert cache_module.content_hash("a") != cache_module.content_hash("b")
+
+
+# ── clear_misc_cache ─────────────────────────────────────────────────────────
+
+
+def test_clear_misc_cache_removes_misc_files():
+    """Files written to misc/ via horse/ped URLs are deleted; race/ tree is untouched."""
+    horse_url = "https://db.netkeiba.com/horse/2019105293/"
+    ped_url = "https://db.netkeiba.com/horse/ped/2019105293/"
+    calendar_url = "https://db.netkeiba.com/race/list/20241228/"
+
+    cache_module.write_cache(horse_url, "horse html")
+    cache_module.write_cache(ped_url, "ped html")
+    cache_module.write_cache(calendar_url, "calendar html")
+    cache_module.write_cache(_RACE_URL, "race html")  # → 2024/12/, NOT misc
+
+    removed = cache_module.clear_misc_cache()
+
+    assert removed == 3
+    assert cache_module.read_cache(horse_url, max_age_hours=None) is None
+    assert cache_module.read_cache(ped_url, max_age_hours=None) is None
+    assert cache_module.read_cache(calendar_url, max_age_hours=None) is None
+    # Race result must remain
+    assert cache_module.read_cache(_RACE_URL, max_age_hours=None) == "race html"
+
+
+def test_clear_misc_cache_returns_zero_when_dir_missing():
+    """No-op + returns 0 when misc/ has never been created."""
+    removed = cache_module.clear_misc_cache()
+    assert removed == 0
+
+
+def test_clear_misc_cache_idempotent():
+    """Calling twice in a row is safe and the second call removes 0 files."""
+    cache_module.write_cache("https://example.com/foo", "x")
+    first = cache_module.clear_misc_cache()
+    second = cache_module.clear_misc_cache()
+    assert first == 1
+    assert second == 0
