@@ -93,6 +93,55 @@ async def test_run_range_ingests_all_dates(in_memory_engine, mock_client, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_run_range_clears_misc_cache_after_each_day(
+    in_memory_engine, mock_client, tmp_path, monkeypatch
+):
+    """misc/ キャッシュは各日完了後に自動削除される (default 動作)。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("KEIBA_KEEP_MISC_CACHE", raising=False)
+
+    from keiba_ai.scraper import cache as cache_module
+
+    # 事前に misc/ にダミーファイルを置いておく (前回 ingest の残骸を模擬)
+    cache_module.write_cache("https://db.netkeiba.com/horse/2019105293/", "leftover")
+    misc_dir = tmp_path / "raw" / "misc"
+    assert any(misc_dir.iterdir()), "precondition: misc/ should have leftover"
+
+    base = datetime.date.today() - datetime.timedelta(days=10)
+    start = base.isoformat()
+    end = base.isoformat()  # 1 day only
+
+    await run_range(start, end, mock_client, in_memory_engine, limit_per_day=1)
+
+    # 各日完了後の cleanup により misc/ は空 (ディレクトリ自体は残る)
+    leftover_files = [f for f in misc_dir.iterdir() if f.is_file()] if misc_dir.exists() else []
+    assert leftover_files == [], f"misc/ should be cleared, found: {leftover_files}"
+
+
+@pytest.mark.asyncio
+async def test_run_range_keeps_misc_cache_when_opt_out(
+    in_memory_engine, mock_client, tmp_path, monkeypatch
+):
+    """KEIBA_KEEP_MISC_CACHE=1 で misc/ 自動削除を無効化できる。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KEIBA_KEEP_MISC_CACHE", "1")
+
+    from keiba_ai.scraper import cache as cache_module
+
+    cache_module.write_cache("https://db.netkeiba.com/horse/2019105293/", "keep me")
+    misc_dir = tmp_path / "raw" / "misc"
+
+    base = datetime.date.today() - datetime.timedelta(days=10)
+    start = base.isoformat()
+    end = base.isoformat()
+
+    await run_range(start, end, mock_client, in_memory_engine, limit_per_day=1)
+
+    leftover_files = [f for f in misc_dir.iterdir() if f.is_file()]
+    assert len(leftover_files) >= 1, "misc/ should be retained when KEIBA_KEEP_MISC_CACHE=1"
+
+
+@pytest.mark.asyncio
 async def test_run_range_skips_completed_dates(in_memory_engine, mock_client, tmp_path, monkeypatch):
     """Dates that already have ok scrape_log entries are skipped on re-run."""
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))

@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import datetime
 import json
+import os
 import sys
 
 import httpx
@@ -25,6 +26,7 @@ from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.session import make_engine, session_scope
 from keiba_ai.jobs.ingest import run_ingest
 from keiba_ai.scraper import stop_flag
+from keiba_ai.scraper.cache import clear_misc_cache
 from keiba_ai.scraper.netkeiba import NetkeibaClient
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
 from keiba_ai.scraper.robots import RobotsCache
@@ -111,6 +113,14 @@ async def run_range(
                 "errors": counters["errors"],
             }
             print(json.dumps(progress), flush=True)
+
+            # Bound disk usage during long-running ingests by dropping the
+            # one-time-use horse_detail / horse_pedigree / calendar HTML cache
+            # after each successful day. Set KEIBA_KEEP_MISC_CACHE=1 to opt out.
+            if os.getenv("KEIBA_KEEP_MISC_CACHE", "0") != "1":
+                removed = clear_misc_cache()
+                if removed:
+                    logger.info("Cleared misc cache after %s: %d files", date_str, removed)
 
         except ScraperStopped:
             logger.warning("Scraper stopped during ingest of %s", date_str)

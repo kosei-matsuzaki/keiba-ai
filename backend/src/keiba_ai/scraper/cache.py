@@ -67,3 +67,28 @@ def write_cache(url: str, html: str) -> Path:
 
 def content_hash(html: str) -> str:
     return _sha256(html)
+
+
+def clear_misc_cache() -> int:
+    """Remove all cached files under data/raw/misc/.
+
+    `misc/` holds horse_detail / horse_pedigree / calendar HTML — content that
+    is one-time-use during ingest and offers no value once parsed into the DB.
+    Long-running range ingests can grow this to many GB of unique horse pages,
+    so we clear it after each successful day to keep disk usage bounded.
+
+    race_result HTML lives under `data/raw/<YYYY>/<MM>/` and is intentionally
+    untouched so parser fixes can re-run against cached pages.
+
+    Returns:
+        Number of files removed (0 if the directory does not exist).
+    """
+    misc = raw_dir() / _MISC_DIR_NAME
+    if not misc.exists():
+        return 0
+    count = 0
+    for f in misc.iterdir():
+        if f.is_file():
+            f.unlink()
+            count += 1
+    return count
