@@ -52,7 +52,8 @@ _TRACK_NEW_RE = re.compile(r"(?:ダート|芝|ダ|障)\s*[:：]\s*([^\s/]+)")
 # レースクラス: G1〜G3 / GⅠ〜GⅢ / Listed / オープン / 重賞 等。
 # RaceData02 (modern result page) の <span> 群から拾い、無ければ
 # レース名 (RaceName) の括弧内表記に fallback する。
-_GRADE_RE = re.compile(r"(GⅠ|GⅡ|GⅢ|G1|G2|G3|Listed|L|OP|重賞)")
+# `L` は単独文字なので word boundary を付けて "1600L" 等の偶発マッチを防ぐ。
+_GRADE_RE = re.compile(r"(GⅠ|GⅡ|GⅢ|G1|G2|G3|Listed|\bL\b|OP|重賞)")
 
 # JRA トラックコード（race_id の 5-6 桁目）→ コース名
 _COURSE_CODE_MAP = {
