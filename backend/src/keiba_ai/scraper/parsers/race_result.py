@@ -49,6 +49,11 @@ _WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
 _TRACK_OLD_RE = re.compile(r"馬場\s*[:：]\s*([^\s/]+)")
 _TRACK_NEW_RE = re.compile(r"(?:ダート|芝|ダ|障)\s*[:：]\s*([^\s/]+)")
 
+# レースクラス: G1〜G3 / GⅠ〜GⅢ / Listed / オープン / 重賞 等。
+# RaceData02 (modern result page) の <span> 群から拾い、無ければ
+# レース名 (RaceName) の括弧内表記に fallback する。
+_GRADE_RE = re.compile(r"(GⅠ|GⅡ|GⅢ|G1|G2|G3|Listed|L|OP|重賞)")
+
 # JRA トラックコード（race_id の 5-6 桁目）→ コース名
 _COURSE_CODE_MAP = {
     "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
@@ -144,6 +149,23 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
     track_m = _TRACK_OLD_RE.search(page_text) or _TRACK_NEW_RE.search(page_text)
     if track_m:
         result.track_condition = track_m.group(1)
+
+    # race_class: RaceData02 の span 群を優先し、無ければ RaceName の
+    # 括弧内表記、最終的にページ全体のテキストにフォールバック。
+    race_data_02 = soup.find(class_="RaceData02")
+    candidates: list[str] = []
+    if race_data_02:
+        candidates = [s.get_text(strip=True) for s in race_data_02.find_all("span")]
+    race_name_el = soup.find(class_="RaceName")
+    if race_name_el:
+        candidates.append(race_name_el.get_text(" ", strip=True))
+    candidates.append(page_text)
+
+    for text in candidates:
+        m = _GRADE_RE.search(text)
+        if m:
+            result.race_class = m.group(1)
+            break
 
 
 def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ParsedEntry]:
