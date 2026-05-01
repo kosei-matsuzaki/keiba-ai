@@ -33,9 +33,15 @@ DATE = "2024-12-28"
 
 
 def _build_fake_fetch(calendar_html: str, result_html: str):
+    """Basic fake — calendar + race result only; /horse/ raises so detail fetch
+    is exercised through its existing graceful-failure path (logged warning,
+    horse_kwargs stays at race_result-derived name).
+    """
     async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
-        if "race_list" in url:
+        if "/race/list/" in url:
             return calendar_html
+        if "/horse/" in url:
+            raise RuntimeError(f"basic mock has no horse fixture for {url}")
         return result_html
     return fake_fetch
 
@@ -267,7 +273,7 @@ def _build_fake_fetch_with_detail(
 ):
     """Fake fetch that routes horse/ped URLs to fixture HTML."""
     async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
-        if "race_list" in url:
+        if "/race/list/" in url:
             return calendar_html
         if "/horse/ped/" in url:
             return pedigree_html
@@ -374,7 +380,7 @@ async def test_ingest_continues_on_horse_detail_fetch_failure(
     client = NetkeibaClient(rate, robots, http, settings)
 
     async def failing_detail_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
-        if "race_list" in url:
+        if "/race/list/" in url:
             return CALENDAR_HTML
         if "/horse/" in url and "/race/" not in url:
             raise RuntimeError("simulated network failure")

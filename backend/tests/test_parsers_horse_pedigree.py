@@ -35,7 +35,12 @@ def test_parse_horse_pedigree_handles_no_blood_table():
 
 
 def test_parse_horse_pedigree_handles_insufficient_parents():
-    """blood_table with only one large-rowspan TD should not raise."""
+    """blood_table with only one large-rowspan TD should not raise.
+
+    Sire is still extracted (the TD is present); only dam stays None because
+    the TR count is shorter than sire's rowspan, so the dam row index is
+    unreachable. Returning the partial sire is safer than discarding both.
+    """
     html = """
     <html><body>
       <table class="blood_table detail">
@@ -44,5 +49,7 @@ def test_parse_horse_pedigree_handles_insufficient_parents():
     </body></html>
     """
     result = parse_horse_pedigree(html, "0000000001")
-    assert result.sire_name is None
+    assert isinstance(result, ParsedPedigree)
+    assert result.sire_name == "ロードカナロア"
     assert result.dam_name is None
+    assert result.dam_id is None

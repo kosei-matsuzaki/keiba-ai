@@ -8,13 +8,17 @@ from keiba_ai.scraper.parsers.race_calendar import ParseError, parse_race_ids_fr
 
 
 def test_extracts_race_ids(calendar_html):
+    """Fixture is the 2024-12-28 開催日 page (中山6回5日目 + 京都8回7日目).
+
+    netkeiba race_id encodes track/開催回/日目, NOT the date itself, so
+    expected IDs reflect the 開催 metadata of the listed races.
+    """
     race_ids = parse_race_ids_from_calendar(calendar_html)
     assert race_ids == [
-        "202412280101",
-        "202412280102",
-        "202412280103",
-        "202412280201",
-        "202412280202",
+        "202406050901",
+        "202406050911",
+        "202408070901",
+        "202408070911",
     ]
 
 
