@@ -28,11 +28,16 @@ def compute_horse_history(
     Returns a dict with NaN values for horses with no prior history, letting
     LightGBM handle missing data natively.
 
-    New fields (PR-C):
-        recent_avg_agari_3f: average agari_3f over last n_recent races (None excluded)
-        days_since_last_race: calendar days since most recent race, or NaN if none
-        wins_same_course: number of wins at the given course before before_date
-        recent_finish_1/2/3: finish positions of the last 1/2/3 races (NaN if missing)
+    Returned keys:
+        recent_avg_finish, recent_n_starts, starts_same_distance,
+        starts_same_course, wins_same_course, horse_course_place_rate,
+        recent_avg_agari_3f, days_since_last_race,
+        recent_finish_1, recent_finish_2, recent_finish_3.
+
+    horse_course_place_rate is the share of finishes <= 3 at the given course
+    (NaN when course is None or starts_same_course == 0). It is consumed by
+    builder.py to compute `course_place_rate_vs_field` and is not itself part
+    of FEATURE_COLUMNS.
     """
     before_str = before_date.isoformat()
 
@@ -56,6 +61,7 @@ def compute_horse_history(
             "recent_avg_agari_3f": nan,
             "days_since_last_race": nan,
             "wins_same_course": 0,
+            "horse_course_place_rate": nan,
             "recent_finish_1": nan,
             "recent_finish_2": nan,
             "recent_finish_3": nan,
@@ -99,17 +105,23 @@ def compute_horse_history(
     except (ValueError, TypeError):
         days_since_last_race = nan
 
-    # PR-C: win count at the given course (finish_position == 1, before before_date)
-    wins_same_course = (
-        sum(
-            1
-            for r in rows
-            if course is not None
-            and r.Race.course == course
-            and r.Entry.finish_position == 1
-        )
-        if course is not None
-        else 0
+    # Win / place counts at the given course (before before_date).
+    # place rate uses starts_same_course as denominator; NaN when 0 starts.
+    wins_same_course = 0
+    places_same_course = 0
+    if course is not None:
+        for r in rows:
+            if r.Race.course != course:
+                continue
+            pos = r.Entry.finish_position
+            if pos == 1:
+                wins_same_course += 1
+            if pos is not None and pos <= 3:
+                places_same_course += 1
+    horse_course_place_rate = (
+        places_same_course / starts_same_course
+        if starts_same_course > 0
+        else nan
     )
 
     # PR-C: individual finish positions for the last 3 races
@@ -128,6 +140,7 @@ def compute_horse_history(
         "recent_avg_agari_3f": recent_avg_agari_3f,
         "days_since_last_race": days_since_last_race,
         "wins_same_course": wins_same_course,
+        "horse_course_place_rate": horse_course_place_rate,
         "recent_finish_1": _nth_finish(1),
         "recent_finish_2": _nth_finish(2),
         "recent_finish_3": _nth_finish(3),

@@ -3,9 +3,12 @@
 build_training_frame and build_inference_frame both delegate to _build_entry_row,
 which strictly uses only data before each race's date to prevent leakage.
 
-PR-C refactor: relative features (compute_within_race_features) require all
-entries for a race to be available simultaneously, so both public functions now
-batch by race before iterating over individual entries.
+Within-race relative features (compute_within_race_features) require all
+entries for a race to be available simultaneously. To populate
+`jockey_recent_win_rate_vs_field` and `course_place_rate_vs_field` without
+duplicating DB queries, we build raw entry rows first (which compute jockey
+recent win rate and horse same-course place rate), then derive the per-race
+relative dict from those values and merge it back.
 """
 
 from __future__ import annotations
@@ -100,13 +103,12 @@ def _build_entry_row(
     entry: Entry,
     n_runners: int,
     race_date: date,
-    relative_features: dict,
 ) -> dict[str, object]:
     """Build a single feature row for one entry in one race.
 
     All historical lookups use race_date (strictly before) to prevent leakage.
-    relative_features must be pre-computed for the full race field before
-    this function is called.
+    Relative features are absent here — _build_race_rows merges them in a
+    second pass once the full field is known.
     """
     horse_feats = compute_horse_history(
         session,
@@ -166,8 +168,41 @@ def _build_entry_row(
     row.update(jockey_feats)
     row.update(trainer_feats)
     row.update(pedigree_feats)
-    row.update(relative_features)
     return row
+
+
+def _build_race_rows(
+    session: Session,
+    race: Race,
+    entries: list[Entry],
+) -> list[dict[str, object]]:
+    """Build all entry rows for a single race, including within-race relative features.
+
+    Two-phase: build raw rows first so jockey_recent_win_rate and
+    horse_course_place_rate become available, then derive the relative dict
+    and merge it back. This avoids re-querying the DB for those stats.
+    """
+    n_runners = race.n_runners or len(entries)
+    race_date = _parse_date(race.date)
+
+    rows = [_build_entry_row(session, race, entry, n_runners, race_date) for entry in entries]
+
+    nan = math.nan
+    jockey_recent_win_rates = {
+        row["horse_id"]: row.get("jockey_recent_win_rate", nan) for row in rows
+    }
+    horse_course_place_rates = {
+        row["horse_id"]: row.get("horse_course_place_rate", nan) for row in rows
+    }
+
+    relative_dict = compute_within_race_features(
+        entries,
+        jockey_recent_win_rates=jockey_recent_win_rates,
+        horse_course_place_rates=horse_course_place_rates,
+    )
+    for row in rows:
+        row.update(relative_dict.get(row["horse_id"], {}))
+    return rows
 
 
 def _load_races_in_range(
@@ -193,10 +228,6 @@ def build_training_frame(
     Includes finish_position for label assignment.
     Leakage prevention: each entry's features are computed using only records
     strictly before that race's date.
-
-    PR-C: races are now processed as a unit so that within-race relative
-    features (compute_within_race_features) see the full field before any
-    per-entry historical computation.
     """
     races = _load_races_in_range(session, train_start, train_end)
     if not races:
@@ -210,15 +241,7 @@ def build_training_frame(
         entries = list(session.scalars(entry_stmt).all())
         if not entries:
             continue
-        n_runners = race.n_runners or len(entries)
-        race_date = _parse_date(race.date)
-
-        # Relative features need the full field — compute once per race
-        relative_dict = compute_within_race_features(entries)
-
-        for entry in entries:
-            rel = relative_dict.get(entry.horse_id, {})
-            rows.append(_build_entry_row(session, race, entry, n_runners, race_date, rel))
+        rows.extend(_build_race_rows(session, race, entries))
 
     df = pd.DataFrame(rows)
     # Ensure all feature columns exist (fill with NaN if missing)
@@ -233,9 +256,6 @@ def build_inference_frame(session: Session, race_id: str) -> pd.DataFrame:
 
     Usable at entry-form stage — finish_position is excluded.
     Uses the race's own date as the cutoff for historical lookups.
-
-    PR-C: within-race relative features are computed across the full field
-    before individual entry rows are assembled.
     """
     race = session.get(Race, race_id)
     if race is None:
@@ -243,18 +263,10 @@ def build_inference_frame(session: Session, race_id: str) -> pd.DataFrame:
 
     entry_stmt = select(Entry).where(Entry.race_id == race_id)
     entries = list(session.scalars(entry_stmt).all())
-    n_runners = race.n_runners or len(entries)
-    race_date = _parse_date(race.date)
 
-    # Relative features need the full field — compute once
-    relative_dict = compute_within_race_features(entries)
-
-    rows: list[dict[str, object]] = []
-    for entry in entries:
-        rel = relative_dict.get(entry.horse_id, {})
-        row = _build_entry_row(session, race, entry, n_runners, race_date, rel)
+    rows = _build_race_rows(session, race, entries)
+    for row in rows:
         row.pop("finish_position", None)
-        rows.append(row)
 
     df = pd.DataFrame(rows)
     for col in FEATURE_COLUMNS:
