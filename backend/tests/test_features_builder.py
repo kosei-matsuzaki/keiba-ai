@@ -147,6 +147,34 @@ def test_relative_features_per_race(syn_engine):
         )
 
 
+def test_jockey_and_course_relative_features_populated(syn_engine):
+    """jockey_recent_win_rate_vs_field and course_place_rate_vs_field must
+    have at least one non-NaN value — the regression we're guarding against
+    is them being always-NaN because the builder forgot to feed pre-computed
+    stats into compute_within_race_features.
+    """
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session)
+
+    if df.empty:
+        pytest.skip("No data to test")
+
+    jwr = df["jockey_recent_win_rate_vs_field"].dropna()
+    cpr = df["course_place_rate_vs_field"].dropna()
+    assert not jwr.empty, "jockey_recent_win_rate_vs_field is entirely NaN"
+    assert not cpr.empty, "course_place_rate_vs_field is entirely NaN"
+
+    # Within any race, the field-relative deltas should sum to ~0
+    # (since each value is rate - field_mean).
+    for race_id, group in df.groupby("race_id"):
+        for col in ["jockey_recent_win_rate_vs_field", "course_place_rate_vs_field"]:
+            valid = group[col].dropna()
+            if len(valid) >= 2:
+                assert valid.sum() == pytest.approx(0.0, abs=1e-6), (
+                    f"race {race_id}: {col} deltas should sum to 0, got {valid.sum()}"
+                )
+
+
 def test_horse_weight_pct_bounded(syn_engine):
     """horse_weight_pct must be in [0.0, 1.0] for all non-NaN rows."""
     with session_scope(syn_engine) as session:

@@ -238,6 +238,31 @@ def test_compute_horse_history_includes_recent_finish_n(rich_engine):
     assert result["recent_finish_3"] == pytest.approx(2.0)
 
 
+def test_compute_horse_history_includes_course_place_rate(rich_engine):
+    """horse_course_place_rate = (finishes <= 3 at course) / starts_same_course."""
+    with Session(rich_engine) as session:
+        result = compute_horse_history(
+            session,
+            horse_id="H001",
+            before_date=date(2024, 6, 15),
+            course="東京",
+        )
+    # At 東京: R1(finish=1), R2(finish=2), R4(finish=1) → 3 places / 3 starts
+    assert result["starts_same_course"] == 3
+    assert result["horse_course_place_rate"] == pytest.approx(1.0)
+
+
+def test_horse_course_place_rate_nan_without_course(rich_engine):
+    """horse_course_place_rate is NaN when course filter is not provided."""
+    with Session(rich_engine) as session:
+        result = compute_horse_history(
+            session,
+            horse_id="H001",
+            before_date=date(2024, 6, 15),
+        )
+    assert math.isnan(result["horse_course_place_rate"])
+
+
 def test_horse_history_excludes_races_after_before_date(rich_engine):
     """Leakage prevention: races on or after before_date must not appear.
 
