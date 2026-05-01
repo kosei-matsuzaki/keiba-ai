@@ -5,6 +5,11 @@ Usage:
                                            [--db PATH]
                                            [--start YYYY-MM-DD]
                                            [--end YYYY-MM-DD]
+                                           [--baseline favorite]
+
+When --baseline favorite is given, the same dataset is also evaluated under
+the dumb "always bet on the lowest-odds horse" strategy, and the output
+becomes a nested dict {model: {...}, baseline_favorite: {...}, delta: {...}}.
 """
 
 from __future__ import annotations
@@ -49,13 +54,129 @@ def _parse_payout_place(json_str: str | None) -> dict[int, int]:
         return {}
 
 
+def _evaluate_favorite_baseline(frame: pd.DataFrame) -> dict:
+    """Evaluate the 'always bet on the lowest-odds horse' baseline.
+
+    Strategy: per race, identify the horse with the lowest odds_win and bet
+    100 yen on win + 100 yen on place. Skips races where no horse has a
+    valid odds_win.
+
+    Returns metrics with the same keys as `evaluate()` for direct comparison.
+    """
+    ndcg1_list: list[float] = []
+    ndcg3_list: list[float] = []
+    top1_hits: list[int] = []
+    place_hits: list[int] = []
+
+    win_bets = 0
+    win_invested = 0.0
+    win_gross_payout = 0.0
+    place_bets = 0
+    place_invested = 0.0
+    place_gross_payout = 0.0
+
+    for race_id in frame["race_id"].unique():
+        race_frame = frame[frame["race_id"] == race_id].copy()
+        if len(race_frame) < 2:
+            continue
+
+        valid = race_frame.dropna(subset=["odds_win"])
+        if valid.empty:
+            continue
+
+        # NDCG: score = -odds_win so the lowest-odds horse ranks #1
+        true_rel = race_frame["relevance"].values.reshape(1, -1)
+        score_map = {row["horse_id"]: -float(row["odds_win"]) for _, row in valid.iterrows()}
+        # Horses without odds_win get a very small score so they rank last
+        pred_scores = np.array(
+            [score_map.get(h, -1e10) for h in race_frame["horse_id"]]
+        ).reshape(1, -1)
+        ndcg1_list.append(float(ndcg_score(true_rel, pred_scores, k=1)))
+        ndcg3_list.append(float(ndcg_score(true_rel, pred_scores, k=3)))
+
+        # The favourite = lowest odds_win
+        favourite = valid.sort_values("odds_win").iloc[0]
+        fav_finish = favourite.get("finish_position")
+        fav_finish_int = (
+            int(fav_finish)
+            if fav_finish is not None
+            and not pd.isna(fav_finish)
+            and float(fav_finish) == int(fav_finish)
+            else None
+        )
+
+        top1_hits.append(1 if fav_finish_int == 1 else 0)
+        place_hits.append(1 if fav_finish_int is not None and fav_finish_int <= 3 else 0)
+
+        # Always bet 100 on win on the favourite
+        win_bets += 1
+        win_invested += 100
+        if fav_finish_int == 1:
+            win_gross_payout += float(favourite["odds_win"]) * 100
+
+        # Always bet 100 on place on the favourite (when payout_place is known)
+        payout_place_raw: str | None = None
+        if "payout_place" in race_frame.columns:
+            vals = race_frame["payout_place"].dropna()
+            if not vals.empty:
+                payout_place_raw = vals.iloc[0]
+        payout_place_map = _parse_payout_place(payout_place_raw)
+        if payout_place_map:
+            place_bets += 1
+            place_invested += 100
+            if fav_finish_int in payout_place_map:
+                place_gross_payout += payout_place_map[fav_finish_int]
+
+    n_races = len(ndcg1_list)
+    return {
+        "n_races": n_races,
+        "ndcg1": float(np.mean(ndcg1_list)) if ndcg1_list else float("nan"),
+        "ndcg3": float(np.mean(ndcg3_list)) if ndcg3_list else float("nan"),
+        "top1_hit": float(np.mean(top1_hits)) if top1_hits else float("nan"),
+        "place_hit": float(np.mean(place_hits)) if place_hits else float("nan"),
+        "win_bets": win_bets,
+        "win_invested": win_invested,
+        "win_gross_payout": win_gross_payout,
+        "payback_win": (win_gross_payout / win_invested) if win_invested > 0 else float("nan"),
+        "place_bets": place_bets,
+        "place_invested": place_invested,
+        "place_gross_payout": place_gross_payout,
+        "payback_place": (
+            (place_gross_payout / place_invested) if place_invested > 0 else float("nan")
+        ),
+    }
+
+
+def _delta_metrics(model: dict, baseline: dict) -> dict:
+    """Compute model − baseline for headline comparison metrics.
+
+    NaN on either side propagates to NaN; integer-only fields (counts) are skipped.
+    """
+    keys = ["ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place"]
+    out: dict[str, float] = {}
+    for k in keys:
+        m = model.get(k)
+        b = baseline.get(k)
+        if m is None or b is None or pd.isna(m) or pd.isna(b):
+            out[k] = float("nan")
+        else:
+            out[k] = float(m) - float(b)
+    return out
+
+
 def evaluate(
     model_path: Path,
     db: Path | None = None,
     start: str | None = None,
     end: str | None = None,
+    baseline: str | None = None,
 ) -> dict:
-    """Run backtest evaluation and return metrics dict."""
+    """Run backtest evaluation and return metrics dict.
+
+    When `baseline` is None (default), returns the flat model metrics dict
+    (backwards compatible). When baseline=='favorite', returns
+    {"model": {...}, "baseline_favorite": {...}, "delta": {...}}.
+    """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
@@ -186,6 +307,16 @@ def evaluate(
     }
 
     log.info("Evaluation metrics: %s", metrics)
+
+    if baseline == "favorite":
+        baseline_metrics = _evaluate_favorite_baseline(frame)
+        log.info("Baseline (favorite) metrics: %s", baseline_metrics)
+        return {
+            "model": metrics,
+            "baseline_favorite": baseline_metrics,
+            "delta": _delta_metrics(metrics, baseline_metrics),
+        }
+
     return metrics
 
 
@@ -195,6 +326,12 @@ def _cli() -> None:
     parser.add_argument("--db", type=Path, default=None, help="Path to SQLite DB")
     parser.add_argument("--start", default=None, help="Evaluation start date YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="Evaluation end date YYYY-MM-DD")
+    parser.add_argument(
+        "--baseline",
+        choices=["favorite"],
+        default=None,
+        help="Also evaluate a baseline strategy alongside the model and report deltas",
+    )
     args = parser.parse_args()
 
     metrics = evaluate(
@@ -202,6 +339,7 @@ def _cli() -> None:
         db=args.db,
         start=args.start,
         end=args.end,
+        baseline=args.baseline,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
