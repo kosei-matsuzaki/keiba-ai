@@ -17,6 +17,8 @@ import type {
   MetricsTimeseries,
   ModelMeta,
   JobAccepted,
+  JobInfo,
+  ScraperRecentActivity,
   ScraperStatus,
   ScraperRunRequest,
   SettingsResponse,
@@ -92,6 +94,18 @@ export function trainModel(body: TrainRequest): Promise<JobAccepted> {
 
 export function fetchScraperStatus(): Promise<ScraperStatus> {
   return getClient().then((c) => c.get('scraper/status').json<ScraperStatus>());
+}
+
+export function fetchScraperRecentActivity(minutes = 10): Promise<ScraperRecentActivity> {
+  return getClient().then((c) =>
+    c
+      .get('scraper/recent_activity', { searchParams: { minutes } })
+      .json<ScraperRecentActivity>()
+  );
+}
+
+export function fetchJob(jobId: string): Promise<JobInfo> {
+  return getClient().then((c) => c.get(`jobs/${jobId}`).json<JobInfo>());
 }
 
 export function runScraper(body: ScraperRunRequest): Promise<JobAccepted> {

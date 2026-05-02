@@ -4,15 +4,19 @@ import { useActivateModel } from '@/hooks/useActivateModel';
 import { useTrainModel } from '@/hooks/useTrainModel';
 import { ModelTable } from '@/components/ModelTable';
 import { TrainModelDialog } from '@/components/TrainModelDialog';
+import { JobProgressCard } from '@/components/JobProgressCard';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
+import { useTrainingStore } from '@/store/app';
 import type { TrainRequest } from '@/types/api';
 
 export function Models() {
   const modelsQuery = useModels();
   const activateMutation = useActivateModel();
   const trainMutation = useTrainModel();
+  const trackedJobId = useTrainingStore((s) => s.trackedJobId);
+  const setTrackedJobId = useTrainingStore((s) => s.setTrackedJobId);
   const [activatingId, setActivatingId] = useState<number | null>(null);
 
   function handleActivate(id: number) {
@@ -32,6 +36,7 @@ export function Models() {
   function handleTrain(req: TrainRequest) {
     trainMutation.mutate(req, {
       onSuccess: (data) => {
+        setTrackedJobId(data.job_id);
         toast.success(`学習ジョブを受け付けました（Job ID: ${data.job_id}）`);
       },
       onError: (err) => {
@@ -46,6 +51,14 @@ export function Models() {
         <h1 className="text-2xl font-bold">Models</h1>
         <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
       </div>
+
+      {trackedJobId && (
+        <JobProgressCard
+          jobId={trackedJobId}
+          title="train ジョブ進捗"
+          onDismiss={() => setTrackedJobId(null)}
+        />
+      )}
 
       {modelsQuery.isPending ? (
         <Skeleton className="h-64 w-full rounded-lg" />

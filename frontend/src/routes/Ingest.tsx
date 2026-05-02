@@ -3,6 +3,7 @@ import { useScraperRun } from '@/hooks/useScraperRun';
 import { useScraperStop } from '@/hooks/useScraperStop';
 import { useScraperStore } from '@/store/app';
 import { ScraperStatusCard } from '@/components/ScraperStatusCard';
+import { JobProgressCard } from '@/components/JobProgressCard';
 import { IngestRunDialog } from '@/components/IngestRunDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,12 +26,15 @@ export function Ingest() {
   const runMutation = useScraperRun();
   const stopMutation = useScraperStop();
   const setRunning = useScraperStore((s) => s.setRunning);
+  const trackedJobId = useScraperStore((s) => s.trackedJobId);
+  const setTrackedJobId = useScraperStore((s) => s.setTrackedJobId);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
 
   function handleRun(req: ScraperRunRequest) {
     setRunning(true);
     runMutation.mutate(req, {
       onSuccess: (data) => {
+        setTrackedJobId(data.job_id);
         toast.success(`スクレイピングを開始しました（Job ID: ${data.job_id}）`);
       },
       onError: (err) => {
@@ -84,6 +88,14 @@ export function Ingest() {
           </Dialog>
         </div>
       </div>
+
+      {trackedJobId && (
+        <JobProgressCard
+          jobId={trackedJobId}
+          title="ingest ジョブ進捗"
+          onDismiss={() => setTrackedJobId(null)}
+        />
+      )}
 
       {statusQuery.isPending ? (
         <Skeleton className="h-40 w-full rounded-lg" />

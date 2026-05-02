@@ -109,6 +109,23 @@ class ScraperStatus(BaseModel):
     current_job_id: str | None
 
 
+class ScraperRecentActivity(BaseModel):
+    """Aggregate of scrape_log over the last `window_minutes` minutes.
+
+    Useful to show CLI-driven ingest progress (the JobRegistry only sees
+    jobs that the UI itself launched, so without this aggregate the UI
+    would appear silent during a CLI ingest_range run).
+    """
+    window_minutes: int
+    total_fetched: int
+    ok_count: int
+    error_count: int
+    skipped_count: int
+    rate_per_min: float
+    latest_fetched_at: str | None
+    latest_race_id: str | None
+
+
 class JobAccepted(BaseModel):
     job_id: str
     status: str
