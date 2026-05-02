@@ -133,13 +133,20 @@ def train(
         len(test_df),
     )
 
-    if train_df.empty or valid_df.empty:
+    if train_df.empty:
+        # Truly no training data after split — fall back to using everything.
+        # This still leaks any test rows into training, but at that point the
+        # split was so degenerate that we have nothing else to learn from.
         log.warning(
-            "Train or valid set is empty — using full frame for training without early stopping."
+            "Train set is empty — using full frame for training (test will leak; "
+            "consider widening the split window)."
         )
-        # Fall back: use the whole frame as training, no early stopping
         train_df = frame.copy()
         valid_df = pd.DataFrame(columns=frame.columns)
+    elif valid_df.empty:
+        # Valid is just an early-stopping helper. Skipping it must NOT pull test
+        # rows into training (that would silently leak test → 1.0 NDCG).
+        log.info("Valid set is empty — proceeding without early stopping.")
 
     train_data = _make_lgb_dataset(train_df, FEATURE_COLUMNS, CATEGORICAL_FEATURES)
 
