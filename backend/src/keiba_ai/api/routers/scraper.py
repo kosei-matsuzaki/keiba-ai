@@ -1,8 +1,9 @@
-"""Scraper management endpoints: status, run, stop."""
+"""Scraper management endpoints: status, recent activity, run, stop."""
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import re
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -16,7 +17,12 @@ from sqlalchemy.orm import Session
 
 from keiba_ai.api.deps import get_job_registry, get_session
 from keiba_ai.api.jobs import JobRegistry
-from keiba_ai.api.schemas import JobAccepted, ScraperRunRequest, ScraperStatus
+from keiba_ai.api.schemas import (
+    JobAccepted,
+    ScraperRecentActivity,
+    ScraperRunRequest,
+    ScraperStatus,
+)
 from keiba_ai.core.config import load_settings
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models.scrape_log import ScrapeLog
@@ -30,6 +36,7 @@ from keiba_ai.scraper.robots import RobotsCache
 router = APIRouter()
 
 _RESULT_URL_PREFIX = "https://db.netkeiba.com/race/"
+_RACE_ID_FROM_URL_RE = re.compile(r"/race/(\d{12})")
 
 
 def _count_missing_dates(session: Session, days: int = 30) -> int:
@@ -88,6 +95,50 @@ def get_scraper_status(
         last_fetched_date=last_fetched,
         missing_dates_count=missing,
         current_job_id=registry.current_ingest_job_id(),
+    )
+
+
+@router.get("/scraper/recent_activity", response_model=ScraperRecentActivity)
+def recent_activity(
+    session: Annotated[Session, Depends(get_session)],
+    minutes: int = Query(default=10, ge=1, le=1440),
+) -> ScraperRecentActivity:
+    """Aggregate scrape_log over the last N minutes.
+
+    Designed to surface CLI-driven ingest progress alongside UI-launched jobs.
+    fetched_at is stored as UTC ISO 8601, so a string `>=` cutoff works.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
+
+    rows = session.execute(
+        select(ScrapeLog.url, ScrapeLog.status, ScrapeLog.fetched_at)
+        .where(ScrapeLog.fetched_at >= cutoff)
+        .order_by(ScrapeLog.fetched_at.desc())
+    ).all()
+
+    total = len(rows)
+    ok = sum(1 for r in rows if r.status == "ok")
+    err = sum(1 for r in rows if r.status == "error")
+    skipped = sum(1 for r in rows if r.status == "skipped")
+
+    latest_fetched_at = rows[0].fetched_at if rows else None
+    latest_race_id: str | None = None
+    if rows:
+        m = _RACE_ID_FROM_URL_RE.search(rows[0].url)
+        if m:
+            latest_race_id = m.group(1)
+
+    rate_per_min = ok / max(minutes, 1)
+
+    return ScraperRecentActivity(
+        window_minutes=minutes,
+        total_fetched=total,
+        ok_count=ok,
+        error_count=err,
+        skipped_count=skipped,
+        rate_per_min=round(rate_per_min, 2),
+        latest_fetched_at=latest_fetched_at,
+        latest_race_id=latest_race_id,
     )
 
 

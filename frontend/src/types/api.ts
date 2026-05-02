@@ -111,6 +111,26 @@ export interface JobAccepted {
   started_at: string;
 }
 
+export interface JobInfo {
+  job_id: string;
+  type: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | string;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface ScraperRecentActivity {
+  window_minutes: number;
+  total_fetched: number;
+  ok_count: number;
+  error_count: number;
+  skipped_count: number;
+  rate_per_min: number;
+  latest_fetched_at: string | null;
+  latest_race_id: string | null;
+}
+
 export interface TrainRequest {
   train_end?: string;
   valid_months?: number;
