@@ -55,12 +55,14 @@ export function Models() {
       </div>
 
       {/* Active model summary at the top of the page (no link to Models — already here) */}
-      {modelsQuery.data && (
+      {modelsQuery.isPending ? (
+        <Skeleton className="h-24 w-full rounded-lg" />
+      ) : modelsQuery.data ? (
         <ActiveModelCard
           model={modelsQuery.data.find((m) => m.is_active) ?? null}
           linkToModels={false}
         />
-      )}
+      ) : null}
 
       {trackedJobId && (
         <JobProgressCard
