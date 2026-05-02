@@ -7,6 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { formatScore } from '@/lib/formatters';
 import type { TimeseriesPoint } from '@/types/api';
 
 interface AccuracyChartProps {
@@ -35,7 +36,7 @@ export function AccuracyChart({ points, metricLabel }: AccuracyChartProps) {
         <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
         <Tooltip
           labelFormatter={(label: string) => label}
-          formatter={(value: number) => [value.toFixed(3), metricLabel]}
+          formatter={(value: number) => [formatScore(value), metricLabel]}
         />
         <Line
           type="monotone"

@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { formatPercent, formatRatio, formatScore } from '@/lib/formatters';
 
 interface MetricCardProps {
   title: string;
@@ -8,15 +9,14 @@ interface MetricCardProps {
 }
 
 function formatValue(value: number | null, format: MetricCardProps['format']): string {
-  if (value === null) return '—';
   switch (format) {
     case 'percent':
-      return `${(value * 100).toFixed(1)}%`;
+      return formatPercent(value);
     case 'ratio':
-      return value.toFixed(2);
+      return formatRatio(value);
     case 'decimal':
     default:
-      return value.toFixed(3);
+      return formatScore(value);
   }
 }
 
