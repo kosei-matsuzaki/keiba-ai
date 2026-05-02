@@ -1,4 +1,8 @@
-import { useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -18,17 +22,56 @@ interface TrainModelDialogProps {
   isPending: boolean;
 }
 
+const optionalDate = z
+  .union([
+    z.literal(''),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で入力してください'),
+  ])
+  .optional();
+
+const optionalNonNegInt = z
+  .union([
+    z.literal(''),
+    z.coerce.number().int('整数を入力してください').min(0, '0 以上を指定してください'),
+  ])
+  .optional();
+
+const schema = z.object({
+  train_end: optionalDate,
+  valid_months: optionalNonNegInt,
+  test_months: optionalNonNegInt,
+});
+
+type FormValues = z.infer<typeof schema>;
+
 export function TrainModelDialog({ onSubmit, isPending }: TrainModelDialogProps) {
   const [open, setOpen] = useState(false);
-  const [trainEnd, setTrainEnd] = useState('');
-  const [validMonths, setValidMonths] = useState('');
-  const [testMonths, setTestMonths] = useState('');
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isValid },
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { train_end: '', valid_months: '', test_months: '' },
+    mode: 'onChange',
+  });
 
-  function handleSubmit() {
+  useEffect(() => {
+    if (open) reset({ train_end: '', valid_months: '', test_months: '' });
+  }, [open, reset]);
+
+  function submit(values: FormValues) {
     const req: TrainRequest = {};
-    if (trainEnd) req.train_end = trainEnd;
-    if (validMonths) req.valid_months = Number(validMonths);
-    if (testMonths) req.test_months = Number(testMonths);
+    if (typeof values.train_end === 'string' && values.train_end) {
+      req.train_end = values.train_end;
+    }
+    if (values.valid_months !== '' && values.valid_months != null) {
+      req.valid_months = Number(values.valid_months);
+    }
+    if (values.test_months !== '' && values.test_months != null) {
+      req.test_months = Number(values.test_months);
+    }
     onSubmit(req);
     setOpen(false);
   }
@@ -47,46 +90,67 @@ export function TrainModelDialog({ onSubmit, isPending }: TrainModelDialogProps)
             学習パラメータを入力してください（すべてオプション）。
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="space-y-1">
-            <Label htmlFor="train-end">学習終了日 (YYYY-MM-DD)</Label>
-            <Input
-              id="train-end"
-              placeholder="例: 2025-12-31"
-              value={trainEnd}
-              onChange={(e) => setTrainEnd(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="valid-months">検証期間 (月数)</Label>
+        <form onSubmit={handleSubmit(submit)} className="space-y-4 py-2" noValidate>
+          <FieldRow
+            label="学習終了日 (YYYY-MM-DD)"
+            id="train-end"
+            error={errors.train_end?.message as string | undefined}
+          >
+            <Input id="train-end" placeholder="例: 2025-12-31" {...register('train_end')} />
+          </FieldRow>
+          <FieldRow
+            label="検証期間 (月数)"
+            id="valid-months"
+            error={errors.valid_months?.message as string | undefined}
+          >
             <Input
               id="valid-months"
               type="number"
-              min={1}
+              min={0}
               placeholder="例: 3"
-              value={validMonths}
-              onChange={(e) => setValidMonths(e.target.value)}
+              {...register('valid_months')}
             />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="test-months">テスト期間 (月数)</Label>
+          </FieldRow>
+          <FieldRow
+            label="テスト期間 (月数)"
+            id="test-months"
+            error={errors.test_months?.message as string | undefined}
+          >
             <Input
               id="test-months"
               type="number"
-              min={1}
+              min={0}
               placeholder="例: 3"
-              value={testMonths}
-              onChange={(e) => setTestMonths(e.target.value)}
+              {...register('test_months')}
             />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
-            キャンセル
-          </Button>
-          <Button onClick={handleSubmit}>学習開始</Button>
-        </DialogFooter>
+          </FieldRow>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              キャンセル
+            </Button>
+            <Button type="submit" disabled={!isValid}>
+              学習開始
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface FieldRowProps {
+  label: string;
+  id: string;
+  error?: string;
+  children: ReactNode;
+}
+
+function FieldRow({ label, id, error, children }: FieldRowProps) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
   );
 }
