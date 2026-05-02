@@ -50,7 +50,10 @@ export function ModelTable({ models, onActivate, activatingId }: ModelTableProps
       </TableHeader>
       <TableBody>
         {models.map((model) => (
-          <TableRow key={model.id}>
+          <TableRow
+            key={model.id}
+            className={model.is_active ? 'bg-emerald-500/5' : undefined}
+          >
             <TableCell>{model.id}</TableCell>
             <TableCell className="text-xs">{formatDateTime(model.created_at)}</TableCell>
             <TableCell className="text-xs">{model.train_range ?? PLACEHOLDER}</TableCell>

@@ -1,6 +1,8 @@
 import { useMetricsSummary } from '@/hooks/useMetricsSummary';
 import { useMetricsTimeseries } from '@/hooks/useMetricsTimeseries';
+import { useModels } from '@/hooks/useModels';
 import { MetricCard } from '@/components/MetricCard';
+import { ActiveModelCard } from '@/components/ActiveModelCard';
 import { AccuracyChart } from '@/components/AccuracyChart';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,10 +21,19 @@ function MetricsSkeleton() {
 export function Dashboard() {
   const summary = useMetricsSummary();
   const timeseries = useMetricsTimeseries('ndcg3', '180d');
+  const modelsQuery = useModels();
+  const activeModel = modelsQuery.data?.find((m) => m.is_active) ?? null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
+
+      {/* Active model summary — clickable, jumps to Models page */}
+      {modelsQuery.isPending ? (
+        <Skeleton className="h-24 w-full rounded-lg" />
+      ) : (
+        <ActiveModelCard model={activeModel} />
+      )}
 
       {/* Metric summary cards */}
       {summary.isPending ? (
