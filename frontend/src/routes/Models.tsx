@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useModels } from '@/hooks/useModels';
 import { useActivateModel } from '@/hooks/useActivateModel';
 import { useTrainModel } from '@/hooks/useTrainModel';
+import { ActiveModelCard } from '@/components/ActiveModelCard';
 import { ModelTable } from '@/components/ModelTable';
 import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { JobProgressCard } from '@/components/JobProgressCard';
@@ -52,6 +53,16 @@ export function Models() {
         <h1 className="text-2xl font-bold">Models</h1>
         <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
       </div>
+
+      {/* Active model summary at the top of the page (no link to Models — already here) */}
+      {modelsQuery.isPending ? (
+        <Skeleton className="h-24 w-full rounded-lg" />
+      ) : modelsQuery.data ? (
+        <ActiveModelCard
+          model={modelsQuery.data.find((m) => m.is_active) ?? null}
+          linkToModels={false}
+        />
+      ) : null}
 
       {trackedJobId && (
         <JobProgressCard
