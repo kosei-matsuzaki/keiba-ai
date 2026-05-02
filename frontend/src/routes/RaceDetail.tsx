@@ -15,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { isNotFoundError, isServiceUnavailableError } from '@/lib/api';
 import { formatOdds, formatYen } from '@/lib/formatters';
 
 function RaceDetailSkeleton() {
@@ -25,10 +26,6 @@ function RaceDetailSkeleton() {
       <Skeleton className="h-64 w-full rounded-lg" />
     </div>
   );
-}
-
-function isNotFoundError(error: Error): boolean {
-  return error.message.includes('404') || (error as { status?: number }).status === 404;
 }
 
 export function RaceDetail() {
@@ -46,7 +43,7 @@ export function RaceDetail() {
   }
 
   if (raceQuery.isError) {
-    const is404 = isNotFoundError(raceQuery.error as Error);
+    const is404 = isNotFoundError(raceQuery.error);
     return (
       <div className="flex flex-col gap-6 p-6">
         <h1 className="text-2xl font-bold">Race Detail</h1>
@@ -148,8 +145,12 @@ export function RaceDetail() {
             <Skeleton className="h-40 w-full" />
           ) : predQuery.isError ? (
             <EmptyState
-              message="予想データ取得に失敗しました"
-              description="active モデルが存在しない場合は予想を実行できません（503）。"
+              message="予想データを取得できません"
+              description={
+                isServiceUnavailableError(predQuery.error)
+                  ? 'active モデルが見つかりません。Models 画面から train を実行してください。'
+                  : 'バックエンドが起動しているか確認してください。'
+              }
             />
           ) : (
             <PredictionTable predictions={predQuery.data.predictions} entries={race.entries} />

@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
+import { formatErrorMessage } from '@/lib/api';
 import type { SettingsUpdate } from '@/types/api';
 
 export function Settings() {
@@ -15,8 +16,8 @@ export function Settings() {
       onSuccess: () => {
         toast.success('設定を保存しました');
       },
-      onError: (err) => {
-        toast.error(`保存に失敗しました: ${(err as Error).message}`);
+      onError: async (err) => {
+        toast.error(`保存に失敗しました: ${await formatErrorMessage(err)}`);
       },
     });
   }
