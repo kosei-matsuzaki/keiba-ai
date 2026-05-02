@@ -7,15 +7,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatPercent, formatScore } from '@/lib/formatters';
 import type { HorsePrediction, EntrySummary } from '@/types/api';
 
 interface PredictionTableProps {
   predictions: HorsePrediction[];
   entries: EntrySummary[];
-}
-
-function formatProb(v: number): string {
-  return (v * 100).toFixed(1) + '%';
 }
 
 /** Indicates BUY when single-win expected value > 1.1 */
@@ -44,9 +41,9 @@ export function PredictionTable({ predictions, entries }: PredictionTableProps) 
         {sorted.map((pred) => (
           <TableRow key={pred.horse_id}>
             <TableCell className="font-mono text-xs">{pred.horse_id}</TableCell>
-            <TableCell className="text-right">{pred.score.toFixed(3)}</TableCell>
-            <TableCell className="text-right">{formatProb(pred.win_prob)}</TableCell>
-            <TableCell className="text-right">{formatProb(pred.place_prob)}</TableCell>
+            <TableCell className="text-right">{formatScore(pred.score)}</TableCell>
+            <TableCell className="text-right">{formatPercent(pred.win_prob)}</TableCell>
+            <TableCell className="text-right">{formatPercent(pred.place_prob)}</TableCell>
             <TableCell className="text-center">
               {isBuy(pred, entries) && (
                 <Badge className="bg-emerald-600 text-white">BUY</Badge>

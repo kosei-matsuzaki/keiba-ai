@@ -15,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatOdds, formatYen } from '@/lib/formatters';
 
 function RaceDetailSkeleton() {
   return (
@@ -86,7 +87,7 @@ export function RaceDetail() {
             <MetaItem label="馬場状態" value={race.track_condition ?? '—'} />
             <MetaItem label="クラス" value={race.race_class ?? '—'} />
             <MetaItem label="出走頭数" value={race.n_runners?.toString() ?? '—'} />
-            <MetaItem label="単勝払戻" value={race.payout_win ? `¥${race.payout_win.toLocaleString()}` : '—'} />
+            <MetaItem label="単勝払戻" value={race.payout_win != null ? formatYen(race.payout_win) : '—'} />
             <MetaItem label="複勝払戻" value={race.payout_place ?? '—'} />
           </dl>
         </CardContent>
@@ -118,7 +119,7 @@ export function RaceDetail() {
                     <TableCell className="text-center">
                       {entry.age ?? '?'}{entry.sex ?? ''}
                     </TableCell>
-                    <TableCell className="text-right">{entry.odds_win?.toFixed(1) ?? '—'}</TableCell>
+                    <TableCell className="text-right">{formatOdds(entry.odds_win)}</TableCell>
                     <TableCell className="text-right">{entry.popularity ?? '—'}</TableCell>
                     <TableCell className="text-center">
                       {entry.finish_position != null ? (

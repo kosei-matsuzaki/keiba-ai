@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatDateTime, formatRatio, formatScore } from '@/lib/formatters';
 import type { ModelMeta } from '@/types/api';
 
 interface ModelTableProps {
@@ -16,11 +17,20 @@ interface ModelTableProps {
   activatingId: number | null;
 }
 
-function extractMetric(metrics: Record<string, unknown> | null, key: string): string {
-  if (!metrics) return '—';
+const PLACEHOLDER = '—';
+
+/** Pull a numeric metric from the loose `metrics` JSON and render it via the
+ *  shared formatter. ndcg-like values use 3 digits; ratio-like values 2.
+ */
+function extractMetric(
+  metrics: Record<string, unknown> | null,
+  key: string,
+  format: 'score' | 'ratio',
+): string {
+  if (!metrics) return PLACEHOLDER;
   const v = metrics[key];
-  if (typeof v === 'number') return v.toFixed(4);
-  return '—';
+  if (typeof v !== 'number') return PLACEHOLDER;
+  return format === 'ratio' ? formatRatio(v) : formatScore(v);
 }
 
 export function ModelTable({ models, onActivate, activatingId }: ModelTableProps) {
@@ -42,11 +52,11 @@ export function ModelTable({ models, onActivate, activatingId }: ModelTableProps
         {models.map((model) => (
           <TableRow key={model.id}>
             <TableCell>{model.id}</TableCell>
-            <TableCell className="text-xs">{model.created_at.slice(0, 19).replace('T', ' ')}</TableCell>
-            <TableCell className="text-xs">{model.train_range ?? '—'}</TableCell>
-            <TableCell className="text-xs">{model.valid_range ?? '—'}</TableCell>
-            <TableCell className="text-right">{extractMetric(model.metrics, 'ndcg3')}</TableCell>
-            <TableCell className="text-right">{extractMetric(model.metrics, 'payback_win')}</TableCell>
+            <TableCell className="text-xs">{formatDateTime(model.created_at)}</TableCell>
+            <TableCell className="text-xs">{model.train_range ?? PLACEHOLDER}</TableCell>
+            <TableCell className="text-xs">{model.valid_range ?? PLACEHOLDER}</TableCell>
+            <TableCell className="text-right">{extractMetric(model.metrics, 'ndcg3', 'score')}</TableCell>
+            <TableCell className="text-right">{extractMetric(model.metrics, 'payback_win', 'ratio')}</TableCell>
             <TableCell className="text-center">
               {model.is_active ? (
                 <Badge className="bg-emerald-600 text-white">Active</Badge>
