@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
+import { formatErrorMessage } from '@/lib/api';
 import type { ScraperRunRequest } from '@/types/api';
 import { useState } from 'react';
 
@@ -37,9 +38,9 @@ export function Ingest() {
         setTrackedJobId(data.job_id);
         toast.success(`スクレイピングを開始しました（Job ID: ${data.job_id}）`);
       },
-      onError: (err) => {
+      onError: async (err) => {
         setRunning(false);
-        toast.error(`スクレイピング開始に失敗しました: ${(err as Error).message}`);
+        toast.error(`スクレイピング開始に失敗しました: ${await formatErrorMessage(err)}`);
       },
     });
   }
@@ -51,8 +52,8 @@ export function Ingest() {
         setRunning(false);
         toast.success('スクレイパーを停止しました');
       },
-      onError: (err) => {
-        toast.error(`停止に失敗しました: ${(err as Error).message}`);
+      onError: async (err) => {
+        toast.error(`停止に失敗しました: ${await formatErrorMessage(err)}`);
       },
     });
   }

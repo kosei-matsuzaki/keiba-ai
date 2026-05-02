@@ -8,6 +8,7 @@ import { JobProgressCard } from '@/components/JobProgressCard';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
+import { formatErrorMessage } from '@/lib/api';
 import { useTrainingStore } from '@/store/app';
 import type { TrainRequest } from '@/types/api';
 
@@ -26,8 +27,8 @@ export function Models() {
         toast.success(`モデル ${id} をアクティブにしました`);
         setActivatingId(null);
       },
-      onError: (err) => {
-        toast.error(`Activate に失敗しました: ${(err as Error).message}`);
+      onError: async (err) => {
+        toast.error(`Activate に失敗しました: ${await formatErrorMessage(err)}`);
         setActivatingId(null);
       },
     });
@@ -39,8 +40,8 @@ export function Models() {
         setTrackedJobId(data.job_id);
         toast.success(`学習ジョブを受け付けました（Job ID: ${data.job_id}）`);
       },
-      onError: (err) => {
-        toast.error(`再学習に失敗しました: ${(err as Error).message}`);
+      onError: async (err) => {
+        toast.error(`再学習に失敗しました: ${await formatErrorMessage(err)}`);
       },
     });
   }
