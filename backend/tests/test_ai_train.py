@@ -109,7 +109,12 @@ def test_train_with_zero_valid_does_not_leak_test(syn_engine, tmp_path, monkeypa
     # If the leak fallback fired, test_ndcg1 would round to 1.0.
     # With the fix, test must be evaluated on rows the model never saw.
     import math
-    if not math.isnan(result["test_ndcg1"]):
-        assert result["test_ndcg1"] < 0.99, (
-            f"Suspicious test_ndcg1={result['test_ndcg1']:.4f} — likely test leak"
-        )
+    # Guard: if test_ndcg1 is NaN the test_df was empty and the leak check is
+    # vacuous — fail loudly so future synthetic changes don't silently weaken
+    # this regression.
+    assert not math.isnan(result["test_ndcg1"]), (
+        "test_ndcg1 is NaN — test split is empty, leak regression cannot be verified"
+    )
+    assert result["test_ndcg1"] < 0.99, (
+        f"Suspicious test_ndcg1={result['test_ndcg1']:.4f} — likely test leak"
+    )
