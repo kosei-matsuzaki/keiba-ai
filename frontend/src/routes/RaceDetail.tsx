@@ -1,8 +1,11 @@
 import { useParams, Link } from 'react-router-dom';
+import { Trophy } from 'lucide-react';
+
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { PredictionTable } from '@/components/PredictionTable';
 import { EmptyState } from '@/components/EmptyState';
+import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,7 +39,7 @@ export function RaceDetail() {
   if (raceQuery.isPending) {
     return (
       <div className="flex flex-col gap-6 p-6">
-        <h1 className="text-3xl font-bold tracking-tight">Race Detail</h1>
+        <PageHeader icon={Trophy} title="Race Detail" description={race_id} />
         <RaceDetailSkeleton />
       </div>
     );
@@ -46,7 +49,7 @@ export function RaceDetail() {
     const is404 = isNotFoundError(raceQuery.error);
     return (
       <div className="flex flex-col gap-6 p-6">
-        <h1 className="text-3xl font-bold tracking-tight">Race Detail</h1>
+        <PageHeader icon={Trophy} title="Race Detail" description={race_id} />
         <EmptyState
           message={is404 ? '指定レース ID は見つかりません' : 'レース詳細の取得に失敗しました'}
           description={is404 ? undefined : 'バックエンドが起動しているか確認してください。'}
@@ -66,7 +69,11 @@ export function RaceDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-3xl font-bold tracking-tight">Race Detail</h1>
+      <PageHeader
+        icon={Trophy}
+        title={`${race.course} ${race.race_class ?? ''}`.trim()}
+        description={`${race.date}・${race.surface}${race.distance}m・${race.race_id}`}
+      />
 
       {/* Race overview */}
       <Card>

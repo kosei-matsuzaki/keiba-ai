@@ -1,8 +1,10 @@
+import { Settings2 } from 'lucide-react';
+
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings';
 import { SettingsForm } from '@/components/SettingsForm';
 import { EmptyState } from '@/components/EmptyState';
+import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
 import { formatErrorMessage } from '@/lib/api';
 import type { SettingsUpdate } from '@/types/api';
@@ -24,28 +26,25 @@ export function Settings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+      <PageHeader
+        icon={Settings2}
+        title="Settings"
+        description="スクレイパーのレート制御・ベッティング期待値・User-Agent の調整"
+      />
 
       {settingsQuery.isPending ? (
-        <Skeleton className="h-80 w-full rounded-lg" />
+        <Skeleton className="h-96 w-full max-w-3xl rounded-lg" />
       ) : settingsQuery.isError ? (
         <EmptyState
           message="設定の取得に失敗しました"
           description="バックエンドが起動しているか確認してください。"
         />
       ) : (
-        <Card className="max-w-xl">
-          <CardHeader>
-            <CardTitle className="text-base">スクレイパー・ベット設定</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <SettingsForm
-              defaults={settingsQuery.data}
-              onSubmit={handleSubmit}
-              isPending={updateMutation.isPending}
-            />
-          </CardContent>
-        </Card>
+        <SettingsForm
+          defaults={settingsQuery.data}
+          onSubmit={handleSubmit}
+          isPending={updateMutation.isPending}
+        />
       )}
     </div>
   );
