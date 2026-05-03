@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   LineChart,
   Line,
@@ -15,7 +16,9 @@ interface AccuracyChartProps {
   metricLabel: string;
 }
 
-export function AccuracyChart({ points, metricLabel }: AccuracyChartProps) {
+// memo で wrap: parent (Dashboard) でポーリング由来の re-render が起きても、
+// points / metricLabel が同一参照なら recharts の SVG 再構築をスキップ。
+function AccuracyChartImpl({ points, metricLabel }: AccuracyChartProps) {
   if (points.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
@@ -50,3 +53,5 @@ export function AccuracyChart({ points, metricLabel }: AccuracyChartProps) {
     </ResponsiveContainer>
   );
 }
+
+export const AccuracyChart = memo(AccuracyChartImpl);
