@@ -1,3 +1,5 @@
+import { LayoutDashboard } from 'lucide-react';
+
 import { useMetricsSummary } from '@/hooks/useMetricsSummary';
 import { useMetricsTimeseries } from '@/hooks/useMetricsTimeseries';
 import { useModels } from '@/hooks/useModels';
@@ -5,6 +7,7 @@ import { MetricCard } from '@/components/MetricCard';
 import { ActiveModelCard } from '@/components/ActiveModelCard';
 import { AccuracyChart } from '@/components/AccuracyChart';
 import { EmptyState } from '@/components/EmptyState';
+import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -26,7 +29,11 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+      <PageHeader
+        icon={LayoutDashboard}
+        title="Dashboard"
+        description="モデル成績の概観と直近の指標推移"
+      />
 
       {/* Active model summary — clickable, jumps to Models page */}
       {modelsQuery.isPending ? (

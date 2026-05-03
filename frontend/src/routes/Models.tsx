@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Brain } from 'lucide-react';
+
 import { useModels } from '@/hooks/useModels';
 import { useActivateModel } from '@/hooks/useActivateModel';
 import { useTrainModel } from '@/hooks/useTrainModel';
@@ -7,6 +9,7 @@ import { ModelTable } from '@/components/ModelTable';
 import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { JobProgressCard } from '@/components/JobProgressCard';
 import { EmptyState } from '@/components/EmptyState';
+import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { formatErrorMessage } from '@/lib/api';
@@ -49,10 +52,13 @@ export function Models() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">Models</h1>
+      <PageHeader
+        icon={Brain}
+        title="Models"
+        description="学習済みモデルの一覧と active 切り替え"
+      >
         <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
-      </div>
+      </PageHeader>
 
       {/* Active model summary at the top of the page (no link to Models — already here) */}
       {modelsQuery.isPending ? (

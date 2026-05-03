@@ -1,6 +1,9 @@
+import { CalendarClock } from 'lucide-react';
+
 import { useUpcomingRaces } from '@/hooks/useUpcomingRaces';
 import { RaceCard } from '@/components/RaceCard';
 import { EmptyState } from '@/components/EmptyState';
+import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 
 function RaceListSkeleton() {
@@ -18,7 +21,11 @@ export function UpcomingRaces() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-3xl font-bold tracking-tight">Upcoming Races</h1>
+      <PageHeader
+        icon={CalendarClock}
+        title="Upcoming Races"
+        description="直近 7 日に予定されているレース一覧"
+      />
 
       {isPending ? (
         <RaceListSkeleton />

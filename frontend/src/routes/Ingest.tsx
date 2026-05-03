@@ -1,7 +1,10 @@
+import { Database } from 'lucide-react';
+
 import { useScraperStatus } from '@/hooks/useScraperStatus';
 import { useScraperRun } from '@/hooks/useScraperRun';
 import { useScraperStop } from '@/hooks/useScraperStop';
 import { useScraperStore } from '@/store/app';
+import { PageHeader } from '@/components/PageHeader';
 import { ScraperStatusCard } from '@/components/ScraperStatusCard';
 import { JobProgressCard } from '@/components/JobProgressCard';
 import { IngestRunDialog } from '@/components/IngestRunDialog';
@@ -60,35 +63,36 @@ export function Ingest() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">Ingest</h1>
-        <div className="flex gap-2">
-          <IngestRunDialog onSubmit={handleRun} isPending={runMutation.isPending} />
-          <Dialog open={stopDialogOpen} onOpenChange={setStopDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="destructive" disabled={stopMutation.isPending}>
-                即時停止
+      <PageHeader
+        icon={Database}
+        title="Ingest"
+        description="netkeiba スクレイピングの実行と進捗確認"
+      >
+        <IngestRunDialog onSubmit={handleRun} isPending={runMutation.isPending} />
+        <Dialog open={stopDialogOpen} onOpenChange={setStopDialogOpen}>
+          <DialogTrigger asChild>
+            <Button variant="destructive" disabled={stopMutation.isPending}>
+              即時停止
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>スクレイパー停止確認</DialogTitle>
+              <DialogDescription>
+                実行中のスクレイピングジョブを即時停止しますか？この操作は取り消せません。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setStopDialogOpen(false)}>
+                キャンセル
               </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>スクレイパー停止確認</DialogTitle>
-                <DialogDescription>
-                  実行中のスクレイピングジョブを即時停止しますか？この操作は取り消せません。
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setStopDialogOpen(false)}>
-                  キャンセル
-                </Button>
-                <Button variant="destructive" onClick={handleStop}>
-                  停止する
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
+              <Button variant="destructive" onClick={handleStop}>
+                停止する
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </PageHeader>
 
       {trackedJobId && (
         <JobProgressCard
