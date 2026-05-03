@@ -10,7 +10,7 @@ interface ScraperStatusCardProps {
 
 function StatusBadge({ status }: { status: ScraperStatus }) {
   if (status.current_job_id) {
-    return <Badge className="bg-blue-600 text-white">実行中</Badge>;
+    return <Badge variant="info">実行中</Badge>;
   }
   if (status.stopped) {
     return <Badge variant="destructive">停止中</Badge>;
@@ -32,7 +32,7 @@ export function ScraperStatusCard({ status }: ScraperStatusCardProps) {
         <CardTitle className="flex items-center gap-3 text-base">
           スクレイパー状態
           <StatusBadge status={status} />
-          {cliActive && <Badge className="bg-amber-600 text-white">CLI 進行中</Badge>}
+          {cliActive && <Badge variant="warning">CLI 進行中</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
@@ -56,7 +56,7 @@ export function ScraperStatusCard({ status }: ScraperStatusCardProps) {
               value={
                 <>
                   {formatCount(recent.data.total_fetched)} fetch
-                  {' '}(<span className="text-emerald-700">ok {formatCount(recent.data.ok_count)}</span>
+                  {' '}(<span className="text-success">ok {formatCount(recent.data.ok_count)}</span>
                   {recent.data.error_count > 0 && (
                     <>{' / '}<span className="text-destructive">err {formatCount(recent.data.error_count)}</span></>
                   )}

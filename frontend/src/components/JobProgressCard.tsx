@@ -18,9 +18,9 @@ const TERMINAL_STATUSES = new Set(['success', 'failed', 'cancelled']);
 function statusBadge(status: string) {
   switch (status) {
     case 'running':
-      return <Badge className="bg-blue-600 text-white">実行中</Badge>;
+      return <Badge variant="info">実行中</Badge>;
     case 'success':
-      return <Badge className="bg-emerald-600 text-white">完了</Badge>;
+      return <Badge variant="success">完了</Badge>;
     case 'failed':
       return <Badge variant="destructive">失敗</Badge>;
     case 'cancelled':
