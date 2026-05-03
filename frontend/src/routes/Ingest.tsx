@@ -61,7 +61,7 @@ export function Ingest() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Ingest</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Ingest</h1>
         <div className="flex gap-2">
           <IngestRunDialog onSubmit={handleRun} isPending={runMutation.isPending} />
           <Dialog open={stopDialogOpen} onOpenChange={setStopDialogOpen}>

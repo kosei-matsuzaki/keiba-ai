@@ -36,7 +36,7 @@ export function RaceDetail() {
   if (raceQuery.isPending) {
     return (
       <div className="flex flex-col gap-6 p-6">
-        <h1 className="text-2xl font-bold">Race Detail</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Race Detail</h1>
         <RaceDetailSkeleton />
       </div>
     );
@@ -46,7 +46,7 @@ export function RaceDetail() {
     const is404 = isNotFoundError(raceQuery.error);
     return (
       <div className="flex flex-col gap-6 p-6">
-        <h1 className="text-2xl font-bold">Race Detail</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Race Detail</h1>
         <EmptyState
           message={is404 ? '指定レース ID は見つかりません' : 'レース詳細の取得に失敗しました'}
           description={is404 ? undefined : 'バックエンドが起動しているか確認してください。'}
@@ -66,7 +66,7 @@ export function RaceDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-2xl font-bold">Race Detail</h1>
+      <h1 className="text-3xl font-bold tracking-tight">Race Detail</h1>
 
       {/* Race overview */}
       <Card>

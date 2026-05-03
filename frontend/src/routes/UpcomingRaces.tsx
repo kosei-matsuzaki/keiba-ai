@@ -18,7 +18,7 @@ export function UpcomingRaces() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-2xl font-bold">Upcoming Races</h1>
+      <h1 className="text-3xl font-bold tracking-tight">Upcoming Races</h1>
 
       {isPending ? (
         <RaceListSkeleton />
