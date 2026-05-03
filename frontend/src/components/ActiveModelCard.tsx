@@ -42,7 +42,7 @@ export function ActiveModelCard({ model, linkToModels = true }: ActiveModelCardP
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-3 text-sm font-medium text-muted-foreground">
           Active モデル
-          <Badge className="bg-emerald-600 text-white">ID {model.id}</Badge>
+          <Badge variant="success">ID {model.id}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent>

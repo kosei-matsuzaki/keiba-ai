@@ -52,7 +52,7 @@ export function ModelTable({ models, onActivate, activatingId }: ModelTableProps
         {models.map((model) => (
           <TableRow
             key={model.id}
-            className={model.is_active ? 'bg-emerald-500/5' : undefined}
+            className={model.is_active ? 'bg-success/5' : undefined}
           >
             <TableCell>{model.id}</TableCell>
             <TableCell className="text-xs">{formatDateTime(model.created_at)}</TableCell>
@@ -62,7 +62,7 @@ export function ModelTable({ models, onActivate, activatingId }: ModelTableProps
             <TableCell className="text-right">{extractMetric(model.metrics, 'payback_win', 'ratio')}</TableCell>
             <TableCell className="text-center">
               {model.is_active ? (
-                <Badge className="bg-emerald-600 text-white">Active</Badge>
+                <Badge variant="success">Active</Badge>
               ) : (
                 <Badge variant="outline">非アクティブ</Badge>
               )}
