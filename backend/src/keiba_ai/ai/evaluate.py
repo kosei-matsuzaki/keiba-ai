@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.metrics import ndcg_score
+from sqlalchemy import select
 
 from keiba_ai.ai.labels import assign_relevance
 from keiba_ai.ai.predict import predict_race
@@ -164,18 +165,64 @@ def _delta_metrics(model: dict, baseline: dict) -> dict:
     return out
 
 
+def _persist_metrics_to_model_run(
+    engine, model_path: Path, model_metrics: dict
+) -> bool:
+    """Merge `model_metrics` into the matching ModelRun's metrics_json.
+
+    Match strategy: model_path strict equal first, then by basename
+    (timestamp like "20260502-224015") to be robust to slash differences
+    between Windows / WSL or relative vs absolute paths.
+
+    Returns True if a row was updated, False if no matching ModelRun found.
+    """
+    from keiba_ai.db.models.model_run import ModelRun  # local import to avoid cycles
+
+    requested = str(Path(model_path).resolve())
+    target_name = Path(model_path).name
+
+    with session_scope(engine) as session:
+        # Try exact resolved-path match first
+        run = session.scalar(
+            select(ModelRun).where(ModelRun.model_path == requested)
+        )
+        if run is None:
+            # Fall back to basename (timestamp) match — robust across OS
+            for candidate in session.scalars(select(ModelRun)).all():
+                if Path(candidate.model_path).name == target_name:
+                    run = candidate
+                    break
+        if run is None:
+            log.warning("No ModelRun matched model_path=%s; skip persist", model_path)
+            return False
+
+        existing = json.loads(run.metrics_json) if run.metrics_json else {}
+        merged = {**existing, **model_metrics}
+        run.metrics_json = json.dumps(merged, ensure_ascii=False)
+        log.info(
+            "Persisted evaluation metrics into ModelRun id=%d (merged keys: %s)",
+            run.id,
+            sorted(set(model_metrics.keys()) - set(existing.keys())),
+        )
+        return True
+
+
 def evaluate(
     model_path: Path,
     db: Path | None = None,
     start: str | None = None,
     end: str | None = None,
     baseline: str | None = None,
+    persist: bool = False,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
     When `baseline` is None (default), returns the flat model metrics dict
     (backwards compatible). When baseline=='favorite', returns
     {"model": {...}, "baseline_favorite": {...}, "delta": {...}}.
+
+    `persist=True` で評価結果を model_runs.metrics_json に merge する
+    (Dashboard 側 metrics endpoint がこの値を読む)。
     """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
@@ -308,6 +355,12 @@ def evaluate(
 
     log.info("Evaluation metrics: %s", metrics)
 
+    if persist:
+        # Dashboard が読みやすいよう、top-level に flat な model 系キー
+        # (top1_hit / payback_win 等) を merge する。baseline mode でも
+        # 比較用 baseline / delta は混ぜず、model 側のみ保存。
+        _persist_metrics_to_model_run(engine, model_path, metrics)
+
     if baseline == "favorite":
         baseline_metrics = _evaluate_favorite_baseline(frame)
         log.info("Baseline (favorite) metrics: %s", baseline_metrics)
@@ -332,6 +385,14 @@ def _cli() -> None:
         default=None,
         help="Also evaluate a baseline strategy alongside the model and report deltas",
     )
+    parser.add_argument(
+        "--persist",
+        action="store_true",
+        help=(
+            "Merge the evaluation metrics into the matching model_runs row's "
+            "metrics_json so that the Dashboard's MetricCard picks them up."
+        ),
+    )
     args = parser.parse_args()
 
     metrics = evaluate(
@@ -340,6 +401,7 @@ def _cli() -> None:
         start=args.start,
         end=args.end,
         baseline=args.baseline,
+        persist=args.persist,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 

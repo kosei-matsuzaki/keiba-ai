@@ -116,3 +116,39 @@ def test_evaluate_baseline_delta_consistency(trained_scenario):
             assert math.isnan(d), f"{key}: expected NaN delta when input is NaN"
         else:
             assert abs(d - (m - b)) < 1e-9, f"{key}: delta should be model − baseline"
+
+
+def test_evaluate_persist_merges_into_model_run(trained_scenario):
+    """`evaluate(..., persist=True)` で対応する model_runs.metrics_json に
+    top1_hit / payback_win 等が merge され、Dashboard が読める状態になる。
+    """
+    import json
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from keiba_ai.db.models.model_run import ModelRun
+
+    db_file, model_dir = trained_scenario
+
+    # 学習直後の metrics_json は valid_*/test_* のみ
+    engine = __import__('sqlalchemy', fromlist=['create_engine']).create_engine(
+        f"sqlite:///{db_file}", future=True
+    )
+    with Session(engine) as session:
+        run_before = session.scalar(select(ModelRun).order_by(ModelRun.id.desc()))
+        before = json.loads(run_before.metrics_json)
+        assert "top1_hit" not in before  # まだ無い
+
+    # evaluate を persist=True で実行
+    evaluate(model_path=model_dir, db=db_file, persist=True)
+
+    # metrics_json に top1_hit / payback_win 等が merge されている
+    with Session(engine) as session:
+        run_after = session.scalar(select(ModelRun).order_by(ModelRun.id.desc()))
+        after = json.loads(run_after.metrics_json)
+        # 既存のキーは保持されている
+        assert "test_ndcg3" in after
+        # 新しい evaluation キーが merge されている
+        for key in ("top1_hit", "place_hit", "payback_win", "payback_place", "n_races"):
+            assert key in after, f"{key} should be persisted"
