@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -23,7 +25,13 @@ function isBuy(pred: HorsePrediction, entries: EntrySummary[]): boolean {
 }
 
 export function PredictionTable({ predictions, entries }: PredictionTableProps) {
-  const sorted = [...predictions].sort((a, b) => b.score - a.score);
+  // sort は描画ごとに毎回 spread + sort を走らせると、parent の些細な
+  // re-render (ポーリング由来) で N log N 演算が無駄に発生する。
+  // predictions 参照が変わった時だけ再計算する。
+  const sorted = useMemo(
+    () => [...predictions].sort((a, b) => b.score - a.score),
+    [predictions],
+  );
 
   return (
     <Table>

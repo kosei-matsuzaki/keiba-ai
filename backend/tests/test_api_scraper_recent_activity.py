@@ -117,3 +117,36 @@ def test_recent_activity_minutes_bounds(api_client: TestClient) -> None:
     # 範囲内
     assert api_client.get("/api/scraper/recent_activity?minutes=1").status_code == 200
     assert api_client.get("/api/scraper/recent_activity?minutes=1440").status_code == 200
+
+
+def test_recent_activity_caps_rows_to_avoid_full_scan(
+    app_with_temp_db,
+    tmp_path,
+) -> None:
+    """ウィンドウ内に 2000 行を超える行があっても、SELECT 上限 (LIMIT 2000)
+    が効いて応答時間が爆発しないことを確認する。Phase 2 ingest のピーク
+    模擬。集計値は LIMIT 後の行に対する集計なので 2000 を超えない。
+    """
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    now = datetime.now(UTC)
+
+    # 2500 行を直近 5 分以内に分散して投入
+    with session_scope(engine) as s:
+        for i in range(2500):
+            _add_log(
+                s,
+                now - timedelta(seconds=300 - (i / 2500.0) * 300),
+                f"20240605{i:06d}"[-12:],
+            )
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/scraper/recent_activity?minutes=10")
+    assert resp.status_code == 200
+    body = resp.json()
+    # LIMIT 2000 が効いて total_fetched は最大 2000
+    assert body["total_fetched"] == 2000
+    # 最新行の latest_fetched_at は拾える (order_by desc + limit なので)
+    assert body["latest_fetched_at"] is not None

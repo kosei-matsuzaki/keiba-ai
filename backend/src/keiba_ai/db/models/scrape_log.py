@@ -20,4 +20,7 @@ class ScrapeLog(Base):
 
     __table_args__ = (
         Index("ix_scrape_log_url_status", "url", "status"),
+        # /api/scraper/recent_activity の WHERE fetched_at >= cutoff で
+        # full scan を避けるための index (migration 0003)。
+        Index("ix_scrape_log_fetched_at", "fetched_at"),
     )

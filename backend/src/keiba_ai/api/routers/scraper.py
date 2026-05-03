@@ -110,10 +110,16 @@ def recent_activity(
     """
     cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
 
+    # Phase 2 ingest が走っている時は scrape_log が高頻度 INSERT され、
+    # 直近 10 分で数千〜万行に達することがある。UI 側は集計とごく最新の
+    # latest_race_id しか参照しないので、新しい順に上限件数だけ取る。
+    # 数値は控えめに 2000 行 (= ~5 秒/件 で 10000 秒分 = 約 2.7 時間相当の
+    # ピーク fetch 数) で、通常運用では cutoff より十分多い枠。
     rows = session.execute(
         select(ScrapeLog.url, ScrapeLog.status, ScrapeLog.fetched_at)
         .where(ScrapeLog.fetched_at >= cutoff)
         .order_by(ScrapeLog.fetched_at.desc())
+        .limit(2000)
     ).all()
 
     total = len(rows)

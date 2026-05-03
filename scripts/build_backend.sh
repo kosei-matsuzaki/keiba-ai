@@ -15,8 +15,13 @@ echo "[build_backend] Syncing Python dependencies (including pyinstaller)..."
 uv sync --group dev
 
 echo "[build_backend] Running PyInstaller..."
+# --windowed (alias --noconsole): Windows subsystem の EXE を生成し、起動時に
+# 黒いコンソールウィンドウが現れないようにする。Tauri 側 (sidecar.rs) で
+# Stdio::null() を設定済だが、PyInstaller exe 自身が console subsystem だと
+# OS が console を allocate してしまうため、ここでも EXE を windowed にする。
 uv run pyinstaller \
     --onefile \
+    --windowed \
     --name keiba-ai-backend \
     --collect-all lightgbm \
     --hidden-import uvicorn.logging \
