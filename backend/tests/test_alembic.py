@@ -40,6 +40,7 @@ EXPECTED_INDEXES = {
     "ix_entries_horse_id_finish_position",
     "ix_payouts_race_id_bet_type",
     "ix_scrape_log_url_status",
+    "ix_scrape_log_fetched_at",
 }
 
 
