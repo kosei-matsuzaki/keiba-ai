@@ -60,6 +60,18 @@ export default {
         sans: ['var(--font-sans)'],
         mono: ['var(--font-mono)'],
       },
+      keyframes: {
+        // Skeleton 用の柔らかい fade — Tailwind デフォルトの animate-pulse は
+        // 0.5 → 1.0 → 0.5 で目立つので、0.6 → 1.0 → 0.6 に範囲を狭めて
+        // duration も少し長めに (1.8s) する。
+        'skeleton-shimmer': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.6' },
+        },
+      },
+      animation: {
+        'skeleton-shimmer': 'skeleton-shimmer 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+      },
     },
   },
 } satisfies Config;

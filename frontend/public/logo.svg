@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Sidebar header 用ロゴ。`<img src=...>` 経由で読み込むため CSS 変数は
+       解決されないので、color は HSL リテラルでハードコード (favicon と同値)。
+       将来テーマ追従させたい場合は React component に変換して inline SVG にする。 -->
+  <rect width="32" height="32" rx="7" fill="hsl(221.2 83.2% 53.3%)" />
+  <path
+    d="M9 11.5v8a7 7 0 0 0 14 0v-8"
+    stroke="white"
+    stroke-width="3"
+    stroke-linecap="round"
+    fill="none"
+  />
+  <circle cx="9" cy="22" r="1.6" fill="white" />
+  <circle cx="23" cy="22" r="1.6" fill="white" />
+</svg>
