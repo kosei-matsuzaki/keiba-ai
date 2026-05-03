@@ -198,18 +198,25 @@ const STATUS_MESSAGES: Record<number, string> = {
  *
  * Async because reading the response body for a `detail` field is async.
  */
+function lookupStatusMessage(status: number | null): string | undefined {
+  // status === 0 は HTTP では出ないが、`status && X` で 0 が leak すると
+  // 戻り値の型が `string | 0` になり tsc strict で失敗するため、明示的に
+  // null チェックして table を引く。
+  if (status === null) return undefined;
+  return STATUS_MESSAGES[status];
+}
+
 export async function formatErrorMessage(err: unknown): Promise<string> {
   const status = getStatus(err);
 
   if (err instanceof HTTPError) {
     const detail = await extractDetail(err);
-    const base = (status && STATUS_MESSAGES[status]) ?? `エラー (${status})`;
+    const base = lookupStatusMessage(status) ?? `エラー (${status})`;
     return detail ? `${base}: ${detail}` : base;
   }
 
-  if (status && STATUS_MESSAGES[status]) {
-    return STATUS_MESSAGES[status];
-  }
+  const mapped = lookupStatusMessage(status);
+  if (mapped) return mapped;
 
   if (err instanceof Error) return err.message;
   return '不明なエラーが発生しました';
@@ -221,7 +228,8 @@ export async function formatErrorMessage(err: unknown): Promise<string> {
  */
 export function formatErrorMessageSync(err: unknown): string {
   const status = getStatus(err);
-  if (status && STATUS_MESSAGES[status]) return STATUS_MESSAGES[status];
+  const mapped = lookupStatusMessage(status);
+  if (mapped) return mapped;
   if (err instanceof Error) return err.message;
   return '不明なエラーが発生しました';
 }
