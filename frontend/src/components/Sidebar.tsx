@@ -19,11 +19,11 @@ const navItems: NavItem[] = [
 
 export function Sidebar() {
   return (
-    <aside aria-label="サイドナビゲーション" className="flex h-full w-56 flex-col border-r bg-card">
-      <div className="flex h-14 items-center border-b px-4">
-        <span className="text-lg font-bold tracking-wide text-primary">KEIBA AI</span>
+    <aside aria-label="サイドナビゲーション" className="flex h-full w-60 flex-col border-r bg-card">
+      <div className="flex h-14 items-center border-b px-5">
+        <span className="text-base font-bold tracking-wide text-primary">KEIBA AI</span>
       </div>
-      <nav aria-label="主要画面" className="flex-1 space-y-1 p-2">
+      <nav aria-label="主要画面" className="flex-1 space-y-0.5 p-2">
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -31,9 +31,9 @@ export function Sidebar() {
             end={to === '/'}
             className={({ isActive }) =>
               cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                 isActive
-                  ? 'bg-primary text-primary-foreground'
+                  ? 'bg-primary/10 text-primary shadow-[inset_2px_0_0_0_hsl(var(--primary))]'
                   : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               )
             }

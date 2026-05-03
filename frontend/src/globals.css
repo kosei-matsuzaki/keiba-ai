@@ -31,11 +31,12 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
-    /* Typography stack — PR-V-B will swap in Inter / JetBrains Mono web fonts */
-    --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    /* Typography stack — Inter / JetBrains Mono via Google Fonts (index.html),
+       fallback to system fonts when offline or before web font loads. */
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
       "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
+      Consolas, "Liberation Mono", "Courier New", monospace;
   }
 
   .dark {
@@ -75,6 +76,8 @@
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
+    /* Inter で 'cv11' (open 4/9) と 'ss01' を有効化、数値は tnum で揃え列幅を固定 */
+    font-feature-settings: 'cv11', 'ss01', 'tnum' 1;
   }
   code,
   kbd,
