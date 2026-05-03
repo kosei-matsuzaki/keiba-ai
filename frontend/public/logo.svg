@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- transparent variant of favicon for inline placement on cards/sidebar -->
+  <rect width="32" height="32" rx="7" fill="hsl(var(--primary))" />
+  <path
+    d="M9 11.5v8a7 7 0 0 0 14 0v-8"
+    stroke="hsl(var(--primary-foreground))"
+    stroke-width="3"
+    stroke-linecap="round"
+    fill="none"
+  />
+  <circle cx="9" cy="22" r="1.6" fill="hsl(var(--primary-foreground))" />
+  <circle cx="23" cy="22" r="1.6" fill="hsl(var(--primary-foreground))" />
+</svg>

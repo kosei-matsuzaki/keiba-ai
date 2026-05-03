@@ -17,7 +17,7 @@ export function RaceCard({ race }: RaceCardProps) {
   const navigate = useNavigate();
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
+    <Card className="hover:border-primary/30 hover:shadow-lg">
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-base leading-snug">

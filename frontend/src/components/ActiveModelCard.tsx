@@ -38,7 +38,7 @@ export function ActiveModelCard({ model, linkToModels = true }: ActiveModelCardP
   }
 
   const body = (
-    <Card className={linkToModels ? 'hover:border-primary/40 transition-colors' : ''}>
+    <Card className={linkToModels ? 'hover:border-primary/40 hover:shadow-lg transition-colors' : ''}>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-3 text-sm font-medium text-muted-foreground">
           Active モデル

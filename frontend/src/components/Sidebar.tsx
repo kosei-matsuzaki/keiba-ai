@@ -20,7 +20,8 @@ const navItems: NavItem[] = [
 export function Sidebar() {
   return (
     <aside aria-label="サイドナビゲーション" className="flex h-full w-60 flex-col border-r bg-card">
-      <div className="flex h-14 items-center border-b px-5">
+      <div className="flex h-14 items-center gap-2.5 border-b px-5">
+        <img src="/logo.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
         <span className="text-base font-bold tracking-wide text-primary">KEIBA AI</span>
       </div>
       <nav aria-label="主要画面" className="flex-1 space-y-0.5 p-2">
