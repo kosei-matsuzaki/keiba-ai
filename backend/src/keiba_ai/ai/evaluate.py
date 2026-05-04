@@ -6,10 +6,21 @@ Usage:
                                            [--start YYYY-MM-DD]
                                            [--end YYYY-MM-DD]
                                            [--baseline favorite]
+                                           [--win-ev-threshold 1.1]
+                                           [--place-ev-threshold 1.05]
+                                           [--exclude-top-rank 0]
+                                           [--min-popularity N]
+                                           [--max-popularity N]
 
 When --baseline favorite is given, the same dataset is also evaluated under
 the dumb "always bet on the lowest-odds horse" strategy, and the output
 becomes a nested dict {model: {...}, baseline_favorite: {...}, delta: {...}}.
+
+Betting filters (--exclude-top-rank / --min-popularity / --max-popularity)
+apply only to the model side. analyze_place_bets.py で発見した
+「rank 1-2 は payback 0.10、人気 4-12 帯は payback 1.8-3.1」という構造
+に対し、CLI から戦略チューニングできるようにする。Baseline (favorite)
+側は常に 1 番人気に賭ける性質上、これらフィルタは適用しない。
 """
 
 from __future__ import annotations
@@ -37,6 +48,34 @@ log = logging.getLogger(__name__)
 
 WIN_EV_THRESHOLD = 1.1   # Expected value threshold for win bet
 PLACE_EV_THRESHOLD = 1.05  # Expected value threshold for place bet
+
+
+def _bet_excluded(
+    rank: int,
+    row: pd.Series,
+    exclude_top_rank: int,
+    min_popularity: int | None,
+    max_popularity: int | None,
+) -> bool:
+    """Return True if the horse should be skipped by the betting filters.
+
+    `rank` is 0-indexed from the top of the model's predicted order, so
+    `rank < exclude_top_rank` removes the model's top picks. Popularity
+    filters are inclusive ([min, max]); NaN popularity is treated as
+    excluded whenever any popularity bound is set.
+    """
+    if exclude_top_rank > 0 and rank < exclude_top_rank:
+        return True
+    if min_popularity is not None or max_popularity is not None:
+        pop = row.get("popularity")
+        if pop is None or pd.isna(pop):
+            return True
+        pop_int = int(pop)
+        if min_popularity is not None and pop_int < min_popularity:
+            return True
+        if max_popularity is not None and pop_int > max_popularity:
+            return True
+    return False
 
 
 def _parse_payout_place(json_str: str | None) -> dict[int, int]:
@@ -214,6 +253,12 @@ def evaluate(
     end: str | None = None,
     baseline: str | None = None,
     persist: bool = False,
+    *,
+    win_ev_threshold: float = WIN_EV_THRESHOLD,
+    place_ev_threshold: float = PLACE_EV_THRESHOLD,
+    exclude_top_rank: int = 0,
+    min_popularity: int | None = None,
+    max_popularity: int | None = None,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
@@ -223,6 +268,12 @@ def evaluate(
 
     `persist=True` で評価結果を model_runs.metrics_json に merge する
     (Dashboard 側 metrics endpoint がこの値を読む)。
+
+    Betting filters:
+      - `exclude_top_rank=N` → モデル予測上位 N 頭を bet 対象から除外
+        (analyze_place_bets で本命 rank 1 が payback 0.10 と判明したため)
+      - `min_popularity=K` / `max_popularity=K` → 人気が K 番より下/上を除外
+        (1 = 1 番人気)。NaN popularity はフィルタ有効時に常に除外
     """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
@@ -263,8 +314,11 @@ def evaluate(
             continue
 
         preds = predict_race(model, race_frame)
-        # Merge actual finish positions
-        actual = race_frame[["horse_id", "finish_position", "odds_win", "relevance"]].copy()
+        # Merge actual finish positions + popularity (needed for betting filters)
+        actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]
+        if "popularity" in race_frame.columns:
+            actual_cols.append("popularity")
+        actual = race_frame[actual_cols].copy()
         preds = preds.merge(actual, on="horse_id", how="left")
 
         # NDCG
@@ -286,13 +340,16 @@ def evaluate(
         )
         place_hits.append(1 if top3_horses & actual_top3 else 0)
 
-        # Win betting: bet if win_prob × odds_win > WIN_EV_THRESHOLD
-        for _, row in preds.iterrows():
+        # Win betting: bet if win_prob × odds_win > win_ev_threshold AND
+        # the horse passes the rank/popularity filters.
+        for rank, (_, row) in enumerate(preds.iterrows()):
+            if _bet_excluded(rank, row, exclude_top_rank, min_popularity, max_popularity):
+                continue
             odds = row.get("odds_win")
             if odds is None or pd.isna(odds):
                 continue
             ev = row["win_prob"] * odds
-            if ev > WIN_EV_THRESHOLD:
+            if ev > win_ev_threshold:
                 win_bets += 1
                 win_invested += 100
                 if row.get("finish_position") == 1:
@@ -315,9 +372,13 @@ def evaluate(
             # min_payout is in yen per 100 yen bet, so odds = min_payout / 100
             min_odds = min_payout / 100.0
 
-            for _, row in preds.iterrows():
+            for rank, (_, row) in enumerate(preds.iterrows()):
+                if _bet_excluded(
+                    rank, row, exclude_top_rank, min_popularity, max_popularity
+                ):
+                    continue
                 ev = row["place_prob"] * min_odds
-                if ev > PLACE_EV_THRESHOLD:
+                if ev > place_ev_threshold:
                     place_bets += 1
                     place_invested += 100
                     finish_pos = row.get("finish_position")
@@ -351,6 +412,13 @@ def evaluate(
         "payback_place": (
             (place_gross_payout / place_invested) if place_invested > 0 else float("nan")
         ),
+        # Record the betting filter params so that persisted metrics_json /
+        # CLI JSON dump explains under what strategy the numbers were produced.
+        "win_ev_threshold": float(win_ev_threshold),
+        "place_ev_threshold": float(place_ev_threshold),
+        "exclude_top_rank": int(exclude_top_rank),
+        "min_popularity": min_popularity,
+        "max_popularity": max_popularity,
     }
 
     log.info("Evaluation metrics: %s", metrics)
@@ -393,6 +461,39 @@ def _cli() -> None:
             "metrics_json so that the Dashboard's MetricCard picks them up."
         ),
     )
+    parser.add_argument(
+        "--win-ev-threshold",
+        type=float,
+        default=WIN_EV_THRESHOLD,
+        help=f"EV threshold for win bets (default {WIN_EV_THRESHOLD}).",
+    )
+    parser.add_argument(
+        "--place-ev-threshold",
+        type=float,
+        default=PLACE_EV_THRESHOLD,
+        help=f"EV threshold for place bets (default {PLACE_EV_THRESHOLD}).",
+    )
+    parser.add_argument(
+        "--exclude-top-rank",
+        type=int,
+        default=0,
+        help=(
+            "Skip the model's top-N predicted horses when betting "
+            "(0 = no exclusion). E.g. 2 removes ranks 1-2."
+        ),
+    )
+    parser.add_argument(
+        "--min-popularity",
+        type=int,
+        default=None,
+        help="Lower bound on popularity rank (inclusive); 1 = favourite.",
+    )
+    parser.add_argument(
+        "--max-popularity",
+        type=int,
+        default=None,
+        help="Upper bound on popularity rank (inclusive).",
+    )
     args = parser.parse_args()
 
     metrics = evaluate(
@@ -402,6 +503,11 @@ def _cli() -> None:
         end=args.end,
         baseline=args.baseline,
         persist=args.persist,
+        win_ev_threshold=args.win_ev_threshold,
+        place_ev_threshold=args.place_ev_threshold,
+        exclude_top_rank=args.exclude_top_rank,
+        min_popularity=args.min_popularity,
+        max_popularity=args.max_popularity,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
