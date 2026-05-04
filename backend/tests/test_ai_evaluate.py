@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from sqlalchemy import create_engine
 
@@ -116,6 +117,96 @@ def test_evaluate_baseline_delta_consistency(trained_scenario):
             assert math.isnan(d), f"{key}: expected NaN delta when input is NaN"
         else:
             assert abs(d - (m - b)) < 1e-9, f"{key}: delta should be model − baseline"
+
+
+def test_evaluate_betting_filter_params_recorded(trained_scenario):
+    """`exclude_top_rank` 等のフィルタ値は metrics dict に記録される
+    (再現性 + persisted metrics_json から戦略を読み戻せるように)。"""
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(
+        model_path=model_dir,
+        db=db_file,
+        win_ev_threshold=1.2,
+        place_ev_threshold=1.15,
+        exclude_top_rank=2,
+        min_popularity=4,
+        max_popularity=12,
+    )
+
+    assert metrics["win_ev_threshold"] == 1.2
+    assert metrics["place_ev_threshold"] == 1.15
+    assert metrics["exclude_top_rank"] == 2
+    assert metrics["min_popularity"] == 4
+    assert metrics["max_popularity"] == 12
+
+
+def test_evaluate_default_filter_params_match_constants(trained_scenario):
+    """フィルタ未指定時は既存挙動 (= 後方互換) になっている。"""
+    from keiba_ai.ai.evaluate import PLACE_EV_THRESHOLD, WIN_EV_THRESHOLD
+
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+
+    assert metrics["win_ev_threshold"] == WIN_EV_THRESHOLD
+    assert metrics["place_ev_threshold"] == PLACE_EV_THRESHOLD
+    assert metrics["exclude_top_rank"] == 0
+    assert metrics["min_popularity"] is None
+    assert metrics["max_popularity"] is None
+
+
+def test_evaluate_exclude_top_rank_reduces_bets(trained_scenario):
+    """`exclude_top_rank=N` を上げるほど bets 数は単調に減る (or 同数)。
+    モデル予測上位 N 頭を bet 候補から外すフィルタが実際に発火している
+    ことを確認する (analyze_place_bets で本命=rank 1 が大損と判明した
+    のに対する CLI 対応の正常動作 gate)。"""
+    db_file, model_dir = trained_scenario
+
+    base = evaluate(model_path=model_dir, db=db_file)
+    excl = evaluate(model_path=model_dir, db=db_file, exclude_top_rank=3)
+
+    assert excl["win_bets"] <= base["win_bets"]
+    assert excl["place_bets"] <= base["place_bets"]
+
+
+def test_evaluate_popularity_filter_bounds_pop_of_bets(trained_scenario):
+    """`min_popularity` / `max_popularity` 指定で bet 数が減る (or 同数)。
+    NaN popularity の馬もフィルタ有効時は除外される、という設計を担保。"""
+    db_file, model_dir = trained_scenario
+
+    base = evaluate(model_path=model_dir, db=db_file)
+    bounded = evaluate(
+        model_path=model_dir,
+        db=db_file,
+        min_popularity=4,
+        max_popularity=12,
+    )
+
+    assert bounded["win_bets"] <= base["win_bets"]
+    assert bounded["place_bets"] <= base["place_bets"]
+
+
+def test_evaluate_baseline_metrics_unaffected_by_filters(trained_scenario):
+    """Betting filter は model 側のみに適用される。Baseline (favorite) は
+    常に 1 番人気に賭ける性質上フィルタ無関係 — フィルタ有無で baseline
+    metrics が変わらないことを担保する。"""
+    db_file, model_dir = trained_scenario
+
+    out_no_filter = evaluate(model_path=model_dir, db=db_file, baseline="favorite")
+    out_filtered = evaluate(
+        model_path=model_dir,
+        db=db_file,
+        baseline="favorite",
+        exclude_top_rank=2,
+        min_popularity=4,
+    )
+
+    for key in ("win_bets", "place_bets", "payback_win", "payback_place"):
+        b1 = out_no_filter["baseline_favorite"][key]
+        b2 = out_filtered["baseline_favorite"][key]
+        # NaN 対 NaN は許容
+        if pd.isna(b1) and pd.isna(b2):
+            continue
+        assert b1 == b2, f"baseline {key} changed by filters: {b1} → {b2}"
 
 
 def test_evaluate_persist_merges_into_model_run(trained_scenario):
