@@ -9,17 +9,31 @@ entries for a race to be available simultaneously. To populate
 duplicating DB queries, we build raw entry rows first (which compute jockey
 recent win rate and horse same-course place rate), then derive the per-race
 relative dict from those values and merge it back.
+
+Caching: build_training_frame は entry × ~6 SQL の N+1 構造で 3,300
+race のフルスキャンに 15-20 分かかる。DB の mtime + (start, end) を
+key に pickle で feature DataFrame を data/cache/training_frames/ に
+キャッシュし、同じ条件での 2 回目以降の呼び出しを秒で済ませる。
+DB が更新されたら mtime が変わり cache は自動的に miss するので、
+古い結果を返してしまう心配はない。
+KEIBA_DISABLE_FRAME_CACHE=1 で無効化可能。
 """
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import math
+import os
+import pickle
 from datetime import date, datetime
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from keiba_ai.core.paths import data_dir
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.race import Race
@@ -30,6 +44,8 @@ from keiba_ai.features.odds import extract_odds_features
 from keiba_ai.features.pedigree import compute_pedigree_features
 from keiba_ai.features.relative_features import compute_within_race_features
 from keiba_ai.features.trainer import compute_trainer_stats
+
+log = logging.getLogger(__name__)
 
 # Fixed column order — must stay stable across training and inference.
 FEATURE_COLUMNS: list[str] = [
@@ -205,6 +221,69 @@ def _build_race_rows(
     return rows
 
 
+def _frame_cache_dir() -> Path:
+    d = data_dir() / "cache" / "training_frames"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _frame_cache_key(
+    db_path_str: str | None,
+    train_start: str | None,
+    train_end: str | None,
+) -> str:
+    """Build a cache key from DB mtime + (start, end). DB content change
+    invalidates everything (mtime moves), and per-range outputs stay separate.
+    """
+    if db_path_str and Path(db_path_str).exists():
+        mtime = int(os.path.getmtime(db_path_str))
+        size = os.path.getsize(db_path_str)
+    else:
+        mtime, size = 0, 0
+    raw = f"{db_path_str}|{mtime}|{size}|{train_start}|{train_end}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
+def _frame_cache_load(key: str) -> pd.DataFrame | None:
+    path = _frame_cache_dir() / f"{key}.pkl"
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_pickle(path)
+        log.info("Loaded cached training frame from %s (rows=%d)", path, len(df))
+        return df
+    except Exception as exc:  # noqa: BLE001 — cache corruption shouldn't fail builds
+        log.warning("Failed to read frame cache %s: %s", path, exc)
+        return None
+
+
+def _frame_cache_save(key: str, frame: pd.DataFrame) -> None:
+    if frame.empty:
+        return  # skip empty frames; trivial to recompute and avoids polluting cache
+    path = _frame_cache_dir() / f"{key}.pkl"
+    try:
+        frame.to_pickle(path)
+        log.info("Cached training frame to %s (rows=%d)", path, len(frame))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Failed to write frame cache %s: %s", path, exc)
+
+
+def _session_db_path(session: Session) -> str | None:
+    """Best-effort extraction of the underlying SQLite file path from a Session.
+
+    Returns None for in-memory DBs (no stable mtime → cache key would collide
+    across independent in-memory engines, leading to cross-contamination).
+    """
+    bind = session.get_bind()
+    try:
+        path = bind.url.database  # type: ignore[union-attr]
+    except AttributeError:
+        return None
+    if not path or path == ":memory:":
+        return None
+    return path
+
+
 def _load_races_in_range(
     session: Session,
     start_date: str | None,
@@ -222,13 +301,33 @@ def build_training_frame(
     session: Session,
     train_start: str | None = None,
     train_end: str | None = None,
+    *,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """Build a feature DataFrame for all races in [train_start, train_end].
 
     Includes finish_position for label assignment.
     Leakage prevention: each entry's features are computed using only records
     strictly before that race's date.
+
+    `use_cache=True` (default) なら DB mtime + (start, end) ベースで pickle
+    キャッシュを読み書きする。env `KEIBA_DISABLE_FRAME_CACHE=1` でも無効化。
     """
+    cache_disabled = os.getenv("KEIBA_DISABLE_FRAME_CACHE") == "1"
+    cache_active = use_cache and not cache_disabled
+    cache_key: str | None = None
+
+    if cache_active:
+        db_path_str = _session_db_path(session)
+        if db_path_str is None:
+            # In-memory DB or unknown bind — no stable mtime, so refuse to cache.
+            cache_active = False
+        else:
+            cache_key = _frame_cache_key(db_path_str, train_start, train_end)
+            cached = _frame_cache_load(cache_key)
+            if cached is not None:
+                return cached
+
     races = _load_races_in_range(session, train_start, train_end)
     if not races:
         return pd.DataFrame(
@@ -248,6 +347,10 @@ def build_training_frame(
     for col in FEATURE_COLUMNS:
         if col not in df.columns:
             df[col] = float("nan")
+
+    if cache_active and cache_key is not None:
+        _frame_cache_save(cache_key, df)
+
     return df
 
 

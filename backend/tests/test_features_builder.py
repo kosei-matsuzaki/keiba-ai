@@ -188,3 +188,99 @@ def test_horse_weight_pct_bounded(syn_engine):
 def test_feature_columns_count():
     """FEATURE_COLUMNS should have exactly 38 columns (24 original + 14 new)."""
     assert len(FEATURE_COLUMNS) == 38
+
+
+# ── Frame caching ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def file_db_engine(tmp_path):
+    """File-based SQLite DB so the cache (which keys off mtime) can engage.
+    `:memory:` DBs are intentionally excluded from caching to avoid
+    cross-test contamination, so cache tests need a real file.
+    """
+    db_file = tmp_path / "frame_cache_test.db"
+    engine = create_engine(f"sqlite:///{db_file}", future=True)
+    make_synthetic_db(engine, n_races=15, n_horses_per_race=8, days_back=90, seed=2)
+    yield engine
+    engine.dispose()
+
+
+def test_build_training_frame_cache_hit_returns_identical(
+    file_db_engine, tmp_path, monkeypatch,
+):
+    """2 回目の build_training_frame 呼び出しは cache から読まれ、内容が一致する。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    with session_scope(file_db_engine) as session:
+        df1 = build_training_frame(session)
+    with session_scope(file_db_engine) as session:
+        df2 = build_training_frame(session)
+
+    assert list(df1.columns) == list(df2.columns)
+    assert len(df1) == len(df2)
+    assert set(df1["race_id"].unique()) == set(df2["race_id"].unique())
+
+    # 実際に cache pickle が書かれていること
+    cache_dir = tmp_path / "data" / "cache" / "training_frames"
+    assert cache_dir.exists()
+    assert list(cache_dir.glob("*.pkl")), "cache file not created"
+
+
+def test_build_training_frame_cache_disabled_via_env(
+    file_db_engine, tmp_path, monkeypatch,
+):
+    """KEIBA_DISABLE_FRAME_CACHE=1 を立てた呼び出しは cache に書き込まない。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("KEIBA_DISABLE_FRAME_CACHE", "1")
+
+    with session_scope(file_db_engine) as session:
+        df = build_training_frame(session)
+
+    assert not df.empty
+    cache_dir = tmp_path / "data" / "cache" / "training_frames"
+    if cache_dir.exists():
+        assert not list(cache_dir.glob("*.pkl"))
+
+
+def test_build_training_frame_use_cache_false_skips_cache(
+    file_db_engine, tmp_path, monkeypatch,
+):
+    """use_cache=False を渡した呼び出しも cache を読み書きしない。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    with session_scope(file_db_engine) as session:
+        df = build_training_frame(session, use_cache=False)
+
+    assert not df.empty
+    cache_dir = tmp_path / "data" / "cache" / "training_frames"
+    if cache_dir.exists():
+        assert not list(cache_dir.glob("*.pkl"))
+
+
+def test_build_training_frame_cache_invalidates_on_db_mtime_change(
+    file_db_engine, tmp_path, monkeypatch,
+):
+    """DB ファイルが更新 (= mtime 変化) されたら cache key も変わるので
+    別 entry として再計算される — 古い結果を返してしまわないことを確認。"""
+    import os
+    import time
+
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    with session_scope(file_db_engine) as session:
+        df1 = build_training_frame(session)
+
+    # DB ファイルの mtime を未来にずらす (touch 相当)
+    db_file = tmp_path / "frame_cache_test.db"
+    future_ts = time.time() + 60
+    os.utime(db_file, (future_ts, future_ts))
+
+    with session_scope(file_db_engine) as session:
+        df2 = build_training_frame(session)
+
+    # 内容は同じだが、cache file は 2 つできているはず (mtime 違いで別 key)
+    cache_dir = tmp_path / "data" / "cache" / "training_frames"
+    pkls = list(cache_dir.glob("*.pkl"))
+    assert len(pkls) == 2, f"expected 2 cache files (one per mtime), got {len(pkls)}"
+    assert len(df1) == len(df2)
