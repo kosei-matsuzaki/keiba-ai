@@ -11,13 +11,14 @@ from zoneinfo import ZoneInfo
 _JST = ZoneInfo("Asia/Tokyo")
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from keiba_ai.api.deps import get_job_registry, get_session
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.schemas import (
+    DiscoverTodayRaceIdsResponse,
     FetchLiveOddsRequest,
     JobAccepted,
     ScraperRecentActivity,
@@ -25,6 +26,8 @@ from keiba_ai.api.schemas import (
     ScraperRunShutubaRequest,
     ScraperStatus,
 )
+from keiba_ai.scraper.parsers.race_info_top import ParseError as RaceInfoParseError
+from keiba_ai.scraper.parsers.race_info_top import parse_race_ids
 from keiba_ai.core.config import load_settings
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models.scrape_log import ScrapeLog
@@ -250,6 +253,69 @@ async def fetch_live_odds_endpoint(
         status=info.status,
         started_at=info.started_at,
     )
+
+
+_RACE_INFO_TOP_URL = (
+    "https://race.netkeiba.com/api/api_get_race_info_top.html?kaisai_date={date}"
+)
+
+
+@router.get("/scraper/discover_today_race_ids", response_model=DiscoverTodayRaceIdsResponse)
+async def discover_today_race_ids(
+    date: str = Query(
+        default="",
+        description="YYYY-MM-DD 形式の日付。省略時は JST 当日を使用する。",
+        pattern=r"^(\d{4}-\d{2}-\d{2})?$",
+    ),
+) -> DiscoverTodayRaceIdsResponse:
+    """当日（または指定日）の開催 race_id 一覧を netkeiba から自動発見する。
+
+    - date 省略時は JST 当日を使用。
+    - 該当日の開催なし → race_ids=[] を返す（404 ではない）。
+    - netkeiba 側の通信エラーや想定外レスポンスは 502 で返す。
+    """
+    if date:
+        # YYYY-MM-DD → YYYYMMDD
+        kaisai_date = date.replace("-", "")
+    else:
+        kaisai_date = datetime.now(_JST).strftime("%Y%m%d")
+
+    url = _RACE_INFO_TOP_URL.format(date=kaisai_date)
+
+    settings = load_settings()
+    robots_cache = RobotsCache(settings.user_agent)
+
+    # robots.txt 確認（既存 scraper の流儀に準拠。同期メソッドのため await 不要）
+    if not robots_cache.is_allowed(url):
+        raise HTTPException(status_code=502, detail="robots.txt disallows this URL")
+
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": settings.user_agent},
+            timeout=15.0,
+            follow_redirects=True,
+        ) as http_client:
+            resp = await http_client.get(url)
+            resp.raise_for_status()
+            payload = resp.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"netkeiba API へのアクセスに失敗しました: {exc}",
+        ) from exc
+
+    try:
+        race_ids = parse_race_ids(payload)
+    except RaceInfoParseError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"netkeiba API レスポンスのパースに失敗しました: {exc}",
+        ) from exc
+
+    discovered_at = datetime.now(UTC).isoformat()
+    return DiscoverTodayRaceIdsResponse(race_ids=race_ids, discovered_at=discovered_at)
 
 
 @router.post("/scraper/stop", status_code=200)

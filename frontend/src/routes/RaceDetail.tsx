@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 
@@ -6,6 +6,7 @@ import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
 import { useFetchLiveOdds } from '@/hooks/useFetchLiveOdds';
+import { useRunShutuba } from '@/hooks/useRunShutuba';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -304,6 +305,51 @@ export function RaceDetail() {
     Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
   );
   const fetchOddsMutation = useFetchLiveOdds(race_id);
+  // runShutuba scoped to this race so raceDetail is invalidated on completion
+  const runShutubaMutation = useRunShutuba(race_id);
+
+  // Guards against duplicate auto-fetches for this race_id
+  const autoShutubaFiredRef = useRef<string | null>(null);
+  const autoOddsFiredRef = useRef<string | null>(null);
+
+  const race = raceQuery.data;
+
+  // Auto-fetch shutuba when entries are empty
+  useEffect(() => {
+    if (!race || race.entries.length > 0) return;
+    if (autoShutubaFiredRef.current === race_id) return;
+    if (runShutubaMutation.isPending || runShutubaMutation.isPolling) return;
+
+    autoShutubaFiredRef.current = race_id;
+    runShutubaMutation.mutate(
+      { race_ids: [race_id] },
+      {
+        onError: async (err) => {
+          toast.error(`出馬表の自動取得に失敗しました: ${await formatErrorMessage(err)}`);
+        },
+      },
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [race, race_id]);
+
+  // Auto-fetch live odds when entries are available and odds_source is baseline
+  useEffect(() => {
+    if (!race || race.entries.length === 0) return;
+    if (!recQuery.data || recQuery.data.odds_source !== 'baseline') return;
+    if (autoOddsFiredRef.current === race_id) return;
+    if (fetchOddsMutation.isPending || fetchOddsMutation.isPolling) return;
+
+    autoOddsFiredRef.current = race_id;
+    fetchOddsMutation.mutate(
+      { race_id },
+      {
+        onError: async (err) => {
+          toast.error(`オッズの自動取得に失敗しました: ${await formatErrorMessage(err)}`);
+        },
+      },
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [race, race_id, recQuery.data]);
 
   const backLink = dateParam ? `/past?date=${dateParam}` : '/past';
 
@@ -338,11 +384,13 @@ export function RaceDetail() {
     );
   }
 
-  const race = raceQuery.data;
   const predictions = predQuery.data?.predictions ?? null;
 
   // オッズ更新ボタンは entries が存在する場合のみ表示する
   const canFetchOdds = race.entries.length > 0;
+
+  const isFetchingOdds = fetchOddsMutation.isPending || fetchOddsMutation.isPolling;
+  const isScrapingShutuba = runShutubaMutation.isPending || runShutubaMutation.isPolling;
 
   function handleFetchOdds() {
     fetchOddsMutation.mutate(
@@ -371,13 +419,25 @@ export function RaceDetail() {
           <Button
             variant="outline"
             size="sm"
-            disabled={fetchOddsMutation.isPending}
+            disabled={isFetchingOdds}
             onClick={handleFetchOdds}
           >
-            {fetchOddsMutation.isPending ? 'オッズ取得中...' : 'オッズ更新'}
+            {isFetchingOdds ? 'オッズ取得中...' : 'オッズ更新'}
           </Button>
         )}
       </PageHeader>
+
+      {/* Auto-fetch progress banners */}
+      {isScrapingShutuba && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+          出馬表を取得中...
+        </div>
+      )}
+      {isFetchingOdds && !fetchOddsMutation.isPending && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+          オッズを取得中...
+        </div>
+      )}
 
       {/* Race overview */}
       <Card>

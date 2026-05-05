@@ -4,13 +4,15 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { RaceDetail } from '../routes/RaceDetail';
-import type { RaceDetail as RaceDetailType, PredictionResponse } from '../types/api';
+import type { JobAccepted, JobInfo, RaceDetail as RaceDetailType, PredictionResponse } from '../types/api';
 
 vi.mock('../lib/api', () => ({
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
   fetchLiveOdds: vi.fn(),
+  runShutubaScraper: vi.fn(),
+  fetchJob: vi.fn(),
   createBet: vi.fn(),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
   formatErrorMessageSync: vi.fn().mockReturnValue('エラーが発生しました'),
@@ -18,7 +20,14 @@ vi.mock('../lib/api', () => ({
   isServiceUnavailableError: vi.fn().mockReturnValue(false),
 }));
 
-import { fetchRaceDetail, fetchPredictions, fetchRecommendations, fetchLiveOdds } from '../lib/api';
+import {
+  fetchRaceDetail,
+  fetchPredictions,
+  fetchRecommendations,
+  fetchLiveOdds,
+  runShutubaScraper,
+  fetchJob,
+} from '../lib/api';
 
 const mockRace: RaceDetailType = {
   race_id: '202406010101',
@@ -61,6 +70,11 @@ const mockRace: RaceDetailType = {
   ],
 };
 
+const mockRaceNoEntries: RaceDetailType = {
+  ...mockRace,
+  entries: [],
+};
+
 const mockPredictions: PredictionResponse = {
   race_id: '202406010101',
   model_id: 1,
@@ -89,6 +103,27 @@ const mockRecommendations = {
   ],
 };
 
+const mockJobAccepted: JobAccepted = {
+  job_id: 'job-001',
+  status: 'running',
+  started_at: '2026-05-05T10:00:00Z',
+};
+
+const mockJobRunning: JobInfo = {
+  job_id: 'job-001',
+  type: 'ingest_shutuba',
+  status: 'running',
+  started_at: '2026-05-05T10:00:00Z',
+  finished_at: null,
+  error: null,
+};
+
+const mockJobCompleted: JobInfo = {
+  ...mockJobRunning,
+  status: 'completed',
+  finished_at: '2026-05-05T10:01:00Z',
+};
+
 function renderRaceDetail(raceId = '202406010101', search = '') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const path = `/races/${raceId}${search}`;
@@ -110,6 +145,8 @@ beforeEach(() => {
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
   vi.mocked(fetchLiveOdds).mockResolvedValue({ job_id: 'odds-001', status: 'running', started_at: '2026-04-28T10:00:00' });
+  vi.mocked(runShutubaScraper).mockResolvedValue(mockJobAccepted);
+  vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
 
 describe('RaceDetail', () => {
@@ -329,10 +366,86 @@ describe('RaceDetail', () => {
   });
 
   it('does not render オッズ更新 button when entries are empty', async () => {
-    const raceNoEntries: RaceDetailType = { ...mockRace, entries: [] };
-    vi.mocked(fetchRaceDetail).mockResolvedValue(raceNoEntries);
+    vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
     renderRaceDetail();
     await screen.findByText('レース概要');
     expect(screen.queryByRole('button', { name: 'オッズ更新' })).not.toBeInTheDocument();
+  });
+
+  // ── Auto shutuba fetch ────────────────────────────────────────────────────
+
+  it('auto-fires runShutubaScraper when entries are empty', async () => {
+    vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
+    vi.mocked(fetchJob).mockResolvedValue(mockJobRunning);
+
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+
+    await waitFor(() => {
+      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
+        expect.objectContaining({ race_ids: ['202406010101'] })
+      );
+    });
+  });
+
+  it('shows 出馬表を取得中 banner while scraping', async () => {
+    vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
+    // Keep job in running state so banner stays visible
+    vi.mocked(fetchJob).mockResolvedValue(mockJobRunning);
+
+    renderRaceDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText(/出馬表を取得中/)).toBeInTheDocument();
+    });
+  });
+
+  it('invalidates raceDetail cache after shutuba job completes', async () => {
+    vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
+    vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
+
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+
+    // fetchRaceDetail should be called again after job completes
+    await waitFor(() => {
+      expect(vi.mocked(fetchRaceDetail).mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  // ── Auto live_odds fetch ──────────────────────────────────────────────────
+
+  it('auto-fires fetchLiveOdds when odds_source is baseline', async () => {
+    // entries exist, recommendations return baseline
+    vi.mocked(fetchRecommendations).mockResolvedValue({
+      ...mockRecommendations,
+      odds_source: 'baseline',
+    });
+    vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
+
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchLiveOdds)).toHaveBeenCalledWith(
+        expect.objectContaining({ race_id: '202406010101' })
+      );
+    });
+  });
+
+  it('does not auto-fire fetchLiveOdds when odds_source is live', async () => {
+    vi.mocked(fetchRecommendations).mockResolvedValue({
+      ...mockRecommendations,
+      odds_source: 'live',
+    });
+
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+
+    // Give enough time for any accidental auto-fire
+    await new Promise((r) => setTimeout(r, 50));
+    // fetchLiveOdds should NOT have been called automatically
+    // (only if user clicks the button — which we don't in this test)
+    expect(vi.mocked(fetchLiveOdds)).not.toHaveBeenCalled();
   });
 });
