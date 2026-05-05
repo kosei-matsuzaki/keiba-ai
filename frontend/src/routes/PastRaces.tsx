@@ -75,6 +75,7 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
           <TableHeader>
             <TableRow>
               <TableHead className="w-16">R</TableHead>
+              <TableHead>レース名</TableHead>
               <TableHead>クラス</TableHead>
               <TableHead>馬場</TableHead>
               <TableHead className="text-right">距離</TableHead>
@@ -92,6 +93,7 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
                 aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
               >
                 <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
+                <TableCell>{race.name ?? '—'}</TableCell>
                 <TableCell>{race.race_class ?? '—'}</TableCell>
                 <TableCell>{race.surface}</TableCell>
                 <TableCell className="text-right">{race.distance} m</TableCell>

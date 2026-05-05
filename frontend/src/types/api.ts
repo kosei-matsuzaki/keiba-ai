@@ -32,6 +32,7 @@ export interface RaceSummary {
   distance: number;
   race_class: string | null;
   n_runners: number | null;
+  name: string | null;
 }
 
 export interface RaceDetail extends RaceSummary {

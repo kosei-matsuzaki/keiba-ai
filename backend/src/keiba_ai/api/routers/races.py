@@ -27,6 +27,7 @@ def _race_summary(race: Race) -> RaceSummary:
         distance=race.distance,
         race_class=race.race_class,
         n_runners=race.n_runners,
+        name=race.name,
     )
 
 
@@ -180,6 +181,7 @@ def get_race_detail(
         distance=race.distance,
         race_class=race.race_class,
         n_runners=race.n_runners,
+        name=race.name,
         weather=race.weather,
         track_condition=race.track_condition,
         entries=_build_entry_summaries(entries, session),

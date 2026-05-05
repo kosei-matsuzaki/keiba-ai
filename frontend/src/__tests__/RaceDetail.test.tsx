@@ -26,6 +26,7 @@ const mockRace: RaceDetailType = {
   distance: 2400,
   race_class: 'G1',
   n_runners: 2,
+  name: '日本ダービー',
   weather: '晴',
   track_condition: '良',
   payout_win: 350,
@@ -281,5 +282,25 @@ describe('RaceDetail', () => {
     expect(
       screen.getByText(/BUY バッジは単勝 EV>1\.1 の馬を示しますが/)
     ).toBeInTheDocument();
+  });
+
+  it('shows race name in PageHeader title when name is set', async () => {
+    renderRaceDetail();
+    // PageHeader title should be the race name (日本ダービー), not "東京 G1"
+    expect(await screen.findByRole('heading', { name: '日本ダービー' })).toBeInTheDocument();
+  });
+
+  it('shows race name in レース名 MetaItem', async () => {
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+    expect(screen.getByText('レース名')).toBeInTheDocument();
+    expect(screen.getByText('日本ダービー')).toBeInTheDocument();
+  });
+
+  it('falls back to "course race_class" in title when name is null', async () => {
+    const raceNoName: RaceDetailType = { ...mockRace, name: null };
+    vi.mocked(fetchRaceDetail).mockResolvedValue(raceNoName);
+    renderRaceDetail();
+    expect(await screen.findByRole('heading', { name: '東京 G1' })).toBeInTheDocument();
   });
 });

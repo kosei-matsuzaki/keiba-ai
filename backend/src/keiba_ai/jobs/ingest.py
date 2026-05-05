@@ -77,6 +77,7 @@ def _upsert_race(session: Session, result: ParsedRaceResult) -> None:
         weather=result.weather,
         track_condition=result.track_condition,
         race_class=result.race_class,
+        name=result.name,
         n_runners=result.n_runners,
         payout_win=result.payout_win,
         payout_place=result.payout_place,
@@ -91,6 +92,8 @@ def _upsert_race(session: Session, result: ParsedRaceResult) -> None:
             "weather": stmt.excluded.weather,
             "track_condition": stmt.excluded.track_condition,
             "race_class": stmt.excluded.race_class,
+            # name は COALESCE で既存値を保護（refill_race_meta が上書きを担う）
+            "name": sa.func.coalesce(stmt.excluded.name, Race.name),
             "n_runners": stmt.excluded.n_runners,
             "payout_win": stmt.excluded.payout_win,
             "payout_place": stmt.excluded.payout_place,

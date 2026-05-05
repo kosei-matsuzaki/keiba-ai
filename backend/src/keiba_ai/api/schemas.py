@@ -40,6 +40,7 @@ class RaceSummary(BaseModel):
     distance: int
     race_class: str | None
     n_runners: int | None
+    name: str | None = None
 
 
 class RaceDetail(RaceSummary):

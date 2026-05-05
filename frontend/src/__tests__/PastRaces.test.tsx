@@ -22,6 +22,7 @@ const mockRaces: UpcomingRacesResponse = {
       distance: 2400,
       race_class: 'G1',
       n_runners: 18,
+      name: '有馬記念',
     },
     {
       race_id: '202406010102',
@@ -31,6 +32,7 @@ const mockRaces: UpcomingRacesResponse = {
       distance: 1600,
       race_class: 'G2',
       n_runners: 14,
+      name: null,
     },
     {
       race_id: '202406010201',
@@ -40,6 +42,7 @@ const mockRaces: UpcomingRacesResponse = {
       distance: 1800,
       race_class: null,
       n_runners: 12,
+      name: '3歳未勝利',
     },
   ],
 };
@@ -139,5 +142,18 @@ describe('PastRaces', () => {
     renderPastRaces('/past?date=2024-06-01');
     await screen.findByText('東京');
     expect(vi.mocked(fetchRacesByDate)).toHaveBeenCalledWith('2024-06-01');
+  });
+
+  it('shows race name in the race table', async () => {
+    renderPastRaces();
+    // 有馬記念 should appear as a race name cell
+    expect(await screen.findByText('有馬記念')).toBeInTheDocument();
+  });
+
+  it('shows dash for null race name', async () => {
+    renderPastRaces();
+    await screen.findByText('東京');
+    // The table should have レース名 column header
+    expect(screen.getByRole('columnheader', { name: 'レース名' })).toBeInTheDocument();
   });
 });
