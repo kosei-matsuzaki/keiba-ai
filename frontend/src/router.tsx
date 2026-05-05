@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { Dashboard } from './routes/Dashboard';
 import { UpcomingRaces } from './routes/UpcomingRaces';
+import { RecentRaces } from './routes/RecentRaces';
 import { RaceDetail } from './routes/RaceDetail';
 import { Models } from './routes/Models';
 import { Ingest } from './routes/Ingest';
@@ -15,6 +16,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'upcoming', element: <UpcomingRaces /> },
+      { path: 'results', element: <RecentRaces /> },
       { path: 'races/:race_id', element: <RaceDetail /> },
       { path: 'models', element: <Models /> },
       { path: 'ingest', element: <Ingest /> },

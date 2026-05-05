@@ -96,3 +96,95 @@ def test_race_detail_found(
     data = resp.json()
     assert data["race_id"] == "RACE001"
     assert len(data["entries"]) == 5
+
+
+# ── /races/recent ─────────────────────────────────────────────────────────────
+
+def test_recent_races_empty(api_client: TestClient) -> None:
+    """No races in DB — empty list returned."""
+    resp = api_client.get("/api/races/recent")
+    assert resp.status_code == 200
+    assert resp.json()["races"] == []
+
+
+def test_recent_races_within_window(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """Only races within the days window (exclusive of today) are returned."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    today = date.today()
+    recent = (today - timedelta(days=10)).isoformat()
+    old = (today - timedelta(days=60)).isoformat()
+    future = (today + timedelta(days=1)).isoformat()
+
+    with session_scope(engine) as session:
+        _insert_race(session, "RECENT001", recent)
+        _insert_race(session, "OLD001", old)
+        _insert_race(session, "FUTURE001", future)
+        # Today itself should be excluded (date < today)
+        _insert_race(session, "TODAY001", today.isoformat())
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?days=30")
+
+    assert resp.status_code == 200
+    ids = [r["race_id"] for r in resp.json()["races"]]
+    assert "RECENT001" in ids
+    assert "OLD001" not in ids
+    assert "FUTURE001" not in ids
+    assert "TODAY001" not in ids
+
+
+def test_recent_races_descending_order(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """Results are sorted by date descending (most recent first)."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    today = date.today()
+    d1 = (today - timedelta(days=5)).isoformat()
+    d2 = (today - timedelta(days=15)).isoformat()
+    d3 = (today - timedelta(days=25)).isoformat()
+
+    with session_scope(engine) as session:
+        # Insert out of order to confirm sorting is applied
+        _insert_race(session, "R_D3", d3)
+        _insert_race(session, "R_D1", d1)
+        _insert_race(session, "R_D2", d2)
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?days=30")
+
+    assert resp.status_code == 200
+    dates = [r["date"] for r in resp.json()["races"]]
+    assert dates == sorted(dates, reverse=True)
+
+
+def test_recent_races_limit(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """limit parameter caps the number of returned races."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    today = date.today()
+
+    with session_scope(engine) as session:
+        for i in range(5):
+            d = (today - timedelta(days=i + 1)).isoformat()
+            _insert_race(session, f"RLIMIT{i:03d}", d)
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?days=30&limit=3")
+
+    assert resp.status_code == 200
+    assert len(resp.json()["races"]) == 3

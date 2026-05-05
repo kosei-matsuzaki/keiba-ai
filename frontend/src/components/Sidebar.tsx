@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, CalendarDays, Brain, Download, Settings, Wallet } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, History, Brain, Download, Settings, Wallet } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 interface NavItem {
@@ -12,6 +12,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/upcoming', label: 'Upcoming Races', icon: CalendarDays },
+  { to: '/results', label: 'Recent Races', icon: History },
   { to: '/models', label: 'Models', icon: Brain },
   { to: '/ingest', label: 'Ingest', icon: Download },
   { to: '/ledger', label: '収支', icon: Wallet },
