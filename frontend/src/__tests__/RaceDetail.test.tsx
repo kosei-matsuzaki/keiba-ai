@@ -63,6 +63,7 @@ const mockPredictions: PredictionResponse = {
     { horse_id: '2019100001', score: 2.5, win_prob: 0.45, place_prob: 0.7, top_features: [] },
     { horse_id: '2019100002', score: 1.8, win_prob: 0.2, place_prob: 0.4, top_features: [] },
   ],
+  combinations: null,
 };
 
 function renderRaceDetail(raceId = '202406010101') {
