@@ -6,6 +6,7 @@ import { RaceDetail } from './routes/RaceDetail';
 import { Models } from './routes/Models';
 import { Ingest } from './routes/Ingest';
 import { Settings } from './routes/Settings';
+import { Ledger } from './routes/Ledger';
 
 export const router = createBrowserRouter([
   {
@@ -18,6 +19,7 @@ export const router = createBrowserRouter([
       { path: 'models', element: <Models /> },
       { path: 'ingest', element: <Ingest /> },
       { path: 'settings', element: <Settings /> },
+      { path: 'ledger', element: <Ledger /> },
     ],
   },
 ]);
