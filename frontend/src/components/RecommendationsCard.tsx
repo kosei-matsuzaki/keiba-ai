@@ -66,12 +66,26 @@ function BuyButton({ candidate, raceId }: BuyButtonProps) {
     <Button
       size="sm"
       variant="outline"
-      disabled={isPending}
+      disabled={isPending || candidate.stake === 0}
       onClick={handleBuy}
     >
       買う
     </Button>
   );
+}
+
+// ── Candidate sorting ─────────────────────────────────────────────────────────
+
+/**
+ * Sort candidates: stake desc → ev desc → prob desc.
+ * This ensures recommended (stake > 0) candidates appear above zero-stake ones.
+ */
+function sortCandidates(candidates: RecommendationCandidate[]): RecommendationCandidate[] {
+  return [...candidates].sort((a, b) => {
+    if (b.stake !== a.stake) return b.stake - a.stake;
+    if (b.ev !== a.ev) return b.ev - a.ev;
+    return b.prob - a.prob;
+  });
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -118,12 +132,18 @@ export function RecommendationsCard({
           />
         ) : (
           <>
-            <p className="mb-3 text-sm text-muted-foreground">
-              判断時バンクロール:{' '}
-              <span className="font-medium text-foreground">
-                {formatYen(data.bankroll_at_decision)}
-              </span>
-            </p>
+            <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <p className="text-sm text-muted-foreground">
+                判断時バンクロール:{' '}
+                <span className="font-medium text-foreground">
+                  {formatYen(data.bankroll_at_decision)}
+                </span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {data.candidates.length} 候補
+                （うち {data.candidates.filter((c) => c.stake > 0).length} 件が推奨）
+              </p>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -131,33 +151,48 @@ export function RecommendationsCard({
                   <TableHead>組合せ</TableHead>
                   <TableHead>パターン</TableHead>
                   <TableHead className="text-right">確率</TableHead>
-                  <TableHead className="text-right">推定オッズ</TableHead>
+                  <TableHead className="text-right">
+                    推定オッズ
+                  </TableHead>
                   <TableHead className="text-right">EV</TableHead>
                   <TableHead className="text-right">推奨 stake</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.candidates.map((c, idx) => (
-                  <TableRow key={`${c.bet_type}-${c.combo}-${idx}`}>
-                    <TableCell className="font-medium">{c.bet_type}</TableCell>
-                    <TableCell className="font-mono text-xs">{c.combo}</TableCell>
-                    <TableCell>
-                      <PatternBadge pattern={c.pattern} />
-                    </TableCell>
-                    <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
-                    <TableCell className="text-right">{formatRatio(c.est_odds)}</TableCell>
-                    <TableCell className={`text-right ${evClass(c.ev)}`}>
-                      {formatRatio(c.ev)}
-                    </TableCell>
-                    <TableCell className="text-right">{formatYen(c.stake)}</TableCell>
-                    <TableCell className="text-right">
-                      <BuyButton candidate={c} raceId={raceId} />
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {sortCandidates(data.candidates).map((c, idx) => {
+                  const isZeroStake = c.stake === 0;
+                  const rowClass = isZeroStake ? 'opacity-60' : '';
+                  return (
+                    <TableRow key={`${c.bet_type}-${c.combo}-${idx}`} className={rowClass}>
+                      <TableCell className="font-medium">{c.bet_type}</TableCell>
+                      <TableCell className="font-mono text-xs">{c.combo}</TableCell>
+                      <TableCell>
+                        <PatternBadge pattern={c.pattern} />
+                      </TableCell>
+                      <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
+                      <TableCell className="text-right">{formatRatio(c.est_odds)}</TableCell>
+                      <TableCell className={`text-right ${evClass(c.ev)}`}>
+                        {formatRatio(c.ev)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isZeroStake ? (
+                          <span className="text-muted-foreground">賭けない</span>
+                        ) : (
+                          formatYen(c.stake)
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <BuyButton candidate={c} raceId={raceId} />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
+            <p className="mt-2 text-xs text-muted-foreground">
+              ※ 推定オッズは過去払戻の平均値（暫定）。当日オッズ未対応
+            </p>
           </>
         )}
       </CardContent>

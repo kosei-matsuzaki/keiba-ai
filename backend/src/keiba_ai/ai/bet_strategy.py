@@ -280,15 +280,18 @@ def assign_stakes(
     kelly_fraction: float,
     max_stake_per_race_pct: float,
     round_to: int = 100,
+    keep_zero_stake: bool = False,
 ) -> list[BetCandidate]:
     """Assign Kelly stakes to candidates and apply per-race cap.
 
     Processing steps:
-    1. ev <= 1.0  → stake = 0 (excluded from output).
+    1. ev <= 1.0  → stake = 0 (excluded from output unless keep_zero_stake=True).
     2. Apply kelly_stake to each remaining candidate.
     3. If the total stake exceeds bankroll * max_stake_per_race_pct, scale all
        stakes down proportionally (floor to round_to after scaling).
-    4. Remove candidates with stake == 0 from the returned list.
+    4. Remove candidates with stake == 0 from the returned list (unless
+       keep_zero_stake=True, in which case all candidates are returned with
+       their computed stake, including zeros).
 
     Args:
         candidates: BetCandidate list (stake field is ignored on input).
@@ -297,24 +300,35 @@ def assign_stakes(
         max_stake_per_race_pct: Maximum fraction of bankroll to spend per race
             (e.g. 0.05 = 5%).
         round_to: Stake rounding granularity in yen.
+        keep_zero_stake: When True, candidates with stake=0 (due to ev<=1.0 or
+            Kelly returning 0 or cap-scaling to 0) are included in the output.
+            Defaults to False for backward compatibility.
 
     Returns:
-        New list of BetCandidate (copies) with stake > 0, stake = 0 items
-        excluded.
+        New list of BetCandidate (copies) with updated stake values.
+        When keep_zero_stake=False (default), stake=0 items are excluded.
+        When keep_zero_stake=True, all input candidates are returned with
+        their computed stake (0 for ineligible / below-EV candidates).
     """
     cap = bankroll * max_stake_per_race_pct
 
-    # Step 1 + 2: compute raw Kelly stakes, drop ev <= 1.0
+    # Step 1 + 2: compute raw Kelly stakes
+    # ev <= 1.0 candidates get stake=0 and are tracked separately when keep_zero_stake=True
+    zero_stake_candidates: list[BetCandidate] = []
     staked: list[tuple[BetCandidate, int]] = []
     for c in candidates:
         if c.ev <= 1.0:
+            if keep_zero_stake:
+                zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
             continue
         s = kelly_stake(c.prob, c.est_odds, bankroll, kelly_fraction, round_to)
         if s > 0:
             staked.append((c, s))
+        elif keep_zero_stake:
+            zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
 
     if not staked:
-        return []
+        return zero_stake_candidates if keep_zero_stake else []
 
     # Step 3: proportional cap
     total = sum(s for _, s in staked)
@@ -325,11 +339,16 @@ def assign_stakes(
             for c, s in staked
         ]
 
-    # Step 4: exclude zero-stake candidates
+    # Step 4: build result list
     result: list[BetCandidate] = []
     for c, s in staked:
         if s > 0:
             result.append(c.model_copy(update={"stake": s}))
+        elif keep_zero_stake:
+            zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
+
+    if keep_zero_stake:
+        return result + zero_stake_candidates
     return result
 
 
@@ -458,7 +477,8 @@ def recommend_for_race(
     deduped = list(seen.values())
 
     final_candidates = assign_stakes(
-        deduped, bankroll, kelly_fraction, max_stake_per_race_pct
+        deduped, bankroll, kelly_fraction, max_stake_per_race_pct,
+        keep_zero_stake=True,
     )
 
     return RecommendationResult(
