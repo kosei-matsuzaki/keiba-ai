@@ -365,6 +365,151 @@ async def test_confirmed_entry_post_position_not_overwritten(
     )
 
 
+# ── --race-ids パステスト ─────────────────────────────────────────────────────
+
+
+def _build_fake_fetch_no_calendar(shutuba_html: str):
+    """calendar fetch が呼ばれたら AssertionError を発生させるモック。
+
+    --race-ids 指定時は calendar fetch が skip されることを確認するために使う。
+    """
+    async def fake_fetch(
+        url: str,
+        *,
+        use_cache: bool = True,
+        cache_max_age_hours: float = 24 * 30,
+    ) -> str:
+        if "race_list" in url:
+            raise AssertionError(f"calendar fetch should be skipped but got: {url}")
+        return shutuba_html
+    return fake_fetch
+
+
+@pytest.mark.asyncio
+async def test_race_ids_skips_calendar_fetch(db_session, tmp_path, monkeypatch):
+    """--race-ids 指定時は calendar fetch が行われないこと。"""
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    # calendar URL を叩くと AssertionError -> calendar が呼ばれないことを検証
+    client.fetch = _build_fake_fetch_no_calendar(SHUTUBA_HTML)  # type: ignore[method-assign]
+
+    RACE_ID = "202406010111"
+    counters = await run_ingest_shutuba(
+        DATE, client, db_session, race_ids=[RACE_ID]
+    )
+    assert counters["fetched"] == 1
+    assert counters["errors"] == 0
+
+
+@pytest.mark.asyncio
+async def test_race_ids_inserts_specified_races(db_session, tmp_path, monkeypatch):
+    """--race-ids に指定した race_id が DB に登録されること。"""
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_no_calendar(SHUTUBA_HTML)  # type: ignore[method-assign]
+
+    RACE_ID = "202406010111"
+    await run_ingest_shutuba(DATE, client, db_session, race_ids=[RACE_ID])
+
+    row = db_session.execute(
+        select(Race).where(Race.race_id == RACE_ID)
+    ).scalar_one_or_none()
+    assert row is not None, f"Race {RACE_ID} was not inserted"
+    assert row.date == DATE
+
+
+@pytest.mark.asyncio
+async def test_race_ids_inserts_entries(db_session, tmp_path, monkeypatch):
+    """--race-ids 指定時も entries が正しく登録されること。"""
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_no_calendar(SHUTUBA_HTML)  # type: ignore[method-assign]
+
+    RACE_ID = "202406010111"
+    await run_ingest_shutuba(DATE, client, db_session, race_ids=[RACE_ID])
+
+    entries = db_session.execute(select(Entry)).scalars().all()
+    assert len(entries) == 16  # フィクスチャは 16 頭立て
+
+
+@pytest.mark.asyncio
+async def test_race_ids_multiple(db_session, tmp_path, monkeypatch):
+    """--race-ids に複数の race_id を指定した場合に全て ingest されること。"""
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    # 2 つの異なる race_id を指定するが、fetch は同じフィクスチャを返す
+    RACE_IDS = ["202406010111", "202406010112"]
+
+    fetch_calls: list[str] = []
+
+    async def tracking_fetch(
+        url: str,
+        *,
+        use_cache: bool = True,
+        cache_max_age_hours: float = 24 * 30,
+    ) -> str:
+        if "race_list" in url:
+            raise AssertionError(f"calendar should not be fetched: {url}")
+        fetch_calls.append(url)
+        return SHUTUBA_HTML
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = tracking_fetch  # type: ignore[method-assign]
+
+    counters = await run_ingest_shutuba(DATE, client, db_session, race_ids=RACE_IDS)
+
+    assert counters["fetched"] == 2
+    assert len(fetch_calls) == 2
+    # 指定した race_id で fetch が呼ばれたこと
+    assert any("202406010111" in url for url in fetch_calls)
+    assert any("202406010112" in url for url in fetch_calls)
+
+
+@pytest.mark.asyncio
+async def test_race_ids_with_limit(db_session, tmp_path, monkeypatch):
+    """--race-ids と --limit を併用した場合に制限が適用されること。"""
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    RACE_IDS = ["202406010111", "202406010112", "202406010113"]
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_no_calendar(SHUTUBA_HTML)  # type: ignore[method-assign]
+
+    counters = await run_ingest_shutuba(DATE, client, db_session, race_ids=RACE_IDS, limit=2)
+
+    assert counters["fetched"] == 2
+    rows = db_session.execute(select(Race)).scalars().all()
+    assert len(rows) == 2
+
+
 @pytest.mark.asyncio
 async def test_idempotency_same_date_multiple_runs(
     db_session, mock_client, tmp_path, monkeypatch
