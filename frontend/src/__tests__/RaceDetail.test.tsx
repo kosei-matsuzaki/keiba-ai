@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { RaceDetail } from '../routes/RaceDetail';
@@ -9,6 +10,7 @@ vi.mock('../lib/api', () => ({
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
+  fetchLiveOdds: vi.fn(),
   createBet: vi.fn(),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
   formatErrorMessageSync: vi.fn().mockReturnValue('エラーが発生しました'),
@@ -16,7 +18,7 @@ vi.mock('../lib/api', () => ({
   isServiceUnavailableError: vi.fn().mockReturnValue(false),
 }));
 
-import { fetchRaceDetail, fetchPredictions, fetchRecommendations } from '../lib/api';
+import { fetchRaceDetail, fetchPredictions, fetchRecommendations, fetchLiveOdds } from '../lib/api';
 
 const mockRace: RaceDetailType = {
   race_id: '202406010101',
@@ -72,6 +74,7 @@ const mockPredictions: PredictionResponse = {
 const mockRecommendations = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
+  odds_source: 'baseline' as const,
   candidates: [
     {
       bet_type: '単勝',
@@ -106,6 +109,7 @@ beforeEach(() => {
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
+  vi.mocked(fetchLiveOdds).mockResolvedValue({ job_id: 'odds-001', status: 'running', started_at: '2026-04-28T10:00:00' });
 });
 
 describe('RaceDetail', () => {
@@ -302,5 +306,33 @@ describe('RaceDetail', () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(raceNoName);
     renderRaceDetail();
     expect(await screen.findByRole('heading', { name: '東京 G1' })).toBeInTheDocument();
+  });
+
+  // ── オッズ更新ボタン ────────────────────────────────────────────────────────
+
+  it('renders オッズ更新 button when entries exist', async () => {
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+    expect(screen.getByRole('button', { name: 'オッズ更新' })).toBeInTheDocument();
+  });
+
+  it('calls fetchLiveOdds when オッズ更新 button is clicked', async () => {
+    const user = userEvent.setup();
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+    await user.click(screen.getByRole('button', { name: 'オッズ更新' }));
+    await waitFor(() => {
+      expect(vi.mocked(fetchLiveOdds)).toHaveBeenCalledWith(
+        expect.objectContaining({ race_id: '202406010101' })
+      );
+    });
+  });
+
+  it('does not render オッズ更新 button when entries are empty', async () => {
+    const raceNoEntries: RaceDetailType = { ...mockRace, entries: [] };
+    vi.mocked(fetchRaceDetail).mockResolvedValue(raceNoEntries);
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+    expect(screen.queryByRole('button', { name: 'オッズ更新' })).not.toBeInTheDocument();
   });
 });

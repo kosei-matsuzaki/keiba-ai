@@ -26,6 +26,8 @@ vi.mock('../lib/api', () => ({
   trainModel: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
   fetchScraperStatus: vi.fn().mockResolvedValue({ stopped: true, last_fetched_date: null, missing_dates_count: null, current_job_id: null }),
   runScraper: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
+  runShutubaScraper: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
+  fetchLiveOdds: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
   stopScraper: vi.fn().mockResolvedValue({ stopped: true }),
   fetchSettings: vi.fn().mockResolvedValue({ user_agent: 'Mozilla/5.0', rate_min_seconds: 3, rate_max_seconds: 10, night_min_seconds: 30, win_ev_threshold: 1.1, place_ev_threshold: 1.05, scraper_stopped: false }),
   updateSettings: vi.fn().mockResolvedValue({}),

@@ -59,3 +59,62 @@ def test_scraper_run_returns_job_accepted(api_client: TestClient) -> None:
     data = resp.json()
     assert "job_id" in data
     assert data["status"] == "running"
+
+
+# ── /scraper/fetch_live_odds ──────────────────────────────────────────────────
+
+def test_fetch_live_odds_returns_job_accepted(api_client: TestClient) -> None:
+    """POST /api/scraper/fetch_live_odds は 202 と job_id を返すこと。"""
+    stop_flag.clear_stopped()
+
+    async def _noop(*args, **kwargs) -> dict:
+        return {"fetched": 0, "skipped": 0, "errors": 0}
+
+    with patch("keiba_ai.jobs.fetch_live_odds.run_fetch_live_odds", new=_noop):
+        resp = api_client.post(
+            "/api/scraper/fetch_live_odds",
+            json={"race_id": "202506050911"},
+        )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "job_id" in data
+    assert data["status"] == "running"
+
+
+def test_fetch_live_odds_with_types(api_client: TestClient) -> None:
+    """types を指定した場合も 202 を返すこと。"""
+    stop_flag.clear_stopped()
+
+    async def _noop(*args, **kwargs) -> dict:
+        return {"fetched": 0, "skipped": 0, "errors": 0}
+
+    with patch("keiba_ai.jobs.fetch_live_odds.run_fetch_live_odds", new=_noop):
+        resp = api_client.post(
+            "/api/scraper/fetch_live_odds",
+            json={"race_id": "202506050911", "types": ["b1", "b4"]},
+        )
+    assert resp.status_code == 202
+
+
+def test_fetch_live_odds_race_id_required(api_client: TestClient) -> None:
+    """race_id を省略すると 422 を返すこと。"""
+    resp = api_client.post("/api/scraper/fetch_live_odds", json={})
+    assert resp.status_code == 422
+
+
+def test_fetch_live_odds_race_id_must_be_12_digits(api_client: TestClient) -> None:
+    """race_id が 12 桁でない場合は 422 を返すこと。"""
+    resp = api_client.post(
+        "/api/scraper/fetch_live_odds",
+        json={"race_id": "short"},
+    )
+    assert resp.status_code == 422
+
+
+def test_fetch_live_odds_invalid_type_code(api_client: TestClient) -> None:
+    """不正な券種コードは 422 を返すこと。"""
+    resp = api_client.post(
+        "/api/scraper/fetch_live_odds",
+        json={"race_id": "202506050911", "types": ["b99"]},
+    )
+    assert resp.status_code == 422
