@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from keiba_ai.ai.types import CombinationPrediction  # noqa: F401 — re-exported for API consumers
+
+_ALL_BET_TYPES = frozenset(["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"])
 
 
 class HealthResponse(BaseModel):
@@ -155,6 +157,10 @@ class SettingsResponse(BaseModel):
     win_ev_threshold: float
     place_ev_threshold: float
     scraper_stopped: bool
+    bankroll: int
+    kelly_fraction: float
+    max_stake_per_race_pct: float
+    enabled_bet_types: list[str]
 
 
 class SettingsUpdate(BaseModel):
@@ -165,6 +171,40 @@ class SettingsUpdate(BaseModel):
     win_ev_threshold: float | None = None
     place_ev_threshold: float | None = None
     scraper_stopped: bool | None = None
+    bankroll: int | None = None
+    kelly_fraction: float | None = None
+    max_stake_per_race_pct: float | None = None
+    enabled_bet_types: list[str] | None = None
+
+    @field_validator("bankroll")
+    @classmethod
+    def bankroll_ge_100(cls, v: int | None) -> int | None:
+        if v is not None and v < 100:
+            raise ValueError("bankroll must be >= 100")
+        return v
+
+    @field_validator("kelly_fraction")
+    @classmethod
+    def kelly_fraction_range(cls, v: float | None) -> float | None:
+        if v is not None and not (0.0 < v <= 1.0):
+            raise ValueError("kelly_fraction must be in (0, 1]")
+        return v
+
+    @field_validator("max_stake_per_race_pct")
+    @classmethod
+    def max_stake_range(cls, v: float | None) -> float | None:
+        if v is not None and not (0.0 < v <= 1.0):
+            raise ValueError("max_stake_per_race_pct must be in (0, 1]")
+        return v
+
+    @field_validator("enabled_bet_types")
+    @classmethod
+    def valid_bet_types(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            invalid = [bt for bt in v if bt not in _ALL_BET_TYPES]
+            if invalid:
+                raise ValueError(f"Unknown bet types: {invalid}")
+        return v
 
 
 # ── Train request schema ──────────────────────────────────────────────────────

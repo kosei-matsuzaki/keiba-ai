@@ -18,6 +18,11 @@ _DEFAULTS: dict = {
     "win_ev_threshold": 1.1,
     "place_ev_threshold": 1.05,
     "scraper_stopped": False,
+    # Bankroll / Kelly settings
+    "bankroll": 100_000,
+    "kelly_fraction": 0.25,
+    "max_stake_per_race_pct": 0.05,
+    "enabled_bet_types": ["単勝", "複勝", "ワイド", "馬連"],
 }
 
 
