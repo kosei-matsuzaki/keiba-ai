@@ -25,6 +25,7 @@ from keiba_ai.db.base import Base
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.jockey import Jockey
+from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
 from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.models.trainer import Trainer
@@ -34,6 +35,7 @@ from keiba_ai.scraper import stop_flag
 from keiba_ai.scraper.netkeiba import NetkeibaClient
 from keiba_ai.scraper.parsers.horse_detail import parse_horse_detail
 from keiba_ai.scraper.parsers.horse_pedigree import parse_horse_pedigree
+from keiba_ai.scraper.parsers.payout import parse_payouts
 from keiba_ai.scraper.parsers.race_calendar import parse_race_ids_from_calendar
 from keiba_ai.scraper.parsers.race_result import ParsedRaceResult, parse_race_result
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
@@ -203,6 +205,30 @@ def _insert_entries(session: Session, result: ParsedRaceResult) -> None:
         ))
 
 
+def _upsert_payouts(session: Session, race_id: str, html: str) -> int:
+    """払戻テーブルを DELETE → INSERT で冪等に更新する。
+
+    既存 race の再 ingest 時に重複行が生じないよう、対象 race_id の全
+    payouts 行を先に削除してから parse_payouts() 結果を INSERT する。
+
+    Returns:
+        挿入した行数（0 の場合は払戻データが取得できなかったことを意味する）
+    """
+    session.execute(
+        Payout.__table__.delete().where(Payout.race_id == race_id)
+    )
+    payout_rows = parse_payouts(html)
+    for row in payout_rows:
+        session.add(Payout(
+            race_id=race_id,
+            bet_type=row.bet_type,
+            combo=row.combo,
+            amount=row.amount,
+            popularity=row.popularity,
+        ))
+    return len(payout_rows)
+
+
 async def run_ingest(
     date_str: str,
     client: NetkeibaClient,
@@ -245,11 +271,15 @@ async def run_ingest(
             _upsert_race(session, parsed)
             await _ensure_masters(session, parsed, client=client)
             _insert_entries(session, parsed)
+            n_payouts = _upsert_payouts(session, race_id, html)
             _record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
             session.commit()
 
             counters["fetched"] += 1
-            logger.info("Ingested race %s (%d entries)", race_id, len(parsed.entries))
+            logger.info(
+                "Ingested race %s (%d entries, %d payouts)",
+                race_id, len(parsed.entries), n_payouts,
+            )
 
         except ScraperStopped:
             raise
