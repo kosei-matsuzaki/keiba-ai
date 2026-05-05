@@ -8,9 +8,15 @@ import type { RaceDetail as RaceDetailType, PredictionResponse } from '../types/
 vi.mock('../lib/api', () => ({
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
+  fetchRecommendations: vi.fn(),
+  createBet: vi.fn(),
+  formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
+  formatErrorMessageSync: vi.fn().mockReturnValue('エラーが発生しました'),
+  isNotFoundError: vi.fn().mockReturnValue(false),
+  isServiceUnavailableError: vi.fn().mockReturnValue(false),
 }));
 
-import { fetchRaceDetail, fetchPredictions } from '../lib/api';
+import { fetchRaceDetail, fetchPredictions, fetchRecommendations } from '../lib/api';
 
 const mockRace: RaceDetailType = {
   race_id: '202406010101',
@@ -73,9 +79,27 @@ function renderRaceDetail(raceId = '202406010101') {
   );
 }
 
+const mockRecommendations = {
+  race_id: '202406010101',
+  bankroll_at_decision: 100_000,
+  candidates: [
+    {
+      bet_type: '単勝',
+      combo: '1',
+      pattern: 'box',
+      prob: 0.4,
+      est_odds: 10.0,
+      ev: 4.0,
+      stake: 500,
+      post_positions: [1],
+    },
+  ],
+};
+
 beforeEach(() => {
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
+  vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
 });
 
 describe('RaceDetail', () => {
@@ -131,5 +155,17 @@ describe('RaceDetail', () => {
     await waitFor(() => {
       expect(screen.getByText('レース詳細の取得に失敗しました')).toBeInTheDocument();
     });
+  });
+
+  it('renders RecommendationsCard section', async () => {
+    renderRaceDetail();
+    expect(await screen.findByText('推奨買目')).toBeInTheDocument();
+  });
+
+  it('shows recommendation candidates from API', async () => {
+    renderRaceDetail();
+    await screen.findByText('推奨買目');
+    expect(await screen.findByText('100,000 円')).toBeInTheDocument();
+    expect(screen.getByText('単勝')).toBeInTheDocument();
   });
 });

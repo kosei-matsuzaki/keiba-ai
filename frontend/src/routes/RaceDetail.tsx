@@ -3,7 +3,9 @@ import { Trophy } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
+import { useRecommendations } from '@/hooks/useRecommendations';
 import { PredictionTable } from '@/components/PredictionTable';
+import { RecommendationsCard } from '@/components/RecommendationsCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -35,6 +37,10 @@ export function RaceDetail() {
   const { race_id = '' } = useParams<{ race_id: string }>();
   const raceQuery = useRaceDetail(race_id);
   const predQuery = usePredictions(race_id);
+  const recQuery = useRecommendations(
+    race_id,
+    Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
+  );
 
   if (raceQuery.isPending) {
     return (
@@ -164,6 +170,15 @@ export function RaceDetail() {
           )}
         </CardContent>
       </Card>
+
+      {/* Recommendations card */}
+      <RecommendationsCard
+        raceId={race_id}
+        data={recQuery.data}
+        isPending={recQuery.isPending}
+        isError={recQuery.isError}
+        error={recQuery.error}
+      />
     </div>
   );
 }
