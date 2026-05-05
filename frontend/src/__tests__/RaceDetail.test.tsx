@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { RaceDetail } from '../routes/RaceDetail';
@@ -210,5 +210,76 @@ describe('RaceDetail', () => {
     await screen.findByText('推奨買目');
     expect(await screen.findByText('100,000 円')).toBeInTheDocument();
     expect(screen.getByText('単勝')).toBeInTheDocument();
+  });
+
+  it('column header click toggles sort direction', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+
+    const oddsHeader = screen.getByRole('columnheader', { name: /単勝オッズ/ });
+
+    // First click: desc (default for odds column)
+    fireEvent.click(oddsHeader);
+    // After first click, ChevronDown icon should be present (desc active)
+    // We verify by clicking again and checking rows swap order
+    // テスト馬A: odds_win=3.5, テスト馬B: odds_win=8.0
+    // desc → B(8.0) first; asc → A(3.5) first
+    const rows = () => screen.getAllByRole('row').slice(1); // skip header
+    // default sort: score desc → A(2.5) first
+    expect(rows()[0]).toHaveTextContent('テスト馬A');
+
+    // Click odds_win: first click → desc → B first
+    fireEvent.click(oddsHeader);
+    expect(rows()[0]).toHaveTextContent('テスト馬B');
+
+    // Second click → asc → A first
+    fireEvent.click(oddsHeader);
+    expect(rows()[0]).toHaveTextContent('テスト馬A');
+  });
+
+  it('null finish_position rows sort to the bottom in asc order', async () => {
+    const raceWithNullFinish: RaceDetailType = {
+      ...mockRace,
+      entries: [
+        { ...mockRace.entries[0], finish_position: null, post_position: 2 },
+        { ...mockRace.entries[1], finish_position: 1, post_position: 1 },
+      ],
+    };
+    vi.mocked(fetchRaceDetail).mockResolvedValue(raceWithNullFinish);
+
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+
+    const finishHeader = screen.getByRole('columnheader', { name: /着順/ });
+    // First click → desc (non-null 1着 first)
+    fireEvent.click(finishHeader);
+    // Second click → asc (1着 first, null last)
+    fireEvent.click(finishHeader);
+
+    const rows = screen.getAllByRole('row').slice(1);
+    // テスト馬B has finish_position=1, should be first in asc
+    expect(rows[0]).toHaveTextContent('テスト馬B');
+    // テスト馬A has null finish_position, should be last
+    expect(rows[rows.length - 1]).toHaveTextContent('テスト馬A');
+  });
+
+  it('BUY badge has descriptive title attribute', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    const buyBadges = screen.getAllByText('BUY');
+    expect(buyBadges.length).toBeGreaterThan(0);
+    // Each BUY badge should carry a tooltip explaining the criterion
+    buyBadges.forEach((badge) => {
+      expect(badge).toHaveAttribute('title');
+      expect(badge.getAttribute('title')).toContain('EV');
+    });
+  });
+
+  it('shows BUY badge note below the entry table', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    expect(
+      screen.getByText(/BUY バッジは単勝 EV>1\.1 の馬を示しますが/)
+    ).toBeInTheDocument();
   });
 });

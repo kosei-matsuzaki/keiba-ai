@@ -313,6 +313,73 @@ def test_recommendations_top_n_horses_param(
     assert captured_args.get("top_n_horses") == 2
 
 
+def test_recommendations_candidates_include_zero_stake(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """candidates array may contain stake=0 entries (keep_zero_stake=True path).
+
+    The API must return these without raising a validation error; stake >= 0
+    is the invariant.
+    """
+    race_id = "REC_RACE_ZS"
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_zs"))
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+    # Result includes one positive-stake and one zero-stake candidate
+    mixed_result = RecommendationResult(
+        race_id=race_id,
+        bankroll_at_decision=100_000,
+        candidates=[
+            BetCandidate(
+                bet_type="単勝",
+                combo="1",
+                pattern="box",
+                prob=0.4,
+                est_odds=10.0,
+                ev=4.0,
+                stake=500,
+                post_positions=(1,),
+            ),
+            BetCandidate(
+                bet_type="馬連",
+                combo="2-3",
+                pattern="nagashi",
+                prob=0.1,
+                est_odds=5.0,
+                ev=0.5,
+                stake=0,
+                post_positions=(2, 3),
+            ),
+        ],
+    )
+
+    with (
+        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+              return_value=mixed_result),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    stakes = [c["stake"] for c in data["candidates"]]
+    # All stakes are non-negative
+    assert all(s >= 0 for s in stakes)
+    # At least one zero-stake candidate is present
+    assert 0 in stakes
+
+
 def test_recommendations_top_k_param(
     app_with_temp_db: FastAPI,
     tmp_path: Path,

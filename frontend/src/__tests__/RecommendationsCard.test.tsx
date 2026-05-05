@@ -41,6 +41,33 @@ const mockData: RecommendationsResponse = {
   ],
 };
 
+const mockDataWithZeroStake: RecommendationsResponse = {
+  race_id: '202406010101',
+  bankroll_at_decision: 100_000,
+  candidates: [
+    {
+      bet_type: '単勝',
+      combo: '1',
+      pattern: 'box',
+      prob: 0.4,
+      est_odds: 10.0,
+      ev: 4.0,
+      stake: 500,
+      post_positions: [1],
+    },
+    {
+      bet_type: '馬連',
+      combo: '2-3',
+      pattern: 'nagashi',
+      prob: 0.1,
+      est_odds: 5.0,
+      ev: 0.5,
+      stake: 0,
+      post_positions: [2, 3],
+    },
+  ],
+};
+
 function wrap(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
@@ -197,5 +224,70 @@ describe('RecommendationsCard', () => {
         source: 'recommendation',
       });
     });
+  });
+
+  it('stake=0 row is visually dimmed (opacity-60 class)', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithZeroStake}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    // The zero-stake row should carry opacity-60
+    const rows = screen.getAllByRole('row').slice(1); // skip header row
+    const zeroStakeRow = rows.find((r) => r.classList.contains('opacity-60'));
+    expect(zeroStakeRow).toBeDefined();
+  });
+
+  it('buy button is disabled for stake=0 candidate', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithZeroStake}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    const buyButtons = screen.getAllByRole('button', { name: '買う' });
+    // There are 2 candidates; the zero-stake one should have a disabled button
+    const disabledButtons = buyButtons.filter((btn) => btn.hasAttribute('disabled'));
+    expect(disabledButtons.length).toBeGreaterThan(0);
+  });
+
+  it('shows candidate counts in header description', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithZeroStake}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    // e.g. "2 候補（うち 1 件が推奨）"
+    expect(screen.getByText(/候補.*うち.*件が推奨/)).toBeInTheDocument();
+  });
+
+  it('shows est_odds note below the table', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    expect(
+      screen.getByText(/推定オッズは過去払戻の平均値.*暫定/)
+    ).toBeInTheDocument();
   });
 });

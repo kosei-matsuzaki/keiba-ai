@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { Trophy, ChevronLeft } from 'lucide-react';
+import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
@@ -45,6 +45,120 @@ interface EntryRow {
   pred: HorsePrediction | null;
 }
 
+type SortKey =
+  | 'post_position'
+  | 'horse_name'
+  | 'odds_win'
+  | 'popularity'
+  | 'finish_position'
+  | 'score'
+  | 'win_prob'
+  | 'place_prob';
+
+type SortDir = 'asc' | 'desc';
+
+interface SortState {
+  key: SortKey;
+  dir: SortDir;
+}
+
+// Columns that use asc as the initial direction when first clicked
+const ASC_FIRST_KEYS: ReadonlySet<SortKey> = new Set(['post_position', 'popularity']);
+
+/**
+ * Compare two nullable numbers for sort purposes, returning the raw numeric
+ * difference (positive = a after b, negative = a before b, 0 = equal).
+ * null / NaN comparisons are NOT handled here — handled in sortRows to keep
+ * null-last logic independent of sort direction.
+ */
+function compareNumbers(a: number, b: number): number {
+  return a - b;
+}
+
+function compareStrings(a: string, b: string): number {
+  return a.localeCompare(b, 'ja');
+}
+
+/**
+ * Extract the raw numeric value for a given sort key from a row.
+ * Returns undefined when the value is null / NaN / undefined.
+ */
+function numericValue(row: EntryRow, key: SortKey): number | undefined {
+  let v: number | null | undefined;
+  switch (key) {
+    case 'post_position': v = row.entry.post_position; break;
+    case 'odds_win':      v = row.entry.odds_win; break;
+    case 'popularity':    v = row.entry.popularity; break;
+    case 'finish_position': v = row.entry.finish_position; break;
+    case 'score':         v = row.pred?.score; break;
+    case 'win_prob':      v = row.pred?.win_prob; break;
+    case 'place_prob':    v = row.pred?.place_prob; break;
+    default: return undefined;
+  }
+  if (v == null || isNaN(v as number)) return undefined;
+  return v as number;
+}
+
+function sortRows(rows: EntryRow[], sort: SortState): EntryRow[] {
+  const multiplier = sort.dir === 'asc' ? 1 : -1;
+
+  return [...rows].sort((a, b) => {
+    if (sort.key === 'horse_name') {
+      const aNull = a.entry.horse_name == null;
+      const bNull = b.entry.horse_name == null;
+      if (aNull && bNull) return 0;
+      // null is always last regardless of direction
+      if (aNull) return 1;
+      if (bNull) return -1;
+      return compareStrings(a.entry.horse_name!, b.entry.horse_name!) * multiplier;
+    }
+
+    const av = numericValue(a, sort.key);
+    const bv = numericValue(b, sort.key);
+
+    if (av === undefined && bv === undefined) return 0;
+    // null / NaN is always last regardless of direction
+    if (av === undefined) return 1;
+    if (bv === undefined) return -1;
+
+    return compareNumbers(av, bv) * multiplier;
+  });
+}
+
+interface SortableHeaderProps {
+  label: string;
+  sortKey: SortKey;
+  sort: SortState;
+  onSort: (key: SortKey) => void;
+  className?: string;
+}
+
+function SortableHeader({ label, sortKey, sort, onSort, className }: SortableHeaderProps) {
+  const isActive = sort.key === sortKey;
+  const Icon = isActive
+    ? sort.dir === 'asc'
+      ? ChevronUp
+      : ChevronDown
+    : ChevronsUpDown;
+
+  return (
+    <TableHead
+      className={`cursor-pointer select-none whitespace-nowrap ${className ?? ''}`}
+      onClick={() => onSort(sortKey)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <Icon
+          className={`h-3 w-3 ${isActive ? 'text-foreground' : 'text-muted-foreground/40'}`}
+        />
+      </span>
+    </TableHead>
+  );
+}
+
+const BUY_TOOLTIP =
+  '単勝 EV > 1.1（過去バックテストでは payback_win=0.688、baseline 0.868 比 −18pt で赤字傾向。参考値）';
+
 interface EntryPredictionTableProps {
   entries: EntrySummary[];
   predictions: HorsePrediction[] | null;
@@ -52,46 +166,60 @@ interface EntryPredictionTableProps {
 
 /**
  * Unified table merging entry data and prediction scores.
- * Sorted by prediction score desc when predictions are available,
- * otherwise by post_position asc.
+ * Default sort: score desc when predictions are available, post_position asc otherwise.
+ * Clicking a sortable column header toggles sort direction.
+ * null / NaN values always sort to the bottom regardless of direction.
  */
 function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProps) {
+  const defaultSort: SortState = predictions
+    ? { key: 'score', dir: 'desc' }
+    : { key: 'post_position', dir: 'asc' };
+
+  const [sort, setSort] = useState<SortState>(defaultSort);
+
+  function handleSort(key: SortKey) {
+    setSort((prev) => {
+      if (prev.key === key) {
+        return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+      }
+      // Different column: start with asc for asc-first keys, desc for the rest
+      const dir: SortDir = ASC_FIRST_KEYS.has(key) ? 'asc' : 'desc';
+      return { key, dir };
+    });
+  }
+
   const rows = useMemo<EntryRow[]>(() => {
     const predMap = new Map(predictions?.map((p) => [p.horse_id, p]) ?? []);
-
     const merged: EntryRow[] = entries.map((entry) => ({
       entry,
       pred: predMap.get(entry.horse_id) ?? null,
     }));
-
-    if (predictions) {
-      merged.sort((a, b) => (b.pred?.score ?? -Infinity) - (a.pred?.score ?? -Infinity));
-    } else {
-      merged.sort((a, b) => (a.entry.post_position ?? 99) - (b.entry.post_position ?? 99));
-    }
-
     return merged;
   }, [entries, predictions]);
+
+  const sortedRows = useMemo(() => sortRows(rows, sort), [rows, sort]);
+
+  const headerProps = { sort, onSort: handleSort };
 
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-12">馬番</TableHead>
-          <TableHead>馬名</TableHead>
+          <SortableHeader label="馬番" sortKey="post_position" className="w-12" {...headerProps} />
+          <SortableHeader label="馬名" sortKey="horse_name" {...headerProps} />
           <TableHead className="text-center">年齢/性別</TableHead>
-          <TableHead className="text-right">単勝オッズ</TableHead>
-          <TableHead className="text-right">人気</TableHead>
-          <TableHead className="text-center">着順</TableHead>
-          <TableHead className="text-right">スコア</TableHead>
-          <TableHead className="text-right">単勝確率</TableHead>
-          <TableHead className="text-right">複勝確率</TableHead>
+          <SortableHeader label="単勝オッズ" sortKey="odds_win" className="text-right" {...headerProps} />
+          <SortableHeader label="人気" sortKey="popularity" className="text-right" {...headerProps} />
+          <SortableHeader label="着順" sortKey="finish_position" className="text-center" {...headerProps} />
+          <SortableHeader label="スコア" sortKey="score" className="text-right" {...headerProps} />
+          <SortableHeader label="単勝確率" sortKey="win_prob" className="text-right" {...headerProps} />
+          <SortableHeader label="複勝確率" sortKey="place_prob" className="text-right" {...headerProps} />
           <TableHead className="text-center">推奨</TableHead>
           <TableHead>SHAP</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map(({ entry, pred }) => (
+        {sortedRows.map(({ entry, pred }) => (
           <TableRow key={entry.horse_id}>
             <TableCell className="font-medium">{entry.post_position ?? '—'}</TableCell>
             <TableCell>
@@ -125,7 +253,7 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             </TableCell>
             <TableCell className="text-center">
               {pred != null && isBuy(pred, entry) && (
-                <Badge variant="success">BUY</Badge>
+                <Badge variant="success" title={BUY_TOOLTIP}>BUY</Badge>
               )}
             </TableCell>
             <TableCell className="text-xs text-muted-foreground italic">
@@ -135,6 +263,15 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
         ))}
       </TableBody>
     </Table>
+  );
+}
+
+function BuyBadgeNote() {
+  return (
+    <p className="mt-3 text-xs text-muted-foreground">
+      BUY バッジは単勝 EV&gt;1.1 の馬を示しますが、過去のバックテストでは
+      payback_win=0.688（baseline 0.868 比 −18pt）で赤字傾向です。実買いは慎重に。
+    </p>
   );
 }
 
@@ -250,9 +387,13 @@ export function RaceDetail() {
                     : '予想データを取得できません。予想スコア列は非表示です。'}
                 </p>
                 <EntryPredictionTable entries={race.entries} predictions={null} />
+                <BuyBadgeNote />
               </>
             ) : (
-              <EntryPredictionTable entries={race.entries} predictions={predictions} />
+              <>
+                <EntryPredictionTable entries={race.entries} predictions={predictions} />
+                <BuyBadgeNote />
+              </>
             )}
           </CardContent>
         </Card>

@@ -463,6 +463,46 @@ class TestAssignStakes:
                       max_stake_per_race_pct=1.0)
         assert cand.stake == 0  # original unchanged
 
+    def test_keep_zero_stake_includes_low_ev_candidates(self):
+        """keep_zero_stake=True retains ev<=1.0 candidates with stake=0."""
+        high_ev = BetCandidate(
+            bet_type="馬連", combo="1-2", pattern="box",
+            prob=0.5, est_odds=3.0, ev=1.5, stake=0, post_positions=(1, 2),
+        )
+        low_ev = BetCandidate(
+            bet_type="馬連", combo="1-3", pattern="box",
+            prob=0.1, est_odds=5.0, ev=0.5, stake=0, post_positions=(1, 3),
+        )
+        result = assign_stakes(
+            [high_ev, low_ev],
+            bankroll=10_000,
+            kelly_fraction=1.0,
+            max_stake_per_race_pct=1.0,
+            keep_zero_stake=True,
+        )
+        combos = {c.combo for c in result}
+        # high-ev candidate appears with positive stake
+        high_result = next(c for c in result if c.combo == "1-2")
+        assert high_result.stake > 0
+        # low-ev candidate is present with stake=0
+        assert "1-3" in combos
+        low_result = next(c for c in result if c.combo == "1-3")
+        assert low_result.stake == 0
+
+    def test_keep_zero_stake_false_excludes_zero_stake(self):
+        """Default keep_zero_stake=False excludes ev<=1.0 candidates (backward compat)."""
+        low_ev = BetCandidate(
+            bet_type="単勝", combo="1", pattern="box",
+            prob=0.05, est_odds=5.0, ev=0.25, stake=0, post_positions=(1,),
+        )
+        result = assign_stakes(
+            [low_ev],
+            bankroll=100_000,
+            kelly_fraction=0.25,
+            max_stake_per_race_pct=0.05,
+        )
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # recommend_for_race (integration)
