@@ -1,10 +1,10 @@
-import { useParams, Link } from 'react-router-dom';
-import { Trophy } from 'lucide-react';
+import { useMemo } from 'react';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { Trophy, ChevronLeft } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
-import { PredictionTable } from '@/components/PredictionTable';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -21,7 +21,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { isNotFoundError, isServiceUnavailableError } from '@/lib/api';
-import { formatOdds, formatYen } from '@/lib/formatters';
+import { formatOdds, formatPercent, formatScore, formatYen } from '@/lib/formatters';
+import type { EntrySummary, HorsePrediction } from '@/types/api';
 
 function RaceDetailSkeleton() {
   return (
@@ -33,8 +34,130 @@ function RaceDetailSkeleton() {
   );
 }
 
+/** Indicates BUY when single-win expected value > 1.1 */
+function isBuy(pred: HorsePrediction, entry: EntrySummary | undefined): boolean {
+  if (!entry?.odds_win) return false;
+  return pred.win_prob * entry.odds_win > 1.1;
+}
+
+interface EntryRow {
+  entry: EntrySummary;
+  pred: HorsePrediction | null;
+}
+
+interface EntryPredictionTableProps {
+  entries: EntrySummary[];
+  predictions: HorsePrediction[] | null;
+}
+
+/**
+ * Unified table merging entry data and prediction scores.
+ * Sorted by prediction score desc when predictions are available,
+ * otherwise by post_position asc.
+ */
+function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProps) {
+  const rows = useMemo<EntryRow[]>(() => {
+    const predMap = new Map(predictions?.map((p) => [p.horse_id, p]) ?? []);
+
+    const merged: EntryRow[] = entries.map((entry) => ({
+      entry,
+      pred: predMap.get(entry.horse_id) ?? null,
+    }));
+
+    if (predictions) {
+      merged.sort((a, b) => (b.pred?.score ?? -Infinity) - (a.pred?.score ?? -Infinity));
+    } else {
+      merged.sort((a, b) => (a.entry.post_position ?? 99) - (b.entry.post_position ?? 99));
+    }
+
+    return merged;
+  }, [entries, predictions]);
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="w-12">馬番</TableHead>
+          <TableHead>馬名</TableHead>
+          <TableHead className="text-center">年齢/性別</TableHead>
+          <TableHead className="text-right">単勝オッズ</TableHead>
+          <TableHead className="text-right">人気</TableHead>
+          <TableHead className="text-center">着順</TableHead>
+          <TableHead className="text-right">スコア</TableHead>
+          <TableHead className="text-right">単勝確率</TableHead>
+          <TableHead className="text-right">複勝確率</TableHead>
+          <TableHead className="text-center">推奨</TableHead>
+          <TableHead>SHAP</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map(({ entry, pred }) => (
+          <TableRow key={entry.horse_id}>
+            <TableCell className="font-medium">{entry.post_position ?? '—'}</TableCell>
+            <TableCell>
+              {entry.horse_name ?? (
+                <span className="font-mono text-xs text-muted-foreground">{entry.horse_id}</span>
+              )}
+            </TableCell>
+            <TableCell className="text-center">
+              {entry.age ?? '?'}{entry.sex ?? ''}
+            </TableCell>
+            <TableCell className="text-right">{formatOdds(entry.odds_win)}</TableCell>
+            <TableCell className="text-right">{entry.popularity ?? '—'}</TableCell>
+            <TableCell className="text-center">
+              {entry.finish_position != null ? (
+                <Badge variant={entry.finish_position <= 3 ? 'default' : 'secondary'}>
+                  {entry.finish_position}着
+                </Badge>
+              ) : (
+                '—'
+              )}
+            </TableCell>
+            {/* Prediction columns */}
+            <TableCell className="text-right">
+              {pred != null ? formatScore(pred.score) : '—'}
+            </TableCell>
+            <TableCell className="text-right">
+              {pred != null ? formatPercent(pred.win_prob) : '—'}
+            </TableCell>
+            <TableCell className="text-right">
+              {pred != null ? formatPercent(pred.place_prob) : '—'}
+            </TableCell>
+            <TableCell className="text-center">
+              {pred != null && isBuy(pred, entry) && (
+                <Badge variant="success">BUY</Badge>
+              )}
+            </TableCell>
+            <TableCell className="text-xs text-muted-foreground italic">
+              {pred != null ? 'SHAP 寄与は M9 以降' : '—'}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+interface MetaItemProps {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+function MetaItem({ label, value, mono }: MetaItemProps) {
+  return (
+    <div>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={mono ? 'font-mono text-xs' : ''}>{value}</dd>
+    </div>
+  );
+}
+
 export function RaceDetail() {
   const { race_id = '' } = useParams<{ race_id: string }>();
+  const [searchParams] = useSearchParams();
+  const dateParam = searchParams.get('date');
+
   const raceQuery = useRaceDetail(race_id);
   const predQuery = usePredictions(race_id);
   const recQuery = useRecommendations(
@@ -42,9 +165,12 @@ export function RaceDetail() {
     Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
   );
 
+  const backLink = dateParam ? `/past?date=${dateParam}` : '/past';
+
   if (raceQuery.isPending) {
     return (
       <div className="flex flex-col gap-6 p-6">
+        <BackLink to={backLink} />
         <PageHeader icon={Trophy} title="Race Detail" description={race_id} />
         <RaceDetailSkeleton />
       </div>
@@ -55,6 +181,7 @@ export function RaceDetail() {
     const is404 = isNotFoundError(raceQuery.error);
     return (
       <div className="flex flex-col gap-6 p-6">
+        <BackLink to={backLink} />
         <PageHeader icon={Trophy} title="Race Detail" description={race_id} />
         <EmptyState
           message={is404 ? '指定レース ID は見つかりません' : 'レース詳細の取得に失敗しました'}
@@ -72,9 +199,12 @@ export function RaceDetail() {
   }
 
   const race = raceQuery.data;
+  const predictions = predQuery.data?.predictions ?? null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
+      <BackLink to={backLink} />
+
       <PageHeader
         icon={Trophy}
         title={`${race.course} ${race.race_class ?? ''}`.trim()}
@@ -103,73 +233,30 @@ export function RaceDetail() {
         </CardContent>
       </Card>
 
-      {/* Entry table */}
+      {/* Unified entry + prediction table */}
       {race.entries.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">出走馬一覧</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>馬番</TableHead>
-                  <TableHead>馬 ID</TableHead>
-                  <TableHead className="text-center">年齢/性別</TableHead>
-                  <TableHead className="text-right">単勝オッズ</TableHead>
-                  <TableHead className="text-right">人気</TableHead>
-                  <TableHead className="text-center">着順</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {race.entries.map((entry) => (
-                  <TableRow key={entry.horse_id}>
-                    <TableCell>{entry.post_position ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs">{entry.horse_id}</TableCell>
-                    <TableCell className="text-center">
-                      {entry.age ?? '?'}{entry.sex ?? ''}
-                    </TableCell>
-                    <TableCell className="text-right">{formatOdds(entry.odds_win)}</TableCell>
-                    <TableCell className="text-right">{entry.popularity ?? '—'}</TableCell>
-                    <TableCell className="text-center">
-                      {entry.finish_position != null ? (
-                        <Badge variant={entry.finish_position <= 3 ? 'default' : 'secondary'}>
-                          {entry.finish_position}着
-                        </Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            {predQuery.isPending ? (
+              <Skeleton className="h-40 w-full" />
+            ) : predQuery.isError ? (
+              <>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  {isServiceUnavailableError(predQuery.error)
+                    ? 'active モデルが見つかりません。予想スコア列は非表示です。'
+                    : '予想データを取得できません。予想スコア列は非表示です。'}
+                </p>
+                <EntryPredictionTable entries={race.entries} predictions={null} />
+              </>
+            ) : (
+              <EntryPredictionTable entries={race.entries} predictions={predictions} />
+            )}
           </CardContent>
         </Card>
       )}
-
-      {/* Prediction table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">予想スコア</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {predQuery.isPending ? (
-            <Skeleton className="h-40 w-full" />
-          ) : predQuery.isError ? (
-            <EmptyState
-              message="予想データを取得できません"
-              description={
-                isServiceUnavailableError(predQuery.error)
-                  ? 'active モデルが見つかりません。Models 画面から train を実行してください。'
-                  : 'バックエンドが起動しているか確認してください。'
-              }
-            />
-          ) : (
-            <PredictionTable predictions={predQuery.data.predictions} entries={race.entries} />
-          )}
-        </CardContent>
-      </Card>
 
       {/* Recommendations card */}
       <RecommendationsCard
@@ -183,17 +270,19 @@ export function RaceDetail() {
   );
 }
 
-interface MetaItemProps {
-  label: string;
-  value: string;
-  mono?: boolean;
+interface BackLinkProps {
+  to: string;
 }
 
-function MetaItem({ label, value, mono }: MetaItemProps) {
+function BackLink({ to }: BackLinkProps) {
   return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={mono ? 'font-mono text-xs' : ''}>{value}</dd>
-    </div>
+    <Link
+      to={to}
+      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      aria-label="Past Races へ戻る"
+    >
+      <ChevronLeft className="h-4 w-4" />
+      戻る
+    </Link>
   );
 }

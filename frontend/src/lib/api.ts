@@ -63,13 +63,9 @@ export function fetchUpcomingRaces(days = 7): Promise<UpcomingRacesResponse> {
   );
 }
 
-export function fetchRecentRaces(
-  args: { days: number } | { from: string; to: string } = { days: 30 },
-): Promise<UpcomingRacesResponse> {
-  const searchParams: Record<string, string | number> =
-    'from' in args ? { from: args.from, to: args.to } : { days: args.days };
+export function fetchRacesByDate(date: string): Promise<UpcomingRacesResponse> {
   return getClient().then((c) =>
-    c.get('races/recent', { searchParams }).json<UpcomingRacesResponse>()
+    c.get('races/by_date', { searchParams: { date } }).json<UpcomingRacesResponse>()
   );
 }
 

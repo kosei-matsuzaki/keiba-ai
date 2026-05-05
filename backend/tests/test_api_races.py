@@ -242,3 +242,88 @@ def test_recent_races_date_range_too_long_returns_422(
         resp = client.get("/api/races/recent?from=2023-01-01&to=2024-12-31")
 
     assert resp.status_code == 422
+
+
+# ── /races/by_date ────────────────────────────────────────────────────────────
+
+def test_by_date_empty(api_client: TestClient) -> None:
+    """No races in DB for the given date — empty list returned (not 404)."""
+    resp = api_client.get("/api/races/by_date?date=2024-12-01")
+    assert resp.status_code == 200
+    assert resp.json()["races"] == []
+
+
+def test_by_date_returns_matching_races(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """Races on the target date are returned; other dates are excluded."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    target = "2024-06-01"
+
+    with session_scope(engine) as session:
+        _insert_race(session, "MATCH001", target)
+        _insert_race(session, "MATCH002", target)
+        _insert_race(session, "OTHER001", "2024-06-02")
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get(f"/api/races/by_date?date={target}")
+
+    assert resp.status_code == 200
+    race_ids = {r["race_id"] for r in resp.json()["races"]}
+    assert race_ids == {"MATCH001", "MATCH002"}
+    assert "OTHER001" not in race_ids
+
+
+def test_by_date_invalid_format_returns_422(api_client: TestClient) -> None:
+    """Malformed date string is rejected with 422."""
+    resp = api_client.get("/api/races/by_date?date=2024/06/01")
+    assert resp.status_code == 422
+
+
+def test_by_date_entry_summary_includes_horse_name(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """horse_name is populated via bulk Horse lookup in /races/{race_id}."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+    from keiba_ai.db.models.horse import Horse as HorseModel
+
+    engine = make_engine(db_path())
+    target_date = "2024-06-15"
+
+    with session_scope(engine) as session:
+        # Insert race with 1 horse and give the horse a name
+        race_id = "HORSENAME01"
+        session.add(Race(
+            race_id=race_id,
+            date=target_date,
+            course="東京",
+            surface="芝",
+            distance=2000,
+            race_class="G1",
+            n_runners=1,
+            payout_win=None,
+            payout_place=None,
+        ))
+        session.flush()
+        hid = "HN_001"
+        session.add(HorseModel(horse_id=hid, name="テストホース"))
+        session.flush()
+        session.add(Entry(
+            race_id=race_id,
+            horse_id=hid,
+            post_position=1,
+            finish_position=1,
+        ))
+        session.commit()
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get(f"/api/races/{race_id}")
+
+    assert resp.status_code == 200
+    entries = resp.json()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["horse_name"] == "テストホース"

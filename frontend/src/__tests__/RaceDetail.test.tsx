@@ -33,6 +33,7 @@ const mockRace: RaceDetailType = {
   entries: [
     {
       horse_id: '2019100001',
+      horse_name: 'テスト馬A',
       post_position: 1,
       jockey_id: null,
       trainer_id: null,
@@ -44,6 +45,7 @@ const mockRace: RaceDetailType = {
     },
     {
       horse_id: '2019100002',
+      horse_name: 'テスト馬B',
       post_position: 2,
       jockey_id: null,
       trainer_id: null,
@@ -66,20 +68,6 @@ const mockPredictions: PredictionResponse = {
   combinations: null,
 };
 
-function renderRaceDetail(raceId = '202406010101') {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/races/${raceId}`]}>
-        <Routes>
-          <Route path="/races/:race_id" element={<RaceDetail />} />
-          <Route path="/upcoming" element={<div>Upcoming Races</div>} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>
-  );
-}
-
 const mockRecommendations = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
@@ -97,6 +85,22 @@ const mockRecommendations = {
   ],
 };
 
+function renderRaceDetail(raceId = '202406010101', search = '') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const path = `/races/${raceId}${search}`;
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/races/:race_id" element={<RaceDetail />} />
+          <Route path="/upcoming" element={<div>Upcoming Races</div>} />
+          <Route path="/past" element={<div data-testid="past-races">Past Races</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
 beforeEach(() => {
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
@@ -111,32 +115,70 @@ describe('RaceDetail', () => {
     expect(screen.getByText('2400 m')).toBeInTheDocument();
   });
 
-  it('displays entry table with horse data', async () => {
+  it('renders unified entry+prediction table with horse names', async () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    // horse_id appears in both entry table and prediction table
-    const h1Cells = screen.getAllByText('2019100001');
-    expect(h1Cells.length).toBeGreaterThan(0);
-    const h2Cells = screen.getAllByText('2019100002');
-    expect(h2Cells.length).toBeGreaterThan(0);
+    expect(screen.getByText('テスト馬A')).toBeInTheDocument();
+    expect(screen.getByText('テスト馬B')).toBeInTheDocument();
   });
 
-  it('renders prediction table', async () => {
+  it('unified table contains prediction score column', async () => {
     renderRaceDetail();
-    await screen.findByText('予想スコア');
-    // sorted by score desc → 2019100001 first; horse_id appears in both tables
-    const cells = screen.getAllByText('2019100001');
-    expect(cells.length).toBeGreaterThan(0);
+    await screen.findByText('出走馬一覧');
+    // Score header
+    expect(screen.getByRole('columnheader', { name: 'スコア' })).toBeInTheDocument();
+    // Score values for both horses
+    expect(screen.getByText('2.500')).toBeInTheDocument();
+    expect(screen.getByText('1.800')).toBeInTheDocument();
+  });
+
+  it('unified table contains win_prob and place_prob columns', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    expect(screen.getByRole('columnheader', { name: '単勝確率' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '複勝確率' })).toBeInTheDocument();
+  });
+
+  it('shows horse post_position in unified table', async () => {
+    renderRaceDetail();
+    await screen.findByText('テスト馬A');
+    // post_position 1 and 2 appear as table cells
+    const cells = screen.getAllByRole('cell');
+    const postPositions = cells.filter((c) => c.textContent === '1' || c.textContent === '2');
+    expect(postPositions.length).toBeGreaterThan(0);
   });
 
   it('shows BUY badge when win EV > 1.1', async () => {
-    // 2019100001: win_prob=0.45, odds_win=3.5 → EV=1.575 > 1.1
-    // 2019100002: win_prob=0.20, odds_win=8.0 → EV=1.60 > 1.1
-    // Both qualify, so at least one BUY badge should appear
+    // テスト馬A: win_prob=0.45 * odds_win=3.5 = 1.575 > 1.1
+    // テスト馬B: win_prob=0.20 * odds_win=8.0 = 1.60  > 1.1
     renderRaceDetail();
-    await screen.findByText('予想スコア');
+    await screen.findByText('出走馬一覧');
     const buyBadges = screen.getAllByText('BUY');
     expect(buyBadges.length).toBeGreaterThan(0);
+  });
+
+  it('does not render a separate 予想スコア card (tables merged)', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    // The old standalone "予想スコア" card title should no longer exist
+    // (prediction data is merged into the 出走馬一覧 card)
+    const cardTitles = screen.queryAllByText('予想スコア');
+    expect(cardTitles).toHaveLength(0);
+  });
+
+  it('renders back link pointing to /past when no date param', async () => {
+    renderRaceDetail();
+    await screen.findByText('レース概要');
+    const backLink = screen.getByRole('link', { name: 'Past Races へ戻る' });
+    expect(backLink).toBeInTheDocument();
+    expect(backLink).toHaveAttribute('href', '/past');
+  });
+
+  it('renders back link with date param preserved', async () => {
+    renderRaceDetail('202406010101', '?date=2024-06-01');
+    await screen.findByText('レース概要');
+    const backLink = screen.getByRole('link', { name: 'Past Races へ戻る' });
+    expect(backLink).toHaveAttribute('href', '/past?date=2024-06-01');
   });
 
   it('shows 404 empty state when race is not found', async () => {
