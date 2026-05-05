@@ -188,3 +188,57 @@ def test_recent_races_limit(
 
     assert resp.status_code == 200
     assert len(resp.json()["races"]) == 3
+
+
+def test_recent_races_explicit_date_range(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """from/to date range overrides days mode; bounds are inclusive."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _insert_race(session, "RIN001", "2024-12-01")
+        _insert_race(session, "RIN002", "2024-12-15")
+        _insert_race(session, "RIN003", "2024-12-31")
+        _insert_race(session, "ROUT001", "2024-11-30")  # before from
+        _insert_race(session, "ROUT002", "2025-01-01")  # after to
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?from=2024-12-01&to=2024-12-31")
+
+    assert resp.status_code == 200
+    race_ids = {r["race_id"] for r in resp.json()["races"]}
+    assert race_ids == {"RIN001", "RIN002", "RIN003"}
+
+
+def test_recent_races_invalid_date_range_returns_422(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """from > to is rejected with 422."""
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?from=2024-12-31&to=2024-12-01")
+
+    assert resp.status_code == 422
+
+
+def test_recent_races_invalid_date_format_returns_422(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """Malformed date string is rejected with 422."""
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?from=2024/12/01&to=2024-12-31")
+
+    assert resp.status_code == 422
+
+
+def test_recent_races_date_range_too_long_returns_422(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """Date ranges over 365 days are rejected with 422."""
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/recent?from=2023-01-01&to=2024-12-31")
+
+    assert resp.status_code == 422

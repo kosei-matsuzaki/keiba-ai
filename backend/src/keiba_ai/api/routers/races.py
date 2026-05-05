@@ -64,15 +64,55 @@ def get_recent_races(
     session: Annotated[Session, Depends(get_session)],
     days: Annotated[int, Query(ge=1, le=365)] = 30,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    from_: Annotated[
+        str | None,
+        Query(alias="from", description="Start date YYYY-MM-DD (overrides days when both from and to are given)"),
+    ] = None,
+    to: Annotated[
+        str | None,
+        Query(description="End date YYYY-MM-DD (overrides days when both from and to are given)"),
+    ] = None,
 ) -> UpcomingRacesResponse:
-    today = date.today().isoformat()
-    since = (date.today() - timedelta(days=days)).isoformat()
-    stmt = (
-        select(Race)
-        .where(Race.date < today, Race.date >= since)
-        .order_by(Race.date.desc())
-        .limit(limit)
-    )
+    """Return past races, ordered by date desc.
+
+    - If both `from` and `to` are provided, the result is filtered to
+      `from <= date <= to` (inclusive).
+    - Otherwise, falls back to `days` mode: `today - days <= date < today`.
+    """
+    if from_ and to:
+        try:
+            d_from = date.fromisoformat(from_)
+            d_to = date.fromisoformat(to)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid date format (expected YYYY-MM-DD): {exc}",
+            ) from exc
+        if d_from > d_to:
+            raise HTTPException(
+                status_code=422,
+                detail="`from` must be on or before `to`.",
+            )
+        if (d_to - d_from).days > 365:
+            raise HTTPException(
+                status_code=422,
+                detail="Date range must not exceed 365 days.",
+            )
+        stmt = (
+            select(Race)
+            .where(Race.date >= d_from.isoformat(), Race.date <= d_to.isoformat())
+            .order_by(Race.date.desc())
+            .limit(limit)
+        )
+    else:
+        today = date.today().isoformat()
+        since = (date.today() - timedelta(days=days)).isoformat()
+        stmt = (
+            select(Race)
+            .where(Race.date < today, Race.date >= since)
+            .order_by(Race.date.desc())
+            .limit(limit)
+        )
     races = session.scalars(stmt).all()
     return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
 

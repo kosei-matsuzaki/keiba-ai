@@ -94,19 +94,44 @@ describe('RecentRaces', () => {
     const user = userEvent.setup();
     renderRecentRaces();
 
-    // Default is 30 days — confirm fetchRecentRaces was called with 30
+    // Default is 30 days — confirm fetchRecentRaces was called with {days: 30}
     await screen.findAllByRole('button', { name: '予想を見る' });
-    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith(30);
+    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith({ days: 30 });
 
     // Click "7 日" preset
     const btn7 = screen.getByRole('button', { name: '7 日' });
     await user.click(btn7);
-    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith(7);
+    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith({ days: 7 });
 
     // Click "90 日" preset
     const btn90 = screen.getByRole('button', { name: '90 日' });
     await user.click(btn90);
-    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith(90);
+    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith({ days: 90 });
+  });
+
+  it('date range pickers send from/to once 適用 is clicked', async () => {
+    const user = userEvent.setup();
+    renderRecentRaces();
+    await screen.findAllByRole('button', { name: '予想を見る' });
+
+    const fromInput = screen.getByLabelText('開始日');
+    const toInput = screen.getByLabelText('終了日');
+    const apply = screen.getByRole('button', { name: '適用' });
+
+    // Apply is disabled when from/to are empty
+    expect(apply).toBeDisabled();
+
+    await user.type(fromInput, '2024-12-01');
+    await user.type(toInput, '2024-12-31');
+    expect(apply).toBeEnabled();
+    await user.click(apply);
+
+    expect(vi.mocked(fetchRecentRaces)).toHaveBeenCalledWith({
+      from: '2024-12-01',
+      to: '2024-12-31',
+    });
+    // Apply button now reflects the active range mode
+    expect(apply).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('preset buttons reflect active state via aria-pressed', async () => {

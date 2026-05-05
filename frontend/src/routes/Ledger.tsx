@@ -323,7 +323,7 @@ export function Ledger() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         icon={Wallet}
-        title="収支台帳"
+        title="Ledger"
         description="ベット記録の集計・損益推移・CSV エクスポート"
       >
         <Button variant="outline" size="sm" onClick={handleCsvDownload}>
