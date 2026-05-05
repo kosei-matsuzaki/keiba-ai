@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -178,3 +178,46 @@ class JobInfoSchema(BaseModel):
     started_at: str
     finished_at: str | None = None
     error: str | None = None
+
+
+# ── Bet record schemas ────────────────────────────────────────────────────────
+
+BetType = Literal["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"]
+
+
+class BetRecordIn(BaseModel):
+    """POST /api/bets リクエストボディ。"""
+    race_id: str
+    bet_type: BetType
+    combo: str
+    stake: int = Field(ge=1)
+    source: Literal["recommendation", "manual"]
+    recommendation_id: int | None = None
+    notes: str | None = None
+
+
+class BetRecordUpdate(BaseModel):
+    """PUT /api/bets/{id} リクエストボディ — notes のみ更新可。"""
+    notes: str | None = None
+
+
+class BetRecordOut(BaseModel):
+    """GET /api/bets レスポンス — 全カラム。"""
+    id: int
+    created_at: str
+    race_id: str
+    bet_type: str
+    combo: str
+    stake: int
+    source: str
+    recommendation_id: int | None
+    settled_at: str | None
+    payout: int | None
+    profit: int | None
+    notes: str | None
+
+
+class BetRecordList(BaseModel):
+    """GET /api/bets リストレスポンスラッパー。"""
+    total: int
+    items: list[BetRecordOut]

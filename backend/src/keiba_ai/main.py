@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.routers import (
+    bets,
     health,
     internal,
     jobs,
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
 
     application.include_router(health.router, prefix="/api")
     application.include_router(races.router, prefix="/api")
+    application.include_router(bets.router, prefix="/api")
     application.include_router(predictions.router, prefix="/api")
     application.include_router(metrics.router, prefix="/api")
     application.include_router(models.router, prefix="/api")

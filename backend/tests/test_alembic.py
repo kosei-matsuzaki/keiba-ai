@@ -33,6 +33,7 @@ EXPECTED_TABLES = {
     "payouts",
     "scrape_log",
     "model_runs",
+    "bet_records",
 }
 
 EXPECTED_INDEXES = {
@@ -41,6 +42,9 @@ EXPECTED_INDEXES = {
     "ix_payouts_race_id_bet_type",
     "ix_scrape_log_url_status",
     "ix_scrape_log_fetched_at",
+    "ix_bet_records_race_id",
+    "ix_bet_records_created_at",
+    "ix_bet_records_settled_at",
 }
 
 
