@@ -5,6 +5,7 @@ import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { App } from '../App';
 import { Dashboard } from '../routes/Dashboard';
 import { UpcomingRaces } from '../routes/UpcomingRaces';
+import { RecentRaces } from '../routes/RecentRaces';
 import { RaceDetail } from '../routes/RaceDetail';
 import { Models } from '../routes/Models';
 import { Ingest } from '../routes/Ingest';
@@ -15,6 +16,7 @@ vi.mock('../lib/api', () => ({
   fetchMetricsSummary: vi.fn().mockResolvedValue({}),
   fetchMetricsTimeseries: vi.fn().mockResolvedValue({ metric: 'ndcg3', points: [] }),
   fetchUpcomingRaces: vi.fn().mockResolvedValue({ races: [] }),
+  fetchRecentRaces: vi.fn().mockResolvedValue({ races: [] }),
   fetchRaceDetail: vi.fn().mockRejectedValue(new Error('404')),
   fetchPredictions: vi.fn().mockRejectedValue(new Error('503')),
   fetchRecommendations: vi.fn().mockRejectedValue(new Error('503')),
@@ -49,6 +51,7 @@ function makeRouter(initialPath: string) {
         children: [
           { index: true, element: <Dashboard /> },
           { path: 'upcoming', element: <UpcomingRaces /> },
+          { path: 'results', element: <RecentRaces /> },
           { path: 'races/:race_id', element: <RaceDetail /> },
           { path: 'models', element: <Models /> },
           { path: 'ingest', element: <Ingest /> },
@@ -107,10 +110,16 @@ describe('Routing', () => {
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
   });
 
+  it('renders RecentRaces at /results', async () => {
+    renderAt('/results');
+    expect(await screen.findByRole('heading', { name: 'Recent Results' })).toBeInTheDocument();
+  });
+
   it('sidebar contains all navigation links', async () => {
     renderAt('/');
     expect(await screen.findByRole('link', { name: /Dashboard/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Upcoming Races/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Recent Races/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Models/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Ingest/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Settings/i })).toBeInTheDocument();

@@ -63,6 +63,12 @@ export function fetchUpcomingRaces(days = 7): Promise<UpcomingRacesResponse> {
   );
 }
 
+export function fetchRecentRaces(days = 30): Promise<UpcomingRacesResponse> {
+  return getClient().then((c) =>
+    c.get('races/recent', { searchParams: { days } }).json<UpcomingRacesResponse>()
+  );
+}
+
 export function fetchRaceDetail(raceId: string): Promise<RaceDetail> {
   return getClient().then((c) => c.get(`races/${raceId}`).json<RaceDetail>());
 }

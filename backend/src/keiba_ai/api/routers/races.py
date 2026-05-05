@@ -1,11 +1,11 @@
-"""Race endpoints: upcoming list and race detail."""
+"""Race endpoints: upcoming list, recent list, and race detail."""
 
 from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -54,6 +54,24 @@ def get_upcoming_races(
         select(Race)
         .where(Race.date >= today, Race.date <= until)
         .order_by(Race.date)
+    )
+    races = session.scalars(stmt).all()
+    return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
+
+
+@router.get("/races/recent", response_model=UpcomingRacesResponse)
+def get_recent_races(
+    session: Annotated[Session, Depends(get_session)],
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> UpcomingRacesResponse:
+    today = date.today().isoformat()
+    since = (date.today() - timedelta(days=days)).isoformat()
+    stmt = (
+        select(Race)
+        .where(Race.date < today, Race.date >= since)
+        .order_by(Race.date.desc())
+        .limit(limit)
     )
     races = session.scalars(stmt).all()
     return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
