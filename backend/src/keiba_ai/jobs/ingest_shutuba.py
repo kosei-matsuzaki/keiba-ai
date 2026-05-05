@@ -3,12 +3,25 @@
 Usage:
     uv run keiba-ingest-shutuba --date 2025-05-05
     uv run keiba-ingest-shutuba --date 2025-05-05 --limit 3
+    uv run keiba-ingest-shutuba --race-ids 202506050911,202506050912
+    uv run keiba-ingest-shutuba --date 2025-05-05 --race-ids 202506050911
     python -m keiba_ai.jobs.ingest_shutuba --date 2025-05-05
 
-フロー:
+フロー (--date のみ):
   1. race.netkeiba.com/top/race_list.html?kaisai_date=YYYYMMDD から当日 race_id 一覧取得
   2. 各 race_id について shutuba page を fetch してパース
   3. races / entries テーブルに upsert
+
+フロー (--race-ids 指定時):
+  calendar fetch を skip して与えられた race_id 群について直接 shutuba HTML を取得して ingest する。
+  --date も指定できるが calendar fetch には使わず、DB に保存する date 値として使う。
+  両方指定された場合は --race-ids 優先で calendar fetch は行わない。
+
+  ⚠ calendar 取得の現状:
+    race.netkeiba.com/top/race_list.html?kaisai_date=YYYYMMDD は AJAX で race_id を取得する
+    仕様のため、静的 HTML には race_id が含まれない。
+    サーバ側 API (/api/api_get_jra_digest2.html) が空レスポンスを返す場合があり、
+    calendar 経由の自動取得が不安定。--race-ids で直接指定することを推奨する。
 
 upsert ポリシー:
   - races: race row が存在しない場合のみ INSERT。
@@ -212,28 +225,22 @@ def _upsert_entry_from_shutuba(session: Session, e: ShutubaEntry) -> None:
     session.execute(stmt)
 
 
-async def run_ingest_shutuba(
-    date_str: str,
+async def _ingest_race_ids(
+    race_ids: list[str],
+    date_str: str | None,
     client: NetkeibaClient,
     session: Session,
     limit: int | None = None,
 ) -> dict[str, int]:
-    """Core shutuba ingest logic; returns summary counters."""
-    counters = {"fetched": 0, "skipped": 0, "errors": 0}
+    """race_id リストを元に shutuba ingest を実行する。
 
-    # Step 1: 当日の race_id 一覧を取得
-    card_calendar_url = _CARD_CALENDAR_URL.format(date=date_str.replace("-", ""))
-    logger.info("Fetching race-card calendar: %s", card_calendar_url)
-    # 当日オッズは変動するため、shutuba ページは短いキャッシュ TTL (1 時間) を使う
-    calendar_html = await client.fetch(card_calendar_url, cache_max_age_hours=1)
-    include_nar = os.getenv("KEIBA_INCLUDE_NAR", "0") == "1"
-    race_ids = parse_race_ids_from_card_calendar(calendar_html, include_nar=include_nar)
+    --race-ids と --date 両方の ingest フローから呼ばれる共通ロジック。
+    """
+    counters = {"fetched": 0, "skipped": 0, "errors": 0}
 
     if limit is not None:
         race_ids = race_ids[:limit]
         logger.info("Limiting to %d races (--limit)", limit)
-
-    logger.info("Found %d race IDs for shutuba ingest on %s", len(race_ids), date_str)
 
     for race_id in race_ids:
         if stop_flag.is_stopped():
@@ -244,10 +251,12 @@ async def run_ingest_shutuba(
         # shutuba はオッズが変動するので、常に最新を取得する（キャッシュ短め or 無効）
         # scrape_log の "ok" チェックは skip しない（再実行でオッズを更新するため）
         try:
-            # shutuba ページは当日オッズが変動するので TTL を短く設定
             html = await client.fetch(shutuba_url, cache_max_age_hours=1)
             parsed = parse_shutuba(html, race_id)
-            parsed.date = date_str
+            # --date が指定されていれば HTML から抽出した date を上書きする。
+            # --date がない場合は HTML から抽出した date をそのまま使う。
+            if date_str is not None:
+                parsed.date = date_str
 
             _upsert_race_from_shutuba(session, parsed)
             _upsert_masters_from_shutuba(session, parsed)
@@ -276,6 +285,43 @@ async def run_ingest_shutuba(
     return counters
 
 
+async def run_ingest_shutuba(
+    date_str: str,
+    client: NetkeibaClient,
+    session: Session,
+    limit: int | None = None,
+    race_ids: list[str] | None = None,
+) -> dict[str, int]:
+    """Core shutuba ingest logic; returns summary counters.
+
+    Args:
+        date_str: Race date (YYYY-MM-DD). Used as DB date value and for calendar fetch.
+        client: NetkeibaClient instance.
+        session: SQLAlchemy Session.
+        limit: Max number of races to fetch (debug use).
+        race_ids: If provided, skip calendar fetch and ingest only these race IDs.
+            --race-ids CLI フラグと対応する。calendar 取得が壊れている場合の回避策として使う。
+    """
+    if race_ids is not None:
+        # --race-ids 指定時: calendar fetch を skip して直接 ingest
+        logger.info(
+            "Ingesting %d race(s) from --race-ids (calendar fetch skipped)", len(race_ids)
+        )
+        return await _ingest_race_ids(race_ids, date_str, client, session, limit=limit)
+
+    # calendar 経由で race_id 一覧を取得
+    card_calendar_url = _CARD_CALENDAR_URL.format(date=date_str.replace("-", ""))
+    logger.info("Fetching race-card calendar: %s", card_calendar_url)
+    # 当日オッズは変動するため、shutuba ページは短いキャッシュ TTL (1 時間) を使う
+    calendar_html = await client.fetch(card_calendar_url, cache_max_age_hours=1)
+    include_nar = os.getenv("KEIBA_INCLUDE_NAR", "0") == "1"
+    fetched_race_ids = parse_race_ids_from_card_calendar(calendar_html, include_nar=include_nar)
+
+    logger.info("Found %d race IDs for shutuba ingest on %s", len(fetched_race_ids), date_str)
+
+    return await _ingest_race_ids(fetched_race_ids, date_str, client, session, limit=limit)
+
+
 async def main(args: argparse.Namespace) -> int:
     configure_logging()
     engine = make_engine(db_path())
@@ -284,11 +330,24 @@ async def main(args: argparse.Namespace) -> int:
     rate_limiter = AsyncRateLimiter(load_settings())
     robots_cache = RobotsCache(load_settings().user_agent)
 
+    # --race-ids が指定されている場合は --date を省略可能にするため、
+    # date のデフォルトを今日の日付にする。
+    date_str: str = args.date or datetime.date.today().isoformat()
+
+    race_ids: list[str] | None = None
+    if args.race_ids:
+        race_ids = [rid.strip() for rid in args.race_ids.split(",") if rid.strip()]
+        if not race_ids:
+            logger.error("--race-ids is empty after splitting; aborting")
+            return 1
+
     async with httpx.AsyncClient() as http_client:
         client = NetkeibaClient(rate_limiter, robots_cache, http_client, load_settings())
         with session_scope(engine) as session:
             try:
-                counters = await run_ingest_shutuba(args.date, client, session, limit=args.limit)
+                counters = await run_ingest_shutuba(
+                    date_str, client, session, limit=args.limit, race_ids=race_ids
+                )
             except ScraperStopped:
                 logger.warning("Scraper stopped by stop flag")
                 return 1
@@ -302,13 +361,28 @@ async def main(args: argparse.Namespace) -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Ingest shutuba (出馬表) pages for upcoming races on a given date"
+        description="Ingest shutuba (出馬表) pages for upcoming races"
     )
     parser.add_argument(
         "--date",
-        required=True,
+        default=None,
         metavar="YYYY-MM-DD",
-        help="Race date to ingest shutuba for (e.g. 2025-05-05)",
+        help=(
+            "Race date to ingest shutuba for (e.g. 2025-05-05). "
+            "Used for calendar fetch (--date のみ指定時) and as DB date value. "
+            "--race-ids と併用した場合は calendar fetch を skip し、date は DB 保存値として使う。"
+        ),
+    )
+    parser.add_argument(
+        "--race-ids",
+        default=None,
+        metavar="ID1,ID2,...",
+        help=(
+            "Comma-separated list of race IDs to ingest directly, skipping calendar fetch. "
+            "例: --race-ids 202506050911,202506050912 "
+            "race.netkeiba.com の race_list は AJAX 取得のため calendar 経由の自動取得が "
+            "不安定な場合にこのオプションで直接指定する。"
+        ),
     )
     parser.add_argument(
         "--limit",
@@ -322,6 +396,9 @@ def _parse_args() -> argparse.Namespace:
 
 def cli_main() -> int:
     args = _parse_args()
+    if args.date is None and args.race_ids is None:
+        print("Error: either --date or --race-ids must be specified")
+        return 1
     return asyncio.run(main(args))
 
 
