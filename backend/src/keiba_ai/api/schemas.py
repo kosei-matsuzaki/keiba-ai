@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from keiba_ai.ai.types import CombinationPrediction  # noqa: F401 — re-exported for API consumers
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -59,10 +61,21 @@ class HorsePrediction(BaseModel):
     top_features: list[str]  # SHAP is M6+; empty list for M5
 
 
+class CombinationPredictions(BaseModel):
+    tansho: list[CombinationPrediction]       # 単勝
+    fukusho: list[CombinationPrediction]      # 複勝
+    umaren: list[CombinationPrediction]       # 馬連
+    wide: list[CombinationPrediction]         # ワイド
+    umatan: list[CombinationPrediction]       # 馬単
+    sanrenpuku: list[CombinationPrediction]   # 三連複
+    sanrentan: list[CombinationPrediction]    # 三連単
+
+
 class PredictionResponse(BaseModel):
     race_id: str
     model_id: int
     predictions: list[HorsePrediction]
+    combinations: CombinationPredictions | None = None
 
 
 # ── Metrics schemas ───────────────────────────────────────────────────────────

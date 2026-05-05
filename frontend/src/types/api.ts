@@ -55,10 +55,29 @@ export interface HorsePrediction {
   top_features: string[];
 }
 
+export interface CombinationPrediction {
+  combo: string;
+  prob: number;
+  est_odds: number;
+  ev: number;
+  post_positions: number[];
+}
+
+export interface CombinationPredictions {
+  tansho: CombinationPrediction[];     // 単勝
+  fukusho: CombinationPrediction[];    // 複勝
+  umaren: CombinationPrediction[];     // 馬連
+  wide: CombinationPrediction[];       // ワイド
+  umatan: CombinationPrediction[];     // 馬単
+  sanrenpuku: CombinationPrediction[]; // 三連複
+  sanrentan: CombinationPrediction[];  // 三連単
+}
+
 export interface PredictionResponse {
   race_id: string;
   model_id: number;
   predictions: HorsePrediction[];
+  combinations: CombinationPredictions | null;
 }
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
