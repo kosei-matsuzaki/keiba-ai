@@ -16,6 +16,7 @@ const mockRaces: UpcomingRacesResponse = {
   races: [
     {
       race_id: '202406010101',
+      name: '日本ダービー',
       date: '2024-06-01',
       course: '東京',
       surface: '芝',
@@ -25,6 +26,7 @@ const mockRaces: UpcomingRacesResponse = {
     },
     {
       race_id: '202406010102',
+      name: null,
       date: '2024-06-01',
       course: '中山',
       surface: 'ダ',
