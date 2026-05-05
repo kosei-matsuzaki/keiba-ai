@@ -17,6 +17,7 @@ vi.mock('../lib/api', () => ({
 const mockData: RecommendationsResponse = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
+  odds_source: 'baseline',
   candidates: [
     {
       bet_type: '単勝',
@@ -44,6 +45,7 @@ const mockData: RecommendationsResponse = {
 const mockDataWithZeroStake: RecommendationsResponse = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
+  odds_source: 'baseline',
   candidates: [
     {
       bet_type: '単勝',
@@ -112,7 +114,7 @@ describe('RecommendationsCard', () => {
     wrap(
       <RecommendationsCard
         raceId="202406010101"
-        data={{ race_id: '202406010101', bankroll_at_decision: 100_000, candidates: [] }}
+        data={{ race_id: '202406010101', bankroll_at_decision: 100_000, odds_source: 'baseline', candidates: [] }}
         isPending={false}
         isError={false}
         error={null}

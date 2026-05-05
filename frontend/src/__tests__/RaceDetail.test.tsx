@@ -72,6 +72,7 @@ const mockPredictions: PredictionResponse = {
 const mockRecommendations = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
+  odds_source: 'baseline' as const,
   candidates: [
     {
       bet_type: '単勝',
