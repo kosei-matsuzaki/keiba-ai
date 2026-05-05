@@ -182,3 +182,69 @@ export interface SettingsUpdate {
   place_ev_threshold?: number;
   scraper_stopped?: boolean;
 }
+
+// ── Bet record ─────────────────────────────────────────────────────────────────
+
+export interface BetRecordOut {
+  id: number;
+  created_at: string;
+  race_id: string;
+  bet_type: string;
+  combo: string;
+  stake: number;
+  source: string;
+  recommendation_id: number | null;
+  settled_at: string | null;
+  payout: number | null;
+  profit: number | null;
+  notes: string | null;
+}
+
+export interface BetRecordList {
+  total: number;
+  items: BetRecordOut[];
+}
+
+// ── Bet aggregation ────────────────────────────────────────────────────────────
+
+export interface BetSummary {
+  total_bets: number;
+  settled_bets: number;
+  pending_bets: number;
+  total_invested: number;
+  total_payout: number;
+  total_profit: number;
+  payback_rate: number;
+  hit_rate: number;
+  range_from: string | null;
+  range_to: string | null;
+}
+
+export interface BetTimeseriesPoint {
+  date: string;
+  invested: number;
+  payout: number;
+  profit: number;
+  cumulative_profit: number;
+  bets: number;
+}
+
+export interface BetTimeseries {
+  bucket: string;
+  points: BetTimeseriesPoint[];
+}
+
+export interface BetBreakdownRow {
+  group_key: string;
+  bets: number;
+  invested: number;
+  payout: number;
+  profit: number;
+  payback_rate: number;
+  hit_rate: number;
+}
+
+export interface BetBreakdown {
+  group_by: string;
+  rows: BetBreakdownRow[];
+}

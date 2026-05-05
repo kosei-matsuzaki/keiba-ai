@@ -274,3 +274,52 @@ class BetRecordList(BaseModel):
     """GET /api/bets リストレスポンスラッパー。"""
     total: int
     items: list[BetRecordOut]
+
+
+# ── Bet aggregation schemas ────────────────────────────────────────────────────
+
+class BetSummary(BaseModel):
+    """GET /api/bets/summary レスポンス。
+
+    - range_from / range_to は settled_at（確定日）期間を示す。
+    - 期間フィルタは settled_at ベース。未確定（pending）bet は期間指定時に除外される。
+    """
+    total_bets: int
+    settled_bets: int
+    pending_bets: int          # 指定期間内で created かつ settled_at IS NULL の件数
+    total_invested: int        # 円
+    total_payout: int          # 円
+    total_profit: int          # 円
+    payback_rate: float        # 回収率 (1.0 = break-even)
+    hit_rate: float            # 確定済みのうち payout > 0 の割合
+    range_from: str | None     # settled_at フィルタの下限日 (YYYY-MM-DD)
+    range_to: str | None       # settled_at フィルタの上限日 (YYYY-MM-DD)
+
+
+class BetTimeseriesPoint(BaseModel):
+    date: str                 # ISO date / year-week / year-month
+    invested: int
+    payout: int
+    profit: int
+    cumulative_profit: int    # 累計損益
+    bets: int
+
+
+class BetTimeseries(BaseModel):
+    bucket: str               # 'day' | 'week' | 'month'
+    points: list[BetTimeseriesPoint]
+
+
+class BetBreakdownRow(BaseModel):
+    group_key: str            # 例 '馬連' / 'G1' / '2024-12' / 'recommendation'
+    bets: int
+    invested: int
+    payout: int
+    profit: int
+    payback_rate: float
+    hit_rate: float
+
+
+class BetBreakdown(BaseModel):
+    group_by: str
+    rows: list[BetBreakdownRow]

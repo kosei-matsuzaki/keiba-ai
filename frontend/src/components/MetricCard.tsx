@@ -1,10 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatPercent, formatRatio, formatScore } from '@/lib/formatters';
+import { formatPercent, formatRatio, formatScore, formatYen } from '@/lib/formatters';
 
 interface MetricCardProps {
   title: string;
   value: number | null;
-  format?: 'percent' | 'decimal' | 'ratio';
+  format?: 'percent' | 'decimal' | 'ratio' | 'yen';
   description?: string;
 }
 
@@ -14,6 +14,8 @@ function formatValue(value: number | null, format: MetricCardProps['format']): s
       return formatPercent(value);
     case 'ratio':
       return formatRatio(value);
+    case 'yen':
+      return formatYen(value);
     case 'decimal':
     default:
       return formatScore(value);

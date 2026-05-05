@@ -14,21 +14,25 @@ import { HTTPError } from 'ky';
 import ky from 'ky';
 import { getApiBaseUrl } from './tauri';
 import type {
+  BetBreakdown,
+  BetRecordList,
+  BetSummary,
+  BetTimeseries,
   HealthResponse,
-  UpcomingRacesResponse,
-  RaceDetail,
-  PredictionResponse,
-  MetricsSummary,
-  MetricsTimeseries,
-  ModelMeta,
   JobAccepted,
   JobInfo,
+  ModelMeta,
+  MetricsSummary,
+  MetricsTimeseries,
+  PredictionResponse,
+  RaceDetail,
   ScraperRecentActivity,
-  ScraperStatus,
   ScraperRunRequest,
+  ScraperStatus,
   SettingsResponse,
   SettingsUpdate,
   TrainRequest,
+  UpcomingRacesResponse,
 } from '@/types/api';
 
 // Cache the in-flight construction Promise (not the resolved client) so that
@@ -127,6 +131,77 @@ export function fetchSettings(): Promise<SettingsResponse> {
 
 export function updateSettings(body: SettingsUpdate): Promise<SettingsResponse> {
   return getClient().then((c) => c.put('settings', { json: body }).json<SettingsResponse>());
+}
+
+// ── Bet aggregation ───────────────────────────────────────────────────────────
+
+export interface BetFilterParams {
+  from?: string;        // YYYY-MM-DD
+  to?: string;          // YYYY-MM-DD
+  bet_type?: string;
+  source?: string;      // 'recommendation' | 'manual'
+}
+
+export function fetchBetList(
+  params: BetFilterParams & { page?: number; page_size?: number }
+): Promise<BetRecordList> {
+  const searchParams: Record<string, string | number> = {};
+  if (params.from) searchParams['from'] = params.from;
+  if (params.to) searchParams['to'] = params.to;
+  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
+  if (params.source) searchParams['source'] = params.source;
+  return getClient().then((c) => c.get('bets', { searchParams }).json<BetRecordList>());
+}
+
+export function fetchBetSummary(params: BetFilterParams = {}): Promise<BetSummary> {
+  const searchParams: Record<string, string> = {};
+  if (params.from) searchParams['from'] = params.from;
+  if (params.to) searchParams['to'] = params.to;
+  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
+  if (params.source) searchParams['source'] = params.source;
+  return getClient().then((c) =>
+    c.get('bets/summary', { searchParams }).json<BetSummary>()
+  );
+}
+
+export function fetchBetTimeseries(
+  params: BetFilterParams & { bucket?: 'day' | 'week' | 'month' }
+): Promise<BetTimeseries> {
+  const searchParams: Record<string, string> = {};
+  if (params.from) searchParams['from'] = params.from;
+  if (params.to) searchParams['to'] = params.to;
+  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
+  if (params.source) searchParams['source'] = params.source;
+  if (params.bucket) searchParams['bucket'] = params.bucket;
+  return getClient().then((c) =>
+    c.get('bets/timeseries', { searchParams }).json<BetTimeseries>()
+  );
+}
+
+export function fetchBetBreakdown(
+  params: BetFilterParams & { group_by?: 'bet_type' | 'race_class' | 'month' | 'source' }
+): Promise<BetBreakdown> {
+  const searchParams: Record<string, string> = {};
+  if (params.from) searchParams['from'] = params.from;
+  if (params.to) searchParams['to'] = params.to;
+  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
+  if (params.source) searchParams['source'] = params.source;
+  if (params.group_by) searchParams['group_by'] = params.group_by;
+  return getClient().then((c) =>
+    c.get('bets/breakdown', { searchParams }).json<BetBreakdown>()
+  );
+}
+
+/** CSV エクスポート URL を組み立てる。fetch ではなくブラウザの href に渡す想定。 */
+export async function buildBetExportUrl(params: BetFilterParams): Promise<string> {
+  const baseUrl = await getApiBaseUrl();
+  const searchParams = new URLSearchParams();
+  if (params.from) searchParams.set('from', params.from);
+  if (params.to) searchParams.set('to', params.to);
+  if (params.bet_type) searchParams.set('bet_type', params.bet_type);
+  if (params.source) searchParams.set('source', params.source);
+  const qs = searchParams.toString();
+  return `${baseUrl}/api/bets/export.csv${qs ? '?' + qs : ''}`;
 }
 
 // ── Error handling helpers ──────────────────────────────────────────────────
