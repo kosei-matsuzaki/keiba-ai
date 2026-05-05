@@ -17,6 +17,7 @@ from keiba_ai.core.config import Settings
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.jockey import Jockey
+from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
 from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.models.trainer import Trainer
@@ -397,3 +398,105 @@ async def test_ingest_continues_on_horse_detail_fetch_failure(
     # 馬は name のみで登録される（detail fetch 失敗のため sire/dam は None）
     horses = db_session.execute(select(Horse)).scalars().all()
     assert len(horses) >= 1
+
+
+# ── payouts ingest テスト ─────────────────────────────────────────────────────
+
+ALL_PAYOUT_HTML = (FIXTURES / "race_result_all_payout_types.html").read_text(encoding="utf-8")
+ALL_PAYOUT_DATE = "2024-06-01"
+
+
+def _build_fake_fetch_all_payouts(calendar_html: str, result_html: str):
+    """全 bet_type フィクスチャを返す fake fetch。"""
+    async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
+        if "/race/list/" in url:
+            return calendar_html
+        if "/horse/" in url:
+            raise RuntimeError(f"no horse fixture for {url}")
+        return result_html
+    return fake_fetch
+
+
+@pytest.fixture()
+def mock_client_all_payouts(monkeypatch) -> NetkeibaClient:
+    import httpx
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_all_payouts(CALENDAR_HTML, ALL_PAYOUT_HTML)  # type: ignore[method-assign]
+    return client
+
+
+@pytest.mark.asyncio
+async def test_ingest_inserts_payouts(db_session, mock_client_all_payouts, tmp_path, monkeypatch):
+    """ingest 後に payouts テーブルに全 8 bet_type の行が挿入される。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    counters = await run_ingest(ALL_PAYOUT_DATE, mock_client_all_payouts, db_session, limit=1)
+    assert counters["fetched"] == 1
+
+    payouts = db_session.execute(select(Payout)).scalars().all()
+    bet_types = {p.bet_type for p in payouts}
+    expected = {"単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"}
+    assert expected == bet_types
+
+
+@pytest.mark.asyncio
+async def test_ingest_payouts_amounts(db_session, mock_client_all_payouts, tmp_path, monkeypatch):
+    """払戻金が正しく DB に保存される。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(ALL_PAYOUT_DATE, mock_client_all_payouts, db_session, limit=1)
+
+    payouts = db_session.execute(select(Payout)).scalars().all()
+    by_type: dict[str, list[Payout]] = {}
+    for p in payouts:
+        by_type.setdefault(p.bet_type, []).append(p)
+
+    tan = by_type["単勝"]
+    assert len(tan) == 1
+    assert tan[0].combo == "3"
+    assert tan[0].amount == 520
+    assert tan[0].popularity == 1
+
+    srt = by_type["三連単"]
+    assert len(srt) == 1
+    assert srt[0].combo == "3→5→9"
+    assert srt[0].amount == 52300
+
+
+@pytest.mark.asyncio
+async def test_ingest_payouts_wide_three_rows(db_session, mock_client_all_payouts, tmp_path, monkeypatch):
+    """ワイドは 3 コンボそれぞれが独立した payouts 行になる。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest(ALL_PAYOUT_DATE, mock_client_all_payouts, db_session, limit=1)
+
+    payouts = db_session.execute(select(Payout)).scalars().all()
+    wide = [p for p in payouts if p.bet_type == "ワイド"]
+    assert len(wide) == 3
+    combos = {p.combo for p in wide}
+    assert combos == {"3-5", "3-9", "5-9"}
+
+
+@pytest.mark.asyncio
+async def test_ingest_payouts_idempotent_on_reingest(
+    db_session, mock_client_all_payouts, tmp_path, monkeypatch
+):
+    """同一レースを再 ingest しても payouts 行が重複しない（DELETE → INSERT の冪等性）。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    # 初回 ingest
+    await run_ingest(ALL_PAYOUT_DATE, mock_client_all_payouts, db_session, limit=1)
+    count_first = db_session.execute(select(Payout)).scalars().all()
+
+    # 再 ingest のために scrape_log を消去してスキップを回避
+    from keiba_ai.db.models.scrape_log import ScrapeLog
+    db_session.execute(ScrapeLog.__table__.delete())
+    db_session.commit()
+
+    await run_ingest(ALL_PAYOUT_DATE, mock_client_all_payouts, db_session, limit=1)
+    count_second = db_session.execute(select(Payout)).scalars().all()
+
+    assert len(count_first) == len(count_second), (
+        f"payouts duplicated on re-ingest: {len(count_first)} -> {len(count_second)}"
+    )
