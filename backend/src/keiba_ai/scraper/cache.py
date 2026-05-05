@@ -1,8 +1,9 @@
 """HTML cache backed by the local filesystem.
 
 Cache layout:
-  data/raw/<yyyy>/<mm>/<race_id>.html   — when URL contains a recognisable race_id
-  data/raw/misc/<sha256(url)[:16]>.html — for all other URLs
+  data/raw/<yyyy>/<mm>/<race_id>.html           — race result pages
+  data/raw/<yyyy>/<mm>/shutuba_<race_id>.html   — shutuba (出馬表) pages
+  data/raw/misc/<sha256(url)[:16]>.html         — all other URLs
 """
 
 from __future__ import annotations
@@ -16,10 +17,20 @@ from keiba_ai.core.paths import raw_dir
 
 
 _RACE_ID_RE = re.compile(r"/race/(\d{12})")
+_SHUTUBA_RACE_ID_RE = re.compile(r"race_id=(\d{12})")
 _MISC_DIR_NAME = "misc"
 
 
 def _cache_path(url: str) -> Path:
+    # shutuba page: race.netkeiba.com/race/shutuba.html?race_id=<id>
+    m_shutuba = _SHUTUBA_RACE_ID_RE.search(url)
+    if m_shutuba and "shutuba" in url:
+        race_id = m_shutuba.group(1)
+        yyyy, mm = race_id[:4], race_id[4:6]
+        base = raw_dir() / yyyy / mm
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"shutuba_{race_id}.html"
+
     m = _RACE_ID_RE.search(url)
     if m:
         race_id = m.group(1)
