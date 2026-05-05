@@ -171,6 +171,10 @@ export interface SettingsResponse {
   win_ev_threshold: number;
   place_ev_threshold: number;
   scraper_stopped: boolean;
+  bankroll: number;
+  kelly_fraction: number;
+  max_stake_per_race_pct: number;
+  enabled_bet_types: BetType[];
 }
 
 export interface SettingsUpdate {
@@ -181,6 +185,10 @@ export interface SettingsUpdate {
   win_ev_threshold?: number;
   place_ev_threshold?: number;
   scraper_stopped?: boolean;
+  bankroll?: number;
+  kelly_fraction?: number;
+  max_stake_per_race_pct?: number;
+  enabled_bet_types?: BetType[];
 }
 
 // ── Recommendations ───────────────────────────────────────────────────────────
