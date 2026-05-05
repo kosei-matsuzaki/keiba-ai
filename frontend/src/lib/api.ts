@@ -20,6 +20,7 @@ import type {
   BetRecordOut,
   BetSummary,
   BetTimeseries,
+  FetchLiveOddsRequest,
   HealthResponse,
   JobAccepted,
   JobInfo,
@@ -31,6 +32,7 @@ import type {
   RecommendationsResponse,
   ScraperRecentActivity,
   ScraperRunRequest,
+  ScraperRunShutubaRequest,
   ScraperStatus,
   SettingsResponse,
   SettingsUpdate,
@@ -128,6 +130,14 @@ export function fetchJob(jobId: string): Promise<JobInfo> {
 
 export function runScraper(body: ScraperRunRequest): Promise<JobAccepted> {
   return getClient().then((c) => c.post('scraper/run', { json: body }).json<JobAccepted>());
+}
+
+export function runShutubaScraper(body: ScraperRunShutubaRequest): Promise<JobAccepted> {
+  return getClient().then((c) => c.post('scraper/run_shutuba', { json: body }).json<JobAccepted>());
+}
+
+export function fetchLiveOdds(body: FetchLiveOddsRequest): Promise<JobAccepted> {
+  return getClient().then((c) => c.post('scraper/fetch_live_odds', { json: body }).json<JobAccepted>());
 }
 
 export function stopScraper(): Promise<{ stopped: boolean }> {

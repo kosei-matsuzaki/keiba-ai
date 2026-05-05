@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from keiba_ai.ai.types import CombinationPrediction  # noqa: F401 — re-exported for API consumers
 
@@ -222,6 +223,53 @@ class TrainRequest(BaseModel):
 class ScraperRunRequest(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")
     limit: int | None = Field(default=None, ge=1)
+
+
+_RACE_ID_RE = re.compile(r"^\d{12}$")
+
+
+class ScraperRunShutubaRequest(BaseModel):
+    """POST /api/scraper/run_shutuba リクエストボディ。
+
+    date か race_ids のいずれか必須。両方指定した場合は race_ids 優先（CLI 仕様と一致）。
+    """
+    date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")
+    race_ids: list[str] | None = Field(default=None, description="12 桁 race_id のリスト")
+    limit: int | None = Field(default=None, ge=1)
+
+    @field_validator("race_ids")
+    @classmethod
+    def validate_race_ids(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            invalid = [rid for rid in v if not _RACE_ID_RE.match(rid)]
+            if invalid:
+                raise ValueError(f"race_ids に不正な値があります（12 桁の数字が必要）: {invalid}")
+        return v
+
+    @model_validator(mode="after")
+    def require_date_or_race_ids(self) -> "ScraperRunShutubaRequest":
+        if self.date is None and (self.race_ids is None or len(self.race_ids) == 0):
+            raise ValueError("date か race_ids のいずれかを指定してください")
+        return self
+
+
+class FetchLiveOddsRequest(BaseModel):
+    """POST /api/scraper/fetch_live_odds リクエストボディ。"""
+    race_id: str = Field(pattern=r"^\d{12}$", description="12 桁 race_id")
+    types: list[str] | None = Field(
+        default=None,
+        description="取得する券種コード (b1/b3/b4/b5/b6/b7/b8)。省略時は全種類を取得",
+    )
+
+    @field_validator("types")
+    @classmethod
+    def validate_types(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            valid = {"b1", "b3", "b4", "b5", "b6", "b7", "b8"}
+            invalid = [t for t in v if t not in valid]
+            if invalid:
+                raise ValueError(f"不正な券種コード: {invalid}。使用可能: {sorted(valid)}")
+        return v
 
 
 # ── Job info schema ───────────────────────────────────────────────────────────

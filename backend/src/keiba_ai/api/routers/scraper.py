@@ -18,15 +18,18 @@ from sqlalchemy.orm import Session
 from keiba_ai.api.deps import get_job_registry, get_session
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.schemas import (
+    FetchLiveOddsRequest,
     JobAccepted,
     ScraperRecentActivity,
     ScraperRunRequest,
+    ScraperRunShutubaRequest,
     ScraperStatus,
 )
 from keiba_ai.core.config import load_settings
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.session import make_engine, session_scope
+from keiba_ai.jobs.fetch_live_odds import _DEFAULT_TYPES, run_fetch_live_odds
 from keiba_ai.jobs.ingest import run_ingest
 from keiba_ai.jobs.ingest_shutuba import run_ingest_shutuba
 from keiba_ai.scraper import stop_flag
@@ -179,15 +182,23 @@ async def run_scraper(
 
 @router.post("/scraper/run_shutuba", response_model=JobAccepted, status_code=202)
 async def run_shutuba_scraper(
-    body: ScraperRunRequest,
+    body: ScraperRunShutubaRequest,
     session: Annotated[Session, Depends(get_session)],  # noqa: ARG001
     registry: Annotated[JobRegistry, Depends(get_job_registry)],
 ) -> JobAccepted:
-    """Fetch and ingest shutuba (出馬表) pages for all races on the given date.
+    """Fetch and ingest shutuba (出馬表) pages for the given date or specific race IDs.
+
+    - race_ids 指定時: calendar fetch を skip し指定レースのみ ingest。
+    - date のみ指定時: calendar から race_id 一覧を取得して ingest（既存挙動）。
+    - 両方指定時: race_ids 優先（CLI 仕様と一致）。
 
     Returns 202 Accepted immediately; the actual scraping runs as a background job.
     """
-    date_str = body.date
+    import datetime as _dt
+
+    # race_ids 優先。date は DB 保存用として使い、None なら今日の日付をデフォルトとする。
+    race_ids = body.race_ids or None
+    date_str: str = body.date or _dt.date.today().isoformat()
     limit = body.limit
 
     async def _coro() -> None:
@@ -199,9 +210,41 @@ async def run_shutuba_scraper(
         async with httpx.AsyncClient() as http_client:
             client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
             with session_scope(engine) as s:
-                await run_ingest_shutuba(date_str, client, s, limit=limit)
+                await run_ingest_shutuba(date_str, client, s, limit=limit, race_ids=race_ids)
 
     info = registry.start("ingest_shutuba", _coro)
+    return JobAccepted(
+        job_id=info.job_id,
+        status=info.status,
+        started_at=info.started_at,
+    )
+
+
+@router.post("/scraper/fetch_live_odds", response_model=JobAccepted, status_code=202)
+async def fetch_live_odds_endpoint(
+    body: FetchLiveOddsRequest,
+    session: Annotated[Session, Depends(get_session)],  # noqa: ARG001
+    registry: Annotated[JobRegistry, Depends(get_job_registry)],
+) -> JobAccepted:
+    """Fetch live combination odds for the specified race from netkeiba.
+
+    Returns 202 Accepted immediately; the actual fetch runs as a background job.
+    """
+    race_id = body.race_id
+    types = body.types or _DEFAULT_TYPES
+
+    async def _coro() -> None:
+        settings = load_settings()
+        rate_limiter = AsyncRateLimiter(settings)
+        robots_cache = RobotsCache(settings.user_agent)
+        engine = make_engine(db_path())
+
+        async with httpx.AsyncClient() as http_client:
+            client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
+            with session_scope(engine) as s:
+                await run_fetch_live_odds([race_id], types, client, s)
+
+    info = registry.start("fetch_live_odds", _coro)
     return JobAccepted(
         job_id=info.job_id,
         status=info.status,

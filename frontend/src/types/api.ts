@@ -163,6 +163,21 @@ export interface ScraperRunRequest {
   limit?: number;
 }
 
+export interface ScraperRunShutubaRequest {
+  /** YYYY-MM-DD。race_ids 未指定時は必須。両方指定時は race_ids 優先。 */
+  date?: string;
+  /** 12 桁 race_id のリスト。指定時は calendar fetch を skip。 */
+  race_ids?: string[];
+  limit?: number;
+}
+
+export interface FetchLiveOddsRequest {
+  /** 12 桁 race_id（必須）。 */
+  race_id: string;
+  /** 取得する券種コード（b1/b3/b4/b5/b6/b7/b8）。省略時は全種類。 */
+  types?: string[];
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {

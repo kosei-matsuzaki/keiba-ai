@@ -5,6 +5,7 @@ import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown } from 'luc
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
+import { useFetchLiveOdds } from '@/hooks/useFetchLiveOdds';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -20,8 +21,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { isNotFoundError, isServiceUnavailableError } from '@/lib/api';
+import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
 import { formatOdds, formatPercent, formatScore, formatYen } from '@/lib/formatters';
+import { toast } from '@/components/ui/toast';
 import type { EntrySummary, HorsePrediction } from '@/types/api';
 
 function RaceDetailSkeleton() {
@@ -301,6 +303,7 @@ export function RaceDetail() {
     race_id,
     Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
   );
+  const fetchOddsMutation = useFetchLiveOdds(race_id);
 
   const backLink = dateParam ? `/past?date=${dateParam}` : '/past';
 
@@ -338,6 +341,23 @@ export function RaceDetail() {
   const race = raceQuery.data;
   const predictions = predQuery.data?.predictions ?? null;
 
+  // オッズ更新ボタンは entries が存在する場合のみ表示する
+  const canFetchOdds = race.entries.length > 0;
+
+  function handleFetchOdds() {
+    fetchOddsMutation.mutate(
+      { race_id },
+      {
+        onSuccess: (data) => {
+          toast.success(`オッズ取得ジョブを開始しました（Job: ${data.job_id}）`);
+        },
+        onError: async (err) => {
+          toast.error(`オッズ取得に失敗しました: ${await formatErrorMessage(err)}`);
+        },
+      }
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <BackLink to={backLink} />
@@ -346,7 +366,18 @@ export function RaceDetail() {
         icon={Trophy}
         title={race.name ?? `${race.course} ${race.race_class ?? ''}`.trim()}
         description={`${race.date}・${race.surface}${race.distance}m・${race.race_id}`}
-      />
+      >
+        {canFetchOdds && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={fetchOddsMutation.isPending}
+            onClick={handleFetchOdds}
+          >
+            {fetchOddsMutation.isPending ? 'オッズ取得中...' : 'オッズ更新'}
+          </Button>
+        )}
+      </PageHeader>
 
       {/* Race overview */}
       <Card>
