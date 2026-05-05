@@ -34,6 +34,7 @@ EXPECTED_TABLES = {
     "scrape_log",
     "model_runs",
     "bet_records",
+    "live_odds",
 }
 
 # races テーブルに含まれるべき列（0005 migration で name を追加）
@@ -52,6 +53,9 @@ EXPECTED_INDEXES = {
     "ix_bet_records_race_id",
     "ix_bet_records_created_at",
     "ix_bet_records_settled_at",
+    "ix_live_odds_race_id",
+    "ix_live_odds_race_id_bet_type",
+    "uq_live_odds_race_id_bet_type_combo",
 }
 
 
@@ -157,6 +161,28 @@ class TestAlembicMigrations:
         inspector = inspect(engine)
         cols_down = {c["name"] for c in inspector.get_columns("races")}
         assert "name" not in cols_down
+
+    def test_migration_0006_up_down(self, tmp_db):
+        """0006 migration の up → down が冪等に動作する。"""
+        url, engine = tmp_db
+        cfg = _make_alembic_cfg(url)
+
+        # 0005 まで適用して live_odds テーブルが存在しないことを確認
+        command.upgrade(cfg, "0005")
+        inspector = inspect(engine)
+        assert "live_odds" not in inspector.get_table_names()
+
+        # 0006 を適用して live_odds テーブルが追加されることを確認
+        command.upgrade(cfg, "0006")
+        inspector = inspect(engine)
+        assert "live_odds" in inspector.get_table_names()
+        cols = {c["name"] for c in inspector.get_columns("live_odds")}
+        assert {"id", "race_id", "bet_type", "combo", "odds", "odds_max", "popularity", "fetched_at"}.issubset(cols)
+
+        # downgrade で live_odds テーブルが削除されることを確認
+        command.downgrade(cfg, "0005")
+        inspector = inspect(engine)
+        assert "live_odds" not in inspector.get_table_names()
 
     def test_autogen_produces_no_diff(self, tmp_db):
         """After upgrade head, autogen should find no schema differences."""

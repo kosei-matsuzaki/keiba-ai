@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from keiba_ai.ai.types import BetCandidate, RecommendationResult
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
+from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.db.models.race import Race
 
@@ -453,3 +454,92 @@ def test_recommendations_empty_candidates(
     assert resp.status_code == 200
     data = resp.json()
     assert data["candidates"] == []
+
+
+def test_recommendations_odds_source_baseline_when_no_live_odds(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """odds_source='baseline' when live_odds table has no rows for the race."""
+    race_id = "REC_RACE_ODDS_BASELINE"
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_baseline"))
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+    fake_result = _fake_recommendation_result(race_id)
+
+    with (
+        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+              return_value=fake_result),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["odds_source"] == "baseline"
+
+
+def test_recommendations_odds_source_live_when_live_odds_present(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """odds_source='live' when live_odds table has rows for the race."""
+    race_id = "REC_RACE_ODDS_LIVE"
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_live"))
+        # Insert live_odds rows for this race
+        session.add(LiveOdds(
+            race_id=race_id,
+            bet_type="馬連",
+            combo="1-2",
+            odds=30.5,
+            odds_max=None,
+            popularity=1,
+            fetched_at="2025-01-01T10:00:00+00:00",
+        ))
+        session.commit()
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+
+    # predict_race_with_combinations spy: verifies race_odds is passed
+    captured_race_odds: dict = {}
+
+    def _spy_combinations(model, frame, session, top_k_combinations=None, race_odds=None):
+        captured_race_odds["value"] = race_odds
+        return _fake_combinations()
+
+    fake_result = _fake_recommendation_result(race_id)
+
+    with (
+        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+              side_effect=_spy_combinations),
+        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+              return_value=fake_result),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["odds_source"] == "live"
+    # race_odds dict was passed to predict_race_with_combinations
+    assert captured_race_odds["value"] is not None
+    assert "馬連" in captured_race_odds["value"]
+    assert captured_race_odds["value"]["馬連"]["1-2"] == pytest.approx(30.5)

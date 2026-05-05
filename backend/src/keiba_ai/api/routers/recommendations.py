@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from keiba_ai.ai.bet_odds import compute_race_odds
 from keiba_ai.ai.bet_strategy import recommend_for_race
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations
 from keiba_ai.ai.registry import get_active, load_model
 from keiba_ai.api.deps import get_session, get_settings_store
+from keiba_ai.core.logging import get_logger
 from keiba_ai.core.settings_store import SettingsStore
 from keiba_ai.features.builder import build_inference_frame
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -33,6 +37,7 @@ class RecommendationsResponse(BaseModel):
     race_id: str
     bankroll_at_decision: int
     candidates: list[RecommendationCandidate]
+    odds_source: Literal["live", "baseline"] = "baseline"
 
 
 @router.get("/recommendations/{race_id}", response_model=RecommendationsResponse)
@@ -78,12 +83,23 @@ def get_recommendations(
     pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
+    # Step 3.5: fetch live odds if available
+    race_odds = compute_race_odds(session, race_id)
+    if race_odds:
+        odds_source: str = "live"
+    else:
+        odds_source = "baseline"
+        logger.warning(
+            "live_odds not available for race %s — falling back to baseline odds", race_id
+        )
+
     # Step 4: combination EVs (capped by top_k for performance)
     combinations_by_type = predict_race_with_combinations(
         model,
         frame,
         session=session,
         top_k_combinations=top_k,
+        race_odds=race_odds if race_odds else None,
     )
 
     # Step 5: load settings and run recommendation logic
@@ -122,4 +138,5 @@ def get_recommendations(
         race_id=result.race_id,
         bankroll_at_decision=result.bankroll_at_decision,
         candidates=candidates,
+        odds_source=odds_source,
     )

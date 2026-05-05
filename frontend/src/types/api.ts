@@ -210,6 +210,8 @@ export interface RecommendationsResponse {
   race_id: string;
   bankroll_at_decision: number;
   candidates: RecommendationCandidate[];
+  /** 'live' = 当日リアルオッズ反映済み, 'baseline' = 過去払戻平均（暫定） */
+  odds_source: 'live' | 'baseline';
 }
 
 // ── Bet records ───────────────────────────────────────────────────────────────

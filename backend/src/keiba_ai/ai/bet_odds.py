@@ -14,6 +14,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
 
@@ -70,6 +71,40 @@ def compute_baseline_odds(session: Session) -> dict[str, float]:
 
     result = _fallback_odds()
     result.update(db_odds)
+    return result
+
+
+def compute_race_odds(
+    session: Session,
+    race_id: str,
+) -> dict[str, dict[str, float]]:
+    """live_odds テーブルから特定レースのオッズを返す。
+
+    live_odds テーブルに指定レースのデータが存在する場合のみ値を返す。
+    データが無い場合は空 dict を返す（baseline へのフォールバックは呼び出し側の責務）。
+
+    Args:
+        session: SQLAlchemy Session.
+        race_id: 対象レースの race_id。
+
+    Returns:
+        {bet_type: {combo: odds}} 形式の 2 段ネスト dict。
+        例: {'馬連': {'3-7': 25.4, '3-9': 18.2}, ...}
+        複勝/ワイドは最小オッズ (odds) を使用し、odds_max は含めない（EV 計算用の単一値）。
+        オッズ未確定 (odds=None) の combo は結果から除外する。
+    """
+    rows = session.execute(
+        select(LiveOdds.bet_type, LiveOdds.combo, LiveOdds.odds)
+        .where(LiveOdds.race_id == race_id)
+        .where(LiveOdds.odds.is_not(None))
+    ).all()
+
+    result: dict[str, dict[str, float]] = {}
+    for row in rows:
+        if row.bet_type not in result:
+            result[row.bet_type] = {}
+        result[row.bet_type][row.combo] = row.odds
+
     return result
 
 

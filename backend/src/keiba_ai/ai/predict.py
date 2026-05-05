@@ -135,12 +135,13 @@ def predict_race_with_combinations(
     n_samples: int = 10_000,
     rng: np.random.Generator | None = None,
     top_k_combinations: int | None = None,
+    race_odds: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race with EV calculations for all combination bet types.
 
     Calls predict_race internally (does not modify it) and augments the result
     with Plackett-Luce probability estimates for 馬連, ワイド, 馬単, 三連複,
-    三連単, plus baseline odds from historical payouts.
+    三連単, plus odds from live_odds (preferred) or baseline historical payouts.
 
     Args:
         model: Trained LightGBM Booster.
@@ -153,6 +154,11 @@ def predict_race_with_combinations(
         top_k_combinations: If set, each bet type list is truncated to the top-K
             entries by EV descending. Useful for 三連単 (up to 4896 combos for
             18 horses). None returns all combinations.
+        race_odds: Live odds dict from compute_race_odds(session, race_id).
+            Format: {bet_type: {combo: odds}}.
+            If provided, per-combo est_odds is taken from race_odds when available;
+            missing combos fall back to the baseline type-level average.
+            If None (default), all combos use the baseline average (existing behaviour).
 
     Returns:
         Dict mapping bet_type name to list of CombinationPrediction.
@@ -175,6 +181,9 @@ def predict_race_with_combinations(
     else:
         baseline = _fallback_odds()
 
+    # Normalise race_odds to empty dict when not provided
+    live: dict[str, dict[str, float]] = race_odds if race_odds is not None else {}
+
     # Compute all PL combination probs in one MC pass (k=3 for triple support).
     # predict_race sorts by score, so we re-align probabilities back to frame order via horse_id.
     horse_to_score = dict(zip(base_df["horse_id"].values, base_df["score"].values))
@@ -195,40 +204,50 @@ def predict_race_with_combinations(
 
     result: dict[str, list[CombinationPrediction]] = {}
 
+    def _est_odds(bet_type: str, combo: str, baseline_key: str, default: float) -> float:
+        """live odds があれば使い、なければ baseline へフォールバック。"""
+        live_type = live.get(bet_type)
+        if live_type is not None:
+            v = live_type.get(combo)
+            if v is not None:
+                return v
+        return baseline.get(baseline_key, default)
+
     # ── 単勝 ──────────────────────────────────────────────────────────────────
-    odds_tansho = baseline.get("単勝", 10.0)
     tansho_list: list[CombinationPrediction] = []
     for idx in range(n):
         prob = float(frame_win_probs[idx])
         pp = int(post_positions[idx])
+        combo = str(pp)
+        est = _est_odds("単勝", combo, "単勝", 10.0)
         tansho_list.append(CombinationPrediction(
-            combo=str(pp),
+            combo=combo,
             prob=prob,
-            est_odds=odds_tansho,
-            ev=prob * odds_tansho,
+            est_odds=est,
+            ev=prob * est,
             post_positions=(pp,),
         ))
     tansho_list.sort(key=lambda x: x.ev, reverse=True)
     result["単勝"] = tansho_list[:top_k_combinations] if top_k_combinations else tansho_list
 
     # ── 複勝 ──────────────────────────────────────────────────────────────────
-    odds_fukusho = baseline.get("複勝", 2.0)
     fukusho_list: list[CombinationPrediction] = []
     for idx in range(n):
         prob = float(frame_place_probs[idx])
         pp = int(post_positions[idx])
+        combo = str(pp)
+        est = _est_odds("複勝", combo, "複勝", 2.0)
         fukusho_list.append(CombinationPrediction(
-            combo=str(pp),
+            combo=combo,
             prob=prob,
-            est_odds=odds_fukusho,
-            ev=prob * odds_fukusho,
+            est_odds=est,
+            ev=prob * est,
             post_positions=(pp,),
         ))
     fukusho_list.sort(key=lambda x: x.ev, reverse=True)
     result["複勝"] = fukusho_list[:top_k_combinations] if top_k_combinations else fukusho_list
 
     # ── 馬連 ──────────────────────────────────────────────────────────────────
-    odds_umaren = baseline.get("馬連", 50.0)
     pair_matrix: np.ndarray = combo_probs["pair"]
     umaren_list: list[CombinationPrediction] = []
     for i, j in combinations(range(n), 2):
@@ -236,54 +255,57 @@ def predict_race_with_combinations(
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_lo, pp_hi = (pp_i, pp_j) if pp_i <= pp_j else (pp_j, pp_i)
+        combo = f"{pp_lo}-{pp_hi}"
+        est = _est_odds("馬連", combo, "馬連", 50.0)
         umaren_list.append(CombinationPrediction(
-            combo=f"{pp_lo}-{pp_hi}",
+            combo=combo,
             prob=prob,
-            est_odds=odds_umaren,
-            ev=prob * odds_umaren,
+            est_odds=est,
+            ev=prob * est,
             post_positions=(pp_lo, pp_hi),
         ))
     umaren_list.sort(key=lambda x: x.ev, reverse=True)
     result["馬連"] = umaren_list[:top_k_combinations] if top_k_combinations else umaren_list
 
     # ── ワイド ────────────────────────────────────────────────────────────────
-    odds_wide = baseline.get("ワイド", 15.0)
     wide_list: list[CombinationPrediction] = []
     for i, j in combinations(range(n), 2):
         prob = float(wide_matrix[i, j])
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_lo, pp_hi = (pp_i, pp_j) if pp_i <= pp_j else (pp_j, pp_i)
+        combo = f"{pp_lo}-{pp_hi}"
+        est = _est_odds("ワイド", combo, "ワイド", 15.0)
         wide_list.append(CombinationPrediction(
-            combo=f"{pp_lo}-{pp_hi}",
+            combo=combo,
             prob=prob,
-            est_odds=odds_wide,
-            ev=prob * odds_wide,
+            est_odds=est,
+            ev=prob * est,
             post_positions=(pp_lo, pp_hi),
         ))
     wide_list.sort(key=lambda x: x.ev, reverse=True)
     result["ワイド"] = wide_list[:top_k_combinations] if top_k_combinations else wide_list
 
     # ── 馬単 ──────────────────────────────────────────────────────────────────
-    odds_umatan = baseline.get("馬単", 100.0)
     ordered_pair_matrix: np.ndarray = combo_probs["ordered_pair"]
     umatan_list: list[CombinationPrediction] = []
     for i, j in permutations(range(n), 2):
         prob = float(ordered_pair_matrix[i, j])
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
+        combo = f"{pp_i}→{pp_j}"
+        est = _est_odds("馬単", combo, "馬単", 100.0)
         umatan_list.append(CombinationPrediction(
-            combo=f"{pp_i}→{pp_j}",
+            combo=combo,
             prob=prob,
-            est_odds=odds_umatan,
-            ev=prob * odds_umatan,
+            est_odds=est,
+            ev=prob * est,
             post_positions=(pp_i, pp_j),
         ))
     umatan_list.sort(key=lambda x: x.ev, reverse=True)
     result["馬単"] = umatan_list[:top_k_combinations] if top_k_combinations else umatan_list
 
     # ── 三連複 ────────────────────────────────────────────────────────────────
-    odds_sanrenpuku = baseline.get("三連複", 100.0)
     triple_prob: dict[frozenset, float] = combo_probs["triple"]
     sanrenpuku_list: list[CombinationPrediction] = []
     for i, j, k in combinations(range(n), 3):
@@ -293,29 +315,32 @@ def predict_race_with_combinations(
         pp_j = int(post_positions[j])
         pp_k = int(post_positions[k])
         pps = tuple(sorted([pp_i, pp_j, pp_k]))
+        combo = f"{pps[0]}-{pps[1]}-{pps[2]}"
+        est = _est_odds("三連複", combo, "三連複", 100.0)
         sanrenpuku_list.append(CombinationPrediction(
-            combo=f"{pps[0]}-{pps[1]}-{pps[2]}",
+            combo=combo,
             prob=prob,
-            est_odds=odds_sanrenpuku,
-            ev=prob * odds_sanrenpuku,
+            est_odds=est,
+            ev=prob * est,
             post_positions=pps,
         ))
     sanrenpuku_list.sort(key=lambda x: x.ev, reverse=True)
     result["三連複"] = sanrenpuku_list[:top_k_combinations] if top_k_combinations else sanrenpuku_list
 
     # ── 三連単 ────────────────────────────────────────────────────────────────
-    odds_sanrentan = baseline.get("三連単", 500.0)
     sanrentan_list: list[CombinationPrediction] = []
     for i, j, k in permutations(range(n), 3):
         prob = float(ordered_triple[i, j, k])
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_k = int(post_positions[k])
+        combo = f"{pp_i}→{pp_j}→{pp_k}"
+        est = _est_odds("三連単", combo, "三連単", 500.0)
         sanrentan_list.append(CombinationPrediction(
-            combo=f"{pp_i}→{pp_j}→{pp_k}",
+            combo=combo,
             prob=prob,
-            est_odds=odds_sanrentan,
-            ev=prob * odds_sanrentan,
+            est_odds=est,
+            ev=prob * est,
             post_positions=(pp_i, pp_j, pp_k),
         ))
     sanrentan_list.sort(key=lambda x: x.ev, reverse=True)
