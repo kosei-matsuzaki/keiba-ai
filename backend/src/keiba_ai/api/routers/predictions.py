@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.predict import predict_race_with_shap
+from keiba_ai.ai.predict import predict_race_with_combinations, predict_race_with_shap
 from keiba_ai.ai.registry import get_active, load_model
 from keiba_ai.api.deps import get_session
-from keiba_ai.api.schemas import HorsePrediction, PredictionResponse
+from keiba_ai.api.schemas import (
+    CombinationPredictions,
+    HorsePrediction,
+    PredictionResponse,
+)
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.features.builder import build_inference_frame
 
@@ -22,6 +26,8 @@ router = APIRouter()
 def get_predictions(
     race_id: str,
     session: Annotated[Session, Depends(get_session)],
+    include_combinations: Annotated[bool, Query(description="Compute combination bet EV predictions")] = True,
+    top_k: Annotated[int | None, Query(ge=1, description="Limit each bet type to top-K combinations by EV")] = None,
 ) -> PredictionResponse:
     active_path = get_active(session)
     if active_path is None:
@@ -55,8 +61,27 @@ def get_predictions(
         for _, row in result_df.iterrows()
     ]
 
+    combinations_out: CombinationPredictions | None = None
+    if include_combinations:
+        combo_map = predict_race_with_combinations(
+            model,
+            frame,
+            session=session,
+            top_k_combinations=top_k,
+        )
+        combinations_out = CombinationPredictions(
+            tansho=combo_map.get("単勝", []),
+            fukusho=combo_map.get("複勝", []),
+            umaren=combo_map.get("馬連", []),
+            wide=combo_map.get("ワイド", []),
+            umatan=combo_map.get("馬単", []),
+            sanrenpuku=combo_map.get("三連複", []),
+            sanrentan=combo_map.get("三連単", []),
+        )
+
     return PredictionResponse(
         race_id=race_id,
         model_id=model_id,
         predictions=predictions,
+        combinations=combinations_out,
     )

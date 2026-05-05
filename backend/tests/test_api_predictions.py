@@ -115,3 +115,78 @@ def test_predictions_success(
         assert "win_prob" in p
         assert "place_prob" in p
         assert isinstance(p["top_features"], list)
+
+
+def test_predictions_include_combinations_default(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """By default (include_combinations=true), response contains a combinations field."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, "COMBO_RACE1", n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_combo1"))
+
+    fake_df = pd.DataFrame({
+        "horse_id": [f"HP_COMBO_RACE1_{i}" for i in range(4)],
+        "score": [2.0, 1.5, 1.0, 0.5],
+        "win_prob": [0.4, 0.3, 0.2, 0.1],
+        "place_prob": [0.7, 0.6, 0.5, 0.3],
+    })
+
+    with (
+        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch(
+            "keiba_ai.api.routers.predictions.predict_race_with_combinations",
+            return_value={
+                "単勝": [], "複勝": [], "馬連": [], "ワイド": [],
+                "馬単": [], "三連複": [], "三連単": [],
+            },
+        ),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get("/api/predictions/COMBO_RACE1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "combinations" in data
+    assert data["combinations"] is not None
+    combs = data["combinations"]
+    for key in ("tansho", "fukusho", "umaren", "wide", "umatan", "sanrenpuku", "sanrentan"):
+        assert key in combs, f"Missing key: {key}"
+
+
+def test_predictions_include_combinations_false(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """include_combinations=false skips combination computation (combinations is null)."""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, "COMBO_RACE2", n_horses=3)
+        _seed_active_model(session, str(tmp_path / "fake_model_combo2"))
+
+    fake_df = pd.DataFrame({
+        "horse_id": [f"HP_COMBO_RACE2_{i}" for i in range(3)],
+        "score": [2.0, 1.5, 1.0],
+        "win_prob": [0.5, 0.3, 0.2],
+        "place_prob": [0.7, 0.5, 0.3],
+    })
+
+    with (
+        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get("/api/predictions/COMBO_RACE2?include_combinations=false")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["combinations"] is None
