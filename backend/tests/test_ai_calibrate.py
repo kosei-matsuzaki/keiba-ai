@@ -68,6 +68,48 @@ def test_top_k_single_horse():
     assert place_probs[0] == pytest.approx(1.0, abs=1e-6)
 
 
+def test_top_k_separates_top_k_from_rest():
+    """Regression: top-k horses must have a strictly higher place_prob than
+    non-top-k horses whenever the k-th win_prob is non-zero.
+
+    Earlier the slice was [:effective_k] (instead of [:effective_k - 1]),
+    which made every horse share the same top-k cumulative mass and
+    degenerated the EV-based place bet filter to all-or-nothing per race.
+    """
+    scores = np.array([3.0, 2.0, 1.0, 0.5, 0.0, -0.5])
+    place_probs = top_k_cumulative_prob(scores, k=3)
+    top_three = place_probs[:3]
+    rest = place_probs[3:]
+    assert (top_three > rest.max()).all()
+    # All top-k share the same mass; all non-top-k share another (smaller) mass.
+    np.testing.assert_allclose(top_three, top_three[0])
+    np.testing.assert_allclose(rest, rest[0])
+
+
+def test_top_k_two_unique_values_per_race():
+    """The current heuristic produces at most 2 unique place_probs per race
+    (one for the top-k group, one for the rest). Lock this in so callers
+    don't accidentally rely on per-horse variance that the heuristic
+    cannot produce.
+    """
+    scores = np.array([3.0, 2.0, 1.5, 0.8, 0.2, -0.1, -0.5, -1.0])
+    place_probs = top_k_cumulative_prob(scores, k=3)
+    assert len(set(np.round(place_probs, 9))) <= 2
+
+
+def test_top_k_non_top_k_uses_top_km1_sum():
+    """Non-top-k horses should receive sum of top-(k-1) win_probs."""
+    scores = np.array([3.0, 2.0, 1.0, 0.5, 0.0])
+    win_probs = np.exp(scores - scores.max())
+    win_probs = win_probs / win_probs.sum()
+    expected_non_top = float(win_probs[:2].sum())  # sum of top-(k-1)=top-2
+
+    place_probs = top_k_cumulative_prob(scores, k=3)
+    # Indices 3 and 4 are non-top-3 by win_prob (which mirrors score order here).
+    assert place_probs[3] == pytest.approx(expected_non_top, abs=1e-9)
+    assert place_probs[4] == pytest.approx(expected_non_top, abs=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # sample_top_k
 # ---------------------------------------------------------------------------

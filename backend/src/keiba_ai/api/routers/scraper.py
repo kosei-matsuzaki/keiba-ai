@@ -28,6 +28,7 @@ from keiba_ai.core.paths import db_path
 from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.session import make_engine, session_scope
 from keiba_ai.jobs.ingest import run_ingest
+from keiba_ai.jobs.ingest_shutuba import run_ingest_shutuba
 from keiba_ai.scraper import stop_flag
 from keiba_ai.scraper.netkeiba import NetkeibaClient
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
@@ -169,6 +170,38 @@ async def run_scraper(
                 await run_ingest(date_str, client, s, limit=limit)
 
     info = registry.start("ingest", _coro)
+    return JobAccepted(
+        job_id=info.job_id,
+        status=info.status,
+        started_at=info.started_at,
+    )
+
+
+@router.post("/scraper/run_shutuba", response_model=JobAccepted, status_code=202)
+async def run_shutuba_scraper(
+    body: ScraperRunRequest,
+    session: Annotated[Session, Depends(get_session)],  # noqa: ARG001
+    registry: Annotated[JobRegistry, Depends(get_job_registry)],
+) -> JobAccepted:
+    """Fetch and ingest shutuba (出馬表) pages for all races on the given date.
+
+    Returns 202 Accepted immediately; the actual scraping runs as a background job.
+    """
+    date_str = body.date
+    limit = body.limit
+
+    async def _coro() -> None:
+        settings = load_settings()
+        rate_limiter = AsyncRateLimiter(settings)
+        robots_cache = RobotsCache(settings.user_agent)
+        engine = make_engine(db_path())
+
+        async with httpx.AsyncClient() as http_client:
+            client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
+            with session_scope(engine) as s:
+                await run_ingest_shutuba(date_str, client, s, limit=limit)
+
+    info = registry.start("ingest_shutuba", _coro)
     return JobAccepted(
         job_id=info.job_id,
         status=info.status,
