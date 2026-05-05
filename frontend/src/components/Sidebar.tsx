@@ -12,7 +12,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/upcoming', label: 'Upcoming Races', icon: CalendarDays },
-  { to: '/results', label: 'Recent Races', icon: History },
+  { to: '/past', label: 'Past Races', icon: History },
   { to: '/models', label: 'Models', icon: Brain },
   { to: '/ingest', label: 'Ingest', icon: Download },
   { to: '/ledger', label: 'Ledger', icon: Wallet },

@@ -21,6 +21,7 @@ class HealthResponse(BaseModel):
 
 class EntrySummary(BaseModel):
     horse_id: str
+    horse_name: str | None = None
     post_position: int | None
     jockey_id: str | None
     trainer_id: str | None

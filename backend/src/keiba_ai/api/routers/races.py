@@ -1,4 +1,4 @@
-"""Race endpoints: upcoming list, recent list, and race detail."""
+"""Race endpoints: upcoming list, recent list, by_date, and race detail."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from keiba_ai.api.deps import get_session
 from keiba_ai.api.schemas import EntrySummary, RaceDetail, RaceSummary, UpcomingRacesResponse
 from keiba_ai.db.models.entry import Entry
+from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.race import Race
 
 router = APIRouter()
@@ -29,18 +30,31 @@ def _race_summary(race: Race) -> RaceSummary:
     )
 
 
-def _entry_summary(entry: Entry) -> EntrySummary:
-    return EntrySummary(
-        horse_id=entry.horse_id,
-        post_position=entry.post_position,
-        jockey_id=entry.jockey_id,
-        trainer_id=entry.trainer_id,
-        age=entry.age,
-        sex=entry.sex,
-        odds_win=entry.odds_win,
-        popularity=entry.popularity,
-        finish_position=entry.finish_position,
-    )
+def _build_entry_summaries(entries: list[Entry], session: Session) -> list[EntrySummary]:
+    """Build EntrySummary list with horse_name populated via a single bulk load."""
+    horse_ids = {e.horse_id for e in entries}
+    horses: dict[str, str | None] = {}
+    if horse_ids:
+        horse_rows = session.scalars(
+            select(Horse).where(Horse.horse_id.in_(horse_ids))
+        ).all()
+        horses = {h.horse_id: h.name for h in horse_rows}
+
+    return [
+        EntrySummary(
+            horse_id=entry.horse_id,
+            horse_name=horses.get(entry.horse_id),
+            post_position=entry.post_position,
+            jockey_id=entry.jockey_id,
+            trainer_id=entry.trainer_id,
+            age=entry.age,
+            sex=entry.sex,
+            odds_win=entry.odds_win,
+            popularity=entry.popularity,
+            finish_position=entry.finish_position,
+        )
+        for entry in entries
+    ]
 
 
 @router.get("/races/upcoming", response_model=UpcomingRacesResponse)
@@ -117,6 +131,35 @@ def get_recent_races(
     return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
 
 
+@router.get("/races/by_date", response_model=UpcomingRacesResponse)
+def get_races_by_date(
+    session: Annotated[Session, Depends(get_session)],
+    date_: Annotated[
+        str,
+        Query(alias="date", description="Target date YYYY-MM-DD"),
+    ],
+) -> UpcomingRacesResponse:
+    """Return all races on a single date, ordered by race_id ascending.
+
+    Returns an empty list (not 404) when no races exist for the given date.
+    """
+    try:
+        target = date.fromisoformat(date_)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid date format (expected YYYY-MM-DD): {exc}",
+        ) from exc
+
+    stmt = (
+        select(Race)
+        .where(Race.date == target.isoformat())
+        .order_by(Race.race_id)
+    )
+    races = session.scalars(stmt).all()
+    return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
+
+
 @router.get("/races/{race_id}", response_model=RaceDetail)
 def get_race_detail(
     race_id: str,
@@ -139,7 +182,7 @@ def get_race_detail(
         n_runners=race.n_runners,
         weather=race.weather,
         track_condition=race.track_condition,
-        entries=[_entry_summary(e) for e in entries],
+        entries=_build_entry_summaries(entries, session),
         payout_win=race.payout_win,
         payout_place=race.payout_place,
     )

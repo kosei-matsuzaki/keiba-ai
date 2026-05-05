@@ -13,6 +13,7 @@ export interface HealthResponse {
 
 export interface EntrySummary {
   horse_id: string;
+  horse_name: string | null;
   post_position: number | null;
   jockey_id: string | null;
   trainer_id: string | null;
