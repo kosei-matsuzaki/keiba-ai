@@ -14,21 +14,24 @@ import { HTTPError } from 'ky';
 import ky from 'ky';
 import { getApiBaseUrl } from './tauri';
 import type {
+  BetRecordIn,
+  BetRecordOut,
   HealthResponse,
-  UpcomingRacesResponse,
-  RaceDetail,
-  PredictionResponse,
+  JobAccepted,
+  JobInfo,
   MetricsSummary,
   MetricsTimeseries,
   ModelMeta,
-  JobAccepted,
-  JobInfo,
+  PredictionResponse,
+  RaceDetail,
+  RecommendationsResponse,
   ScraperRecentActivity,
-  ScraperStatus,
   ScraperRunRequest,
+  ScraperStatus,
   SettingsResponse,
   SettingsUpdate,
   TrainRequest,
+  UpcomingRacesResponse,
 } from '@/types/api';
 
 // Cache the in-flight construction Promise (not the resolved client) so that
@@ -127,6 +130,24 @@ export function fetchSettings(): Promise<SettingsResponse> {
 
 export function updateSettings(body: SettingsUpdate): Promise<SettingsResponse> {
   return getClient().then((c) => c.put('settings', { json: body }).json<SettingsResponse>());
+}
+
+export function fetchRecommendations(
+  raceId: string,
+  params?: { top_n_horses?: number; top_k?: number },
+): Promise<RecommendationsResponse> {
+  const searchParams: Record<string, string | number> = {};
+  if (params?.top_n_horses != null) searchParams.top_n_horses = params.top_n_horses;
+  if (params?.top_k != null) searchParams.top_k = params.top_k;
+  return getClient().then((c) =>
+    c
+      .get(`recommendations/${raceId}`, Object.keys(searchParams).length ? { searchParams } : {})
+      .json<RecommendationsResponse>()
+  );
+}
+
+export function createBet(body: BetRecordIn): Promise<BetRecordOut> {
+  return getClient().then((c) => c.post('bets', { json: body }).json<BetRecordOut>());
 }
 
 // ── Error handling helpers ──────────────────────────────────────────────────

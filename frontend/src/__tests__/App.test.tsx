@@ -17,6 +17,8 @@ vi.mock('../lib/api', () => ({
   fetchUpcomingRaces: vi.fn().mockResolvedValue({ races: [] }),
   fetchRaceDetail: vi.fn().mockRejectedValue(new Error('404')),
   fetchPredictions: vi.fn().mockRejectedValue(new Error('503')),
+  fetchRecommendations: vi.fn().mockRejectedValue(new Error('503')),
+  createBet: vi.fn().mockResolvedValue({ id: 1 }),
   fetchModels: vi.fn().mockResolvedValue([]),
   activateModel: vi.fn().mockResolvedValue({}),
   trainModel: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
@@ -25,6 +27,10 @@ vi.mock('../lib/api', () => ({
   stopScraper: vi.fn().mockResolvedValue({ stopped: true }),
   fetchSettings: vi.fn().mockResolvedValue({ user_agent: 'Mozilla/5.0', rate_min_seconds: 3, rate_max_seconds: 10, night_min_seconds: 30, win_ev_threshold: 1.1, place_ev_threshold: 1.05, scraper_stopped: false }),
   updateSettings: vi.fn().mockResolvedValue({}),
+  formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
+  formatErrorMessageSync: vi.fn().mockReturnValue('エラーが発生しました'),
+  isNotFoundError: vi.fn().mockReturnValue(false),
+  isServiceUnavailableError: vi.fn().mockReturnValue(false),
 }));
 
 // Suppress console.error from React Query error boundaries during tests

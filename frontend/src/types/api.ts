@@ -182,3 +182,59 @@ export interface SettingsUpdate {
   place_ev_threshold?: number;
   scraper_stopped?: boolean;
 }
+
+// ── Recommendations ───────────────────────────────────────────────────────────
+
+export interface RecommendationCandidate {
+  bet_type: string;
+  combo: string;
+  pattern: string;
+  prob: number;
+  est_odds: number;
+  ev: number;
+  stake: number;
+  post_positions: number[];
+}
+
+export interface RecommendationsResponse {
+  race_id: string;
+  bankroll_at_decision: number;
+  candidates: RecommendationCandidate[];
+}
+
+// ── Bet records ───────────────────────────────────────────────────────────────
+
+export type BetType =
+  | '単勝'
+  | '複勝'
+  | '枠連'
+  | '馬連'
+  | 'ワイド'
+  | '馬単'
+  | '三連複'
+  | '三連単';
+
+export interface BetRecordIn {
+  race_id: string;
+  bet_type: BetType;
+  combo: string;
+  stake: number;
+  source: 'recommendation' | 'manual';
+  recommendation_id?: number;
+  notes?: string;
+}
+
+export interface BetRecordOut {
+  id: number;
+  created_at: string;
+  race_id: string;
+  bet_type: string;
+  combo: string;
+  stake: number;
+  source: string;
+  recommendation_id: number | null;
+  settled_at: string | null;
+  payout: number | null;
+  profit: number | null;
+  notes: string | null;
+}
