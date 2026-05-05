@@ -41,6 +41,7 @@ from keiba_ai.scraper.parsers.race_result import ParsedRaceResult, parse_race_re
 from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
 from keiba_ai.scraper.robots import RobotsCache
 from keiba_ai.scraper.stop_flag import ScraperStopped
+from keiba_ai.services.bet_settlement import settle_bets_for_race
 
 logger = get_logger(__name__)
 
@@ -273,6 +274,15 @@ async def run_ingest(
             _insert_entries(session, parsed)
             n_payouts = _upsert_payouts(session, race_id, html)
             _record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
+
+            # 結果 ingest (finish_position あり) のみ bet 突合せを実行する。
+            # shutuba ingest は finish_position が無いためここには到達しない。
+            has_results = any(e.finish_position is not None for e in parsed.entries)
+            if has_results:
+                n_settled = settle_bets_for_race(session, race_id)
+                if n_settled:
+                    logger.info("Settled %d bet(s) for race %s", n_settled, race_id)
+
             session.commit()
 
             counters["fetched"] += 1

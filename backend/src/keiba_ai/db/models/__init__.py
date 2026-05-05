@@ -4,6 +4,7 @@ Import all models here so that Base.metadata is populated when this package is i
 Alembic env.py imports this module to make autogen aware of all tables.
 """
 
+from keiba_ai.db.models.bet_record import BetRecord
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.jockey import Jockey
@@ -14,6 +15,7 @@ from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.models.trainer import Trainer
 
 __all__ = [
+    "BetRecord",
     "Entry",
     "Horse",
     "Jockey",
