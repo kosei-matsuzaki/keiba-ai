@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -86,3 +87,24 @@ def test_predict_place_prob_in_range(trained_model):
     result = predict_race(model, frame)
     assert (result["place_prob"] >= 0).all()
     assert (result["place_prob"] <= 1.0 + 1e-6).all()
+
+
+def test_predict_race_performance(trained_model, monkeypatch):
+    """predict_race with plackett_luce must complete within 50 ms per race."""
+    engine, db_file, model_dir = trained_model
+    model = load_model(model_dir)
+
+    monkeypatch.setenv("KEIBA_PLACE_PROB_METHOD", "plackett_luce")
+
+    with Session(engine) as session:
+        race_id = session.scalars(select(Race.race_id).limit(1)).first()
+        frame = build_inference_frame(session, race_id)
+
+    # Warm up LightGBM predict (first call may load BLAS)
+    predict_race(model, frame)
+
+    start = time.perf_counter()
+    predict_race(model, frame)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    assert elapsed_ms < 50, f"predict_race took {elapsed_ms:.1f} ms, expected < 50 ms"

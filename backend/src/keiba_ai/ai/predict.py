@@ -1,17 +1,29 @@
 """Single-race and batch inference.
 
 predict_race converts LightGBM raw scores to win_prob and place_prob using
-softmax and the top-k cumulative approximation respectively.
+softmax and a place-probability estimator selected by KEIBA_PLACE_PROB_METHOD.
+
+KEIBA_PLACE_PROB_METHOD:
+  plackett_luce  (default) — Plackett-Luce Monte Carlo, per-horse probabilities
+  heuristic                — legacy top_k_cumulative_prob approximation
 """
 
 from __future__ import annotations
+
+import os
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from keiba_ai.ai.calibrate import softmax_within_race, top_k_cumulative_prob
+from keiba_ai.ai.calibrate import (
+    plackett_luce_place_prob,
+    softmax_within_race,
+    top_k_cumulative_prob,
+)
 from keiba_ai.features.builder import CATEGORICAL_FEATURES, FEATURE_COLUMNS
+
+_PLACE_PROB_METHOD = os.environ.get("KEIBA_PLACE_PROB_METHOD", "plackett_luce")
 
 
 def _prepare_features(frame: pd.DataFrame) -> pd.DataFrame:
@@ -21,6 +33,19 @@ def _prepare_features(frame: pd.DataFrame) -> pd.DataFrame:
         if col in X.columns:
             X[col] = X[col].astype("category")
     return X
+
+
+def _compute_place_prob(scores: np.ndarray) -> np.ndarray:
+    """Dispatch to the configured place-probability estimator.
+
+    Reads KEIBA_PLACE_PROB_METHOD at call time so that monkeypatching the
+    module-level variable in tests takes immediate effect.
+    """
+    method = os.environ.get("KEIBA_PLACE_PROB_METHOD", _PLACE_PROB_METHOD)
+    if method == "heuristic":
+        return top_k_cumulative_prob(scores, k=3)
+    # Default: plackett_luce
+    return plackett_luce_place_prob(scores, k=3, n_samples=10_000)
 
 
 def predict_race(model: lgb.Booster, frame: pd.DataFrame) -> pd.DataFrame:
@@ -42,7 +67,7 @@ def predict_race(model: lgb.Booster, frame: pd.DataFrame) -> pd.DataFrame:
     scores: np.ndarray = model.predict(X)
 
     win_probs = softmax_within_race(scores)
-    place_probs = top_k_cumulative_prob(scores, k=3)
+    place_probs = _compute_place_prob(scores)
 
     result = pd.DataFrame(
         {
