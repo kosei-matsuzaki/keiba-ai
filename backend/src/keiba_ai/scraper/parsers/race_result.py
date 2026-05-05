@@ -49,11 +49,39 @@ _WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
 _TRACK_OLD_RE = re.compile(r"馬場\s*[:：]\s*([^\s/]+)")
 _TRACK_NEW_RE = re.compile(r"(?:ダート|芝|ダ|障)\s*[:：]\s*([^\s/]+)")
 
-# レースクラス: G1〜G3 / GⅠ〜GⅢ / Listed / オープン / 重賞 等。
-# RaceData02 (modern result page) の <span> 群から拾い、無ければ
-# レース名 (RaceName) の括弧内表記に fallback する。
+# レースクラス検出 — class="RaceData02" (旧形式) 用。
+# word boundary で "TOP" の "OP" 部分への誤マッチを防ぐ。
 # `L` は単独文字なので word boundary を付けて "1600L" 等の偶発マッチを防ぐ。
-_GRADE_RE = re.compile(r"(GⅠ|GⅡ|GⅢ|G1|G2|G3|Listed|\bL\b|OP|重賞)")
+_GRADE_RE_LEGACY = re.compile(r"(GⅠ|GⅡ|GⅢ|G1|G2|G3|Listed|\bL\b|\bOP\b|重賞)")
+
+# race_class 正規化マッピング（優先順序に従った (pattern, normalized) リスト）
+_CLASS_NORM_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"GⅠ|G1"), "G1"),
+    (re.compile(r"GⅡ|G2"), "G2"),
+    (re.compile(r"GⅢ|G3"), "G3"),
+    (re.compile(r"Listed|\(L\)"), "Listed"),
+    (re.compile(r"重賞"), "重賞"),
+    (re.compile(r"未勝利"), "未勝利"),
+    (re.compile(r"新馬"), "新馬"),
+    (re.compile(r"1勝クラス"), "1勝クラス"),
+    (re.compile(r"2勝クラス"), "2勝クラス"),
+    (re.compile(r"3勝クラス"), "3勝クラス"),
+    (re.compile(r"オープン|\bOP\b"), "OP"),
+]
+
+
+def _normalize_class(raw: str) -> str | None:
+    """Map raw grade/class keyword to a canonical label.
+
+    Applies the first matching rule in priority order so that, for example,
+    "G1" takes precedence over "重賞" when both keywords appear in the text.
+    Returns None when no known pattern matches.
+    """
+    for pattern, label in _CLASS_NORM_RULES:
+        if pattern.search(raw):
+            return label
+    return None
+
 
 # JRA トラックコード（race_id の 5-6 桁目）→ コース名
 _COURSE_CODE_MAP = {
@@ -100,6 +128,7 @@ class ParsedRaceResult:
     weather: str | None = None
     track_condition: str | None = None
     race_class: str | None = None
+    name: str | None = None
     n_runners: int | None = None
     payout_win: int | None = None
     payout_place: str | None = None  # JSON string
@@ -130,7 +159,12 @@ def _parse_time_to_seconds(text: str) -> float | None:
 
 
 def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -> None:
-    """Extract race metadata from race_id and page-wide text scan."""
+    """Extract race metadata from race_id and page structure.
+
+    優先的に class="data_intro" (db.netkeiba 現行形式) を参照し、
+    存在しなければ旧 class="RaceData02" / "RaceName" 形式にフォールバックする。
+    ページ全体テキストへの race_class フォールバックは廃止（"TOP" 誤マッチ防止）。
+    """
     # Course は race_id の 5-6 桁目（JRA トラックコード）から導出
     if len(race_id) >= 6:
         result.course = _COURSE_CODE_MAP.get(race_id[4:6])
@@ -151,22 +185,47 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
     if track_m:
         result.track_condition = track_m.group(1)
 
-    # race_class: RaceData02 の span 群を優先し、無ければ RaceName の
-    # 括弧内表記、最終的にページ全体のテキストにフォールバック。
-    race_data_02 = soup.find(class_="RaceData02")
-    candidates: list[str] = []
-    if race_data_02:
-        candidates = [s.get_text(strip=True) for s in race_data_02.find_all("span")]
-    race_name_el = soup.find(class_="RaceName")
-    if race_name_el:
-        candidates.append(race_name_el.get_text(" ", strip=True))
-    candidates.append(page_text)
+    # ── レース名 & race_class ────────────────────────────────────────────────
+    # 現行 db.netkeiba 形式: class="data_intro" 内の <h1> と class="smalltxt" を使う。
+    # 旧形式 (フィクスチャ等): class="RaceData02" / "RaceName" を使う。
+    data_intro = soup.find(class_="data_intro")
+    if data_intro:
+        # レース名: <h1> の text（HTMLコメントは get_text で自動除外）
+        h1 = data_intro.find("h1")
+        if h1:
+            result.name = h1.get_text(strip=True) or None
 
-    for text in candidates:
-        m = _GRADE_RE.search(text)
-        if m:
-            result.race_class = m.group(1)
-            break
+        # race_class: h1 テキスト → smalltxt の順で検索
+        race_class: str | None = None
+
+        if h1:
+            h1_text = h1.get_text(strip=True)
+            race_class = _normalize_class(h1_text)
+
+        if race_class is None:
+            smalltxt = data_intro.find(class_="smalltxt")
+            if smalltxt:
+                st_text = smalltxt.get_text(strip=True)
+                race_class = _normalize_class(st_text)
+
+        result.race_class = race_class
+    else:
+        # 旧形式フォールバック: RaceData02 の span 群 → RaceName
+        race_data_02 = soup.find(class_="RaceData02")
+        candidates: list[str] = []
+        if race_data_02:
+            candidates = [s.get_text(strip=True) for s in race_data_02.find_all("span")]
+        race_name_el = soup.find(class_="RaceName")
+        if race_name_el:
+            candidates.append(race_name_el.get_text(" ", strip=True))
+            if result.name is None:
+                result.name = race_name_el.get_text(strip=True) or None
+
+        for text in candidates:
+            m = _GRADE_RE_LEGACY.search(text)
+            if m:
+                result.race_class = _normalize_class(m.group(1))
+                break
 
 
 def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ParsedEntry]:

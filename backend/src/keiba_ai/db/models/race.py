@@ -23,3 +23,4 @@ class Race(Base):
     n_runners: Mapped[int | None] = mapped_column(Integer)
     payout_win: Mapped[int | None] = mapped_column(Integer)
     payout_place: Mapped[str | None] = mapped_column(String)  # JSON string
+    name: Mapped[str | None] = mapped_column(String, nullable=True)

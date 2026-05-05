@@ -33,6 +33,32 @@ _WEIGHT_RE = re.compile(r"(\d+)\(([+-]?\d+)\)")
 _SURFACE_DIST_RE = re.compile(r"(芝|ダ|障)(?:\s*[右左])?(?:\s*[内外])?\s*(\d{3,4})\s*m")
 _WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
 
+# race.netkeiba.com の出馬表ページの race_class/name 判定用。
+# db.netkeiba とは異なり RaceData01 / RaceName が使われることが多い。
+_GRADE_RE = re.compile(r"(GⅠ|GⅡ|GⅢ|G[1-3]|Listed|\(L\)|重賞|未勝利|新馬|[1-3]勝クラス|オープン|\bOP\b)")
+
+_CLASS_NORM_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"GⅠ|G1"), "G1"),
+    (re.compile(r"GⅡ|G2"), "G2"),
+    (re.compile(r"GⅢ|G3"), "G3"),
+    (re.compile(r"Listed|\(L\)"), "Listed"),
+    (re.compile(r"重賞"), "重賞"),
+    (re.compile(r"未勝利"), "未勝利"),
+    (re.compile(r"新馬"), "新馬"),
+    (re.compile(r"1勝クラス"), "1勝クラス"),
+    (re.compile(r"2勝クラス"), "2勝クラス"),
+    (re.compile(r"3勝クラス"), "3勝クラス"),
+    (re.compile(r"オープン|\bOP\b"), "OP"),
+]
+
+
+def _normalize_class(raw: str) -> str | None:
+    for pattern, label in _CLASS_NORM_RULES:
+        if pattern.search(raw):
+            return label
+    return None
+
+
 # JRA トラックコード（race_id の 5-6 桁目）→ コース名
 _COURSE_CODE_MAP = {
     "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
@@ -82,6 +108,8 @@ class ParsedShutuba:
     distance: int | None = None
     n_runners: int | None = None
     weather: str | None = None  # 開催前は公表されていない場合 None
+    race_class: str | None = None
+    name: str | None = None
     entries: list[ShutubaEntry] = field(default_factory=list)
 
 
@@ -98,7 +126,11 @@ def _extract_id_from_href(href: str, kind: str) -> str | None:
 
 
 def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> None:
-    """Extract race metadata from race_id and page text."""
+    """Extract race metadata from race_id and page text.
+
+    race.netkeiba.com の出馬表ページは db.netkeiba と構造が異なるため、
+    複数の class 名パターンを試みる。不明な場合は None のまま。
+    """
     if len(race_id) >= 6:
         result.course = _COURSE_CODE_MAP.get(race_id[4:6])
 
@@ -113,6 +145,39 @@ def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> N
     weather_m = _WEATHER_RE.search(page_text)
     if weather_m:
         result.weather = weather_m.group(1)
+
+    # レース名: RaceName / RaceTitle / data_intro の h1 を試みる
+    for cls in ("RaceName", "RaceTitle", "race_name"):
+        el = soup.find(class_=cls)
+        if el:
+            result.name = el.get_text(strip=True) or None
+            break
+    if result.name is None:
+        data_intro = soup.find(class_="data_intro")
+        if data_intro:
+            h1 = data_intro.find("h1")
+            if h1:
+                result.name = h1.get_text(strip=True) or None
+
+    # race_class: RaceData01 / RaceData02 / smalltxt を試みる
+    # ページ全体テキストへのフォールバックは行わない（誤マッチ防止）
+    race_class: str | None = None
+    for cls in ("RaceData02", "RaceData01"):
+        el = soup.find(class_=cls)
+        if el:
+            text = el.get_text(strip=True)
+            race_class = _normalize_class(text)
+            if race_class is not None:
+                break
+    if race_class is None:
+        # smalltxt があれば（db.netkeiba 互換ページ）
+        smalltxt = soup.find(class_="smalltxt")
+        if smalltxt:
+            race_class = _normalize_class(smalltxt.get_text(strip=True))
+    if race_class is None and result.name:
+        # レース名自体からクラスを推測（"3歳未勝利" 等）
+        race_class = _normalize_class(result.name)
+    result.race_class = race_class
 
 
 def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ShutubaEntry]:

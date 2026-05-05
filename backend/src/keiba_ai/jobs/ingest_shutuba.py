@@ -95,7 +95,8 @@ def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
         distance=result.distance or 0,
         weather=result.weather,
         track_condition=None,
-        race_class=None,
+        race_class=result.race_class,
+        name=result.name,
         n_runners=result.n_runners,
         payout_win=None,
         payout_place=None,
@@ -105,7 +106,10 @@ def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
         set_={
             # shutuba で確定できるフィールドのみ更新
             "n_runners": stmt.excluded.n_runners,
-            # 既存の確定済みデータ (payout / track_condition / race_class) は保持
+            # name / race_class は COALESCE で既存値を保護
+            "name": sa.func.coalesce(stmt.excluded.name, Race.name),
+            "race_class": sa.func.coalesce(stmt.excluded.race_class, Race.race_class),
+            # 既存の確定済みデータ (payout / track_condition) は保持
             # date / course / surface / distance は初回登録値を尊重し上書きしない
         },
     )

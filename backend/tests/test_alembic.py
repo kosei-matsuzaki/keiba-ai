@@ -36,6 +36,13 @@ EXPECTED_TABLES = {
     "bet_records",
 }
 
+# races テーブルに含まれるべき列（0005 migration で name を追加）
+EXPECTED_RACES_COLUMNS = {
+    "race_id", "date", "course", "surface", "distance",
+    "weather", "track_condition", "race_class", "n_runners",
+    "payout_win", "payout_place", "name",
+}
+
 EXPECTED_INDEXES = {
     "ix_entries_race_id_horse_id",
     "ix_entries_horse_id_finish_position",
@@ -115,6 +122,41 @@ class TestAlembicMigrations:
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
         assert EXPECTED_TABLES.issubset(tables)
+
+    def test_races_table_has_name_column(self, tmp_db):
+        """0005 migration が races.name 列を追加する。"""
+        url, engine = tmp_db
+        cfg = _make_alembic_cfg(url)
+        command.upgrade(cfg, "head")
+
+        inspector = inspect(engine)
+        cols = {c["name"] for c in inspector.get_columns("races")}
+        assert EXPECTED_RACES_COLUMNS.issubset(cols), (
+            f"races テーブルに不足している列: {EXPECTED_RACES_COLUMNS - cols}"
+        )
+
+    def test_migration_0005_up_down(self, tmp_db):
+        """0005 migration の up → down が冪等に動作する。"""
+        url, engine = tmp_db
+        cfg = _make_alembic_cfg(url)
+
+        # 0004 まで適用して name 列が存在しないことを確認
+        command.upgrade(cfg, "0004")
+        inspector = inspect(engine)
+        cols_before = {c["name"] for c in inspector.get_columns("races")}
+        assert "name" not in cols_before
+
+        # 0005 を適用して name 列が追加されることを確認
+        command.upgrade(cfg, "0005")
+        inspector = inspect(engine)
+        cols_after = {c["name"] for c in inspector.get_columns("races")}
+        assert "name" in cols_after
+
+        # downgrade で name 列が削除されることを確認
+        command.downgrade(cfg, "0004")
+        inspector = inspect(engine)
+        cols_down = {c["name"] for c in inspector.get_columns("races")}
+        assert "name" not in cols_down
 
     def test_autogen_produces_no_diff(self, tmp_db):
         """After upgrade head, autogen should find no schema differences."""

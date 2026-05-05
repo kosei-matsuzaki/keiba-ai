@@ -344,7 +344,7 @@ export function RaceDetail() {
 
       <PageHeader
         icon={Trophy}
-        title={`${race.course} ${race.race_class ?? ''}`.trim()}
+        title={race.name ?? `${race.course} ${race.race_class ?? ''}`.trim()}
         description={`${race.date}・${race.surface}${race.distance}m・${race.race_id}`}
       />
 
@@ -356,6 +356,7 @@ export function RaceDetail() {
         <CardContent>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
             <MetaItem label="レース ID" value={race.race_id} mono />
+            <MetaItem label="レース名" value={race.name ?? '—'} />
             <MetaItem label="開催日" value={race.date} />
             <MetaItem label="競馬場" value={race.course} />
             <MetaItem label="馬場種別" value={race.surface} />
