@@ -52,13 +52,19 @@ _TRACK_NEW_RE = re.compile(r"(?:ダート|芝|ダ|障)\s*[:：]\s*([^\s/]+)")
 # レースクラス検出 — class="RaceData02" (旧形式) 用。
 # word boundary で "TOP" の "OP" 部分への誤マッチを防ぐ。
 # `L` は単独文字なので word boundary を付けて "1600L" 等の偶発マッチを防ぐ。
-_GRADE_RE_LEGACY = re.compile(r"(GⅠ|GⅡ|GⅢ|G1|G2|G3|Listed|\bL\b|\bOP\b|重賞)")
+# Roman numeral 変種 GIII/GII/GI を長い順に並べて、貪欲に長いものから捕る。
+_GRADE_RE_LEGACY = re.compile(
+    r"(GⅢ|GIII|G3|GⅡ|GII|G2|GⅠ|GI(?![IV])|G1|Listed|\bL\b|\bOP\b|重賞)"
+)
 
 # race_class 正規化マッピング（優先順序に従った (pattern, normalized) リスト）
+# Roman numeral と Unicode 全角ローマ数字を両方サポート。
+# "GIII" は "GII" / "GI" を内包するので順序が重要 (G3 → G2 → G1 の順で評価)。
 _CLASS_NORM_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"GⅠ|G1"), "G1"),
-    (re.compile(r"GⅡ|G2"), "G2"),
-    (re.compile(r"GⅢ|G3"), "G3"),
+    (re.compile(r"GⅢ|GIII|G3"), "G3"),
+    (re.compile(r"GⅡ|GII|G2"), "G2"),
+    # GI は GII / GIII の prefix と被るので、後ろが I/V でないことを保証
+    (re.compile(r"GⅠ|G1|GI(?![IV])"), "G1"),
     (re.compile(r"Listed|\(L\)"), "Listed"),
     (re.compile(r"重賞"), "重賞"),
     (re.compile(r"未勝利"), "未勝利"),

@@ -107,3 +107,58 @@ class TestLegacyFixture:
     def test_distance(self, legacy_html):
         parsed = parse_race_result(legacy_html, "202406010101")
         assert parsed.distance == 2400
+
+
+# ── Roman numeral 正規化テスト ───────────────────────────────────────────────
+
+class TestRomanNumeralNormalization:
+    """h1 にローマ数字 GIII / GII / GI が含まれる graded race の正規化検証。
+
+    実 db.netkeiba 結果ページではグレード表記が `<h1>第29回プロキオン
+    ステークス(GIII)</h1>` のように Roman numeral で書かれており、
+    Unicode 全角ローマ数字 (GⅢ / GⅡ / GⅠ) を期待する旧 regex では
+    マッチせず "OP" に誤分類されていた回帰防止。
+    """
+
+    @staticmethod
+    def _build_html(h1_text: str) -> str:
+        return f'''<!DOCTYPE html><html><head><title>test</title></head>
+<body>
+<div class="data_intro">
+  <dl class="racedata fc">
+    <dt>11 R</dt>
+    <dd>
+      <h1>{h1_text}</h1>
+      <p><span>芝1200m / 天候 : 晴 / 馬場 : 良 / 発走 : 15:25</span></p>
+    </dd>
+  </dl>
+  <p class="smalltxt">2024年07月14日 1回中京テスト</p>
+</div>
+<a href="https://db.netkeiba.com/" title="競馬データベースTOP">競馬データベースTOP</a>
+</body></html>'''
+
+    def test_giii_roman_normalized_to_g3(self):
+        html = self._build_html("第29回プロキオンステークス(GIII)")
+        parsed = parse_race_result(html, "202410030411")
+        assert parsed.race_class == "G3"
+
+    def test_gii_roman_normalized_to_g2(self):
+        html = self._build_html("函館記念(GII)")
+        parsed = parse_race_result(html, "202401010411")
+        assert parsed.race_class == "G2"
+
+    def test_gi_roman_normalized_to_g1(self):
+        html = self._build_html("天皇賞・春(GI)")
+        parsed = parse_race_result(html, "202403030411")
+        assert parsed.race_class == "G1"
+
+    def test_giii_does_not_match_g1(self):
+        """GIII 中の "GI" 部分が G1 に誤マッチしないこと。"""
+        html = self._build_html("テストGIII記念")
+        parsed = parse_race_result(html, "202410030412")
+        assert parsed.race_class == "G3"
+
+    def test_gii_does_not_match_g1(self):
+        html = self._build_html("テストGII記念")
+        parsed = parse_race_result(html, "202410030413")
+        assert parsed.race_class == "G2"
