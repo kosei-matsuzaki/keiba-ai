@@ -15,17 +15,20 @@ import ky from 'ky';
 import { getApiBaseUrl } from './tauri';
 import type {
   BetBreakdown,
+  BetRecordIn,
   BetRecordList,
+  BetRecordOut,
   BetSummary,
   BetTimeseries,
   HealthResponse,
   JobAccepted,
   JobInfo,
-  ModelMeta,
   MetricsSummary,
   MetricsTimeseries,
+  ModelMeta,
   PredictionResponse,
   RaceDetail,
+  RecommendationsResponse,
   ScraperRecentActivity,
   ScraperRunRequest,
   ScraperStatus,
@@ -202,6 +205,26 @@ export async function buildBetExportUrl(params: BetFilterParams): Promise<string
   if (params.source) searchParams.set('source', params.source);
   const qs = searchParams.toString();
   return `${baseUrl}/api/bets/export.csv${qs ? '?' + qs : ''}`;
+}
+
+// ── Recommendations / Bet creation ────────────────────────────────────────────
+
+export function fetchRecommendations(
+  raceId: string,
+  params?: { top_n_horses?: number; top_k?: number },
+): Promise<RecommendationsResponse> {
+  const searchParams: Record<string, string | number> = {};
+  if (params?.top_n_horses != null) searchParams.top_n_horses = params.top_n_horses;
+  if (params?.top_k != null) searchParams.top_k = params.top_k;
+  return getClient().then((c) =>
+    c
+      .get(`recommendations/${raceId}`, Object.keys(searchParams).length ? { searchParams } : {})
+      .json<RecommendationsResponse>()
+  );
+}
+
+export function createBet(body: BetRecordIn): Promise<BetRecordOut> {
+  return getClient().then((c) => c.post('bets', { json: body }).json<BetRecordOut>());
 }
 
 // ── Error handling helpers ──────────────────────────────────────────────────

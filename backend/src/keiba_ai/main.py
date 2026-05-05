@@ -24,6 +24,7 @@ from keiba_ai.api.routers import (
     models,
     predictions,
     races,
+    recommendations,
     scraper,
     settings,
 )
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     application.include_router(scraper.router, prefix="/api")
     application.include_router(jobs.router, prefix="/api")
     application.include_router(settings.router, prefix="/api")
+    application.include_router(recommendations.router, prefix="/api")
     application.include_router(internal.router, prefix="/api")
 
     return application
