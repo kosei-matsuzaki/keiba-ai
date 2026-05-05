@@ -15,7 +15,7 @@ const navItems: NavItem[] = [
   { to: '/results', label: 'Recent Races', icon: History },
   { to: '/models', label: 'Models', icon: Brain },
   { to: '/ingest', label: 'Ingest', icon: Download },
-  { to: '/ledger', label: '収支', icon: Wallet },
+  { to: '/ledger', label: 'Ledger', icon: Wallet },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
