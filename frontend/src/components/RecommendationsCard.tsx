@@ -191,7 +191,9 @@ export function RecommendationsCard({
               </TableBody>
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
-              ※ 推定オッズは過去払戻の平均値（暫定）。当日オッズ未対応
+              {data.odds_source === 'live'
+                ? '※ 推定オッズ: 当日リアルオッズ'
+                : '※ 推定オッズ: 過去払戻の平均値（暫定）'}
             </p>
           </>
         )}

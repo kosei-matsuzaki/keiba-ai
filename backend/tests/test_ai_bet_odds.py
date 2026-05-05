@@ -1,4 +1,4 @@
-"""Tests for ai/bet_odds.py — baseline odds computation."""
+"""Tests for ai/bet_odds.py — baseline odds computation and compute_race_odds."""
 
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ from keiba_ai.ai.bet_odds import (
     _FALLBACK_AMOUNTS,
     compute_baseline_odds,
     compute_baseline_odds_by_class,
+    compute_race_odds,
 )
 from keiba_ai.db.base import Base
+from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
 
@@ -146,3 +148,99 @@ def test_compute_baseline_odds_by_class_no_filter_matches_overall(seeded_session
     by_class = compute_baseline_odds_by_class(seeded_session, min_samples=0)
     for bt in overall:
         assert overall[bt] == pytest.approx(by_class[bt], rel=1e-4), f"Mismatch for {bt}"
+
+
+# ---------------------------------------------------------------------------
+# compute_race_odds tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def live_odds_session():
+    """In-memory session seeded with live_odds rows."""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Race(
+            race_id="R_LIVE",
+            date="2025-01-01",
+            course="東京",
+            surface="芝",
+            distance=2000,
+            n_runners=10,
+        ))
+        session.flush()
+
+        session.add(LiveOdds(
+            race_id="R_LIVE",
+            bet_type="馬連",
+            combo="3-7",
+            odds=25.4,
+            odds_max=None,
+            popularity=1,
+            fetched_at="2025-01-01T10:00:00+00:00",
+        ))
+        session.add(LiveOdds(
+            race_id="R_LIVE",
+            bet_type="馬連",
+            combo="3-9",
+            odds=18.2,
+            odds_max=None,
+            popularity=2,
+            fetched_at="2025-01-01T10:00:00+00:00",
+        ))
+        session.add(LiveOdds(
+            race_id="R_LIVE",
+            bet_type="単勝",
+            combo="3",
+            odds=5.0,
+            odds_max=None,
+            popularity=1,
+            fetched_at="2025-01-01T10:00:00+00:00",
+        ))
+        # odds=None (未確定) の行は compute_race_odds で除外される
+        session.add(LiveOdds(
+            race_id="R_LIVE",
+            bet_type="単勝",
+            combo="5",
+            odds=None,
+            odds_max=None,
+            popularity=None,
+            fetched_at="2025-01-01T10:00:00+00:00",
+        ))
+        session.commit()
+        yield session
+
+
+def test_compute_race_odds_returns_nested_dict(live_odds_session):
+    """compute_race_odds returns {bet_type: {combo: odds}} dict."""
+    result = compute_race_odds(live_odds_session, "R_LIVE")
+    assert isinstance(result, dict)
+    assert "馬連" in result
+    assert isinstance(result["馬連"], dict)
+
+
+def test_compute_race_odds_values(live_odds_session):
+    """Correct odds values are returned for each combo."""
+    result = compute_race_odds(live_odds_session, "R_LIVE")
+    assert result["馬連"]["3-7"] == pytest.approx(25.4)
+    assert result["馬連"]["3-9"] == pytest.approx(18.2)
+    assert result["単勝"]["3"] == pytest.approx(5.0)
+
+
+def test_compute_race_odds_excludes_none_odds(live_odds_session):
+    """Combos with odds=None are excluded from the result."""
+    result = compute_race_odds(live_odds_session, "R_LIVE")
+    # combo "5" has odds=None → should not appear
+    assert "5" not in result.get("単勝", {})
+
+
+def test_compute_race_odds_empty_for_unknown_race(live_odds_session):
+    """Returns empty dict when race_id has no live_odds."""
+    result = compute_race_odds(live_odds_session, "NONEXISTENT")
+    assert result == {}
+
+
+def test_compute_race_odds_empty_when_no_live_odds_table_populated(empty_session):
+    """Returns empty dict when live_odds table is empty."""
+    result = compute_race_odds(empty_session, "R001")
+    assert result == {}

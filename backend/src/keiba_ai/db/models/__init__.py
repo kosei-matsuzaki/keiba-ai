@@ -8,6 +8,7 @@ from keiba_ai.db.models.bet_record import BetRecord
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.jockey import Jockey
+from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
@@ -19,6 +20,7 @@ __all__ = [
     "Entry",
     "Horse",
     "Jockey",
+    "LiveOdds",
     "ModelRun",
     "Payout",
     "Race",
