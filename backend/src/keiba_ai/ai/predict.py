@@ -22,6 +22,7 @@ import pandas as pd
 from sqlalchemy.orm import Session  # noqa: F401 — kept for API compatibility
 
 from keiba_ai.ai.calibrate import (
+    IsotonicCalibrator,
     compute_all_combination_probs,
     plackett_luce_place_prob,
     softmax_within_race,
@@ -66,17 +67,34 @@ def _compute_place_prob(scores: np.ndarray) -> np.ndarray:
     return plackett_luce_place_prob(scores, k=3, n_samples=10_000)
 
 
-def predict_race(model: lgb.Booster, frame: pd.DataFrame) -> pd.DataFrame:
+def predict_race(
+    model: lgb.Booster,
+    frame: pd.DataFrame,
+    binary_model: lgb.Booster | None = None,
+    calibrator: IsotonicCalibrator | None = None,
+) -> pd.DataFrame:
     """Score all horses in a single race and return calibrated probabilities.
 
     Args:
-        model: Trained LightGBM Booster.
+        model: Trained LightGBM lambdarank Booster (順位用).
         frame: Feature DataFrame for one race (output of build_inference_frame
                or a training-frame slice). Must contain FEATURE_COLUMNS.
+        binary_model: Optional binary classifier (objective=binary) trained
+            in parallel. When provided together with `calibrator`, win_prob
+            is computed as `calibrator(binary_model.predict(X))` instead of
+            softmax(lambdarank scores). This produces well-calibrated
+            probabilities suitable for EV calculation.
+        calibrator: Optional IsotonicCalibrator fit on the validation set.
+            Used in tandem with `binary_model`.
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob.
         Sorted by score descending (top prediction first).
+
+    Notes:
+        - Lambdarank `score` is always returned (用途: 順位ソート, NDCG 評価).
+        - place_prob は引き続き Plackett-Luce で lambdarank scores から計算する。
+          binary head は単勝確率にしか使わない。
     """
     if frame.empty:
         return pd.DataFrame(columns=["horse_id", "score", "win_prob", "place_prob"])
@@ -84,7 +102,17 @@ def predict_race(model: lgb.Booster, frame: pd.DataFrame) -> pd.DataFrame:
     X = _prepare_features(frame, model=model)
     scores: np.ndarray = model.predict(X)
 
-    win_probs = softmax_within_race(scores)
+    if binary_model is not None and calibrator is not None:
+        # Calibrated win_prob path (Phase 2 onward)
+        # binary_model may have been trained with a different feature subset;
+        # use its own feature_name() instead of the lambdarank model's.
+        X_binary = _prepare_features(frame, model=binary_model)
+        raw_win = binary_model.predict(X_binary)
+        win_probs = calibrator.predict(raw_win, normalise=True)
+    else:
+        # Backward-compat: softmax(lambdarank scores)
+        win_probs = softmax_within_race(scores)
+
     place_probs = _compute_place_prob(scores)
 
     result = pd.DataFrame(
@@ -148,6 +176,8 @@ def predict_race_with_combinations(
     top_k_combinations: int | None = None,
     race_odds: dict[str, dict[str, float]] | None = None,
     race_odds_sources: dict[str, dict[str, str]] | None = None,
+    binary_model: lgb.Booster | None = None,
+    calibrator: IsotonicCalibrator | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race with EV calculations for all combination bet types.
 
@@ -182,7 +212,7 @@ def predict_race_with_combinations(
             for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
         }
 
-    base_df = predict_race(model, frame)
+    base_df = predict_race(model, frame, binary_model=binary_model, calibrator=calibrator)
 
     # Normalise race_odds — None means no confirmed odds data available
     confirmed: dict[str, dict[str, float]] = race_odds if race_odds is not None else {}

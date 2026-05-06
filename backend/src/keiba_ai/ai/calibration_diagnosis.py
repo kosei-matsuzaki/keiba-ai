@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from keiba_ai.ai.predict import predict_race
-from keiba_ai.ai.registry import load_model
+from keiba_ai.ai.registry import load_model_full
 from keiba_ai.core.logging import get_logger
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.session import make_engine, session_scope
@@ -99,6 +99,8 @@ def _expected_calibration_error(scored: pd.DataFrame, n_bins: int = 10) -> float
 def _score_all_races(
     model,
     frame: pd.DataFrame,
+    binary_model=None,
+    calibrator=None,
 ) -> pd.DataFrame:
     """Run predict_race per race and return combined long DataFrame.
 
@@ -109,7 +111,9 @@ def _score_all_races(
     for race_id, race_frame in frame.groupby("race_id"):
         if len(race_frame) < 2:
             continue
-        preds = predict_race(model, race_frame)
+        preds = predict_race(
+            model, race_frame, binary_model=binary_model, calibrator=calibrator
+        )
         # predict_race sorts by score desc -> add pred_rank
         preds = preds.reset_index(drop=True)
         preds["pred_rank"] = preds.index + 1
@@ -152,7 +156,12 @@ def diagnose_calibration(
     """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
-    model = load_model(model_path)
+    bundle = load_model_full(model_path)
+    model = bundle.lambdarank
+    if bundle.binary is not None and bundle.calibrator is not None:
+        log.info("Using binary classifier + isotonic calibrator for win_prob")
+    else:
+        log.info("Using softmax(lambdarank) for win_prob (legacy / uncalibrated model)")
 
     log.info(
         "Building evaluation frame from %s in window %s..%s",
@@ -174,7 +183,9 @@ def diagnose_calibration(
         }
 
     log.info("Scoring %d entries across %d races...", len(frame), frame["race_id"].nunique())
-    scored = _score_all_races(model, frame)
+    scored = _score_all_races(
+        model, frame, binary_model=bundle.binary, calibrator=bundle.calibrator
+    )
 
     if scored.empty:
         log.warning("Scored frame empty.")

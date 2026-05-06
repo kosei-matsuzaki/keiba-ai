@@ -37,7 +37,7 @@ from sqlalchemy import select
 
 from keiba_ai.ai.labels import assign_relevance
 from keiba_ai.ai.predict import predict_race
-from keiba_ai.ai.registry import load_model
+from keiba_ai.ai.registry import load_model_full
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models import ModelRun  # noqa: F401
 from keiba_ai.db.session import make_engine, session_scope
@@ -278,7 +278,8 @@ def evaluate(
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
-    model = load_model(model_path)
+    bundle = load_model_full(model_path)
+    model = bundle.lambdarank
 
     log.info("Building evaluation frame from %s", resolved_db)
     with session_scope(engine) as session:
@@ -313,7 +314,9 @@ def evaluate(
         if len(race_frame) < 2:
             continue
 
-        preds = predict_race(model, race_frame)
+        preds = predict_race(
+            model, race_frame, binary_model=bundle.binary, calibrator=bundle.calibrator
+        )
         # Merge actual finish positions + popularity (needed for betting filters)
         actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]
         if "popularity" in race_frame.columns:
