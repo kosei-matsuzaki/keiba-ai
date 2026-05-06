@@ -34,6 +34,40 @@ function PatternBadge({ pattern }: { pattern: string }) {
   );
 }
 
+// ── Odds source badge ─────────────────────────────────────────────────────────
+
+/**
+ * est_odds の出所を視覚的に区別するためのバッジ。
+ * - confirmed (確定): 緑系の控えめなアウトラインバッジ
+ * - implied  (推定): 黄系で「推」表記。tooltip に詳細
+ * - unknown  : なし（— が表示されている前提）
+ */
+function OddsSourceBadge({ source }: { source: 'confirmed' | 'implied' | 'unknown' }) {
+  if (source === 'confirmed') {
+    return (
+      <Badge
+        variant="outline"
+        className="ml-1 border-emerald-300 px-1 text-[10px] font-normal text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
+        title="確定オッズ（live_odds / payouts / entries.odds_win 由来）"
+      >
+        確定
+      </Badge>
+    );
+  }
+  if (source === 'implied') {
+    return (
+      <Badge
+        variant="outline"
+        className="ml-1 border-amber-300 px-1 text-[10px] font-normal text-amber-700 dark:border-amber-700 dark:text-amber-400"
+        title="単勝オッズから Plackett-Luce で推定したオッズ"
+      >
+        推定
+      </Badge>
+    );
+  }
+  return null;
+}
+
 // ── EV coloring ───────────────────────────────────────────────────────────────
 
 function evClass(ev: number | null): string {
@@ -181,7 +215,10 @@ export function RecommendationsCard({
                         {c.est_odds === null ? (
                           <span className="text-muted-foreground">—</span>
                         ) : (
-                          formatRatio(c.est_odds)
+                          <span className="inline-flex items-center justify-end">
+                            {formatRatio(c.est_odds)}
+                            <OddsSourceBadge source={c.est_odds_source ?? 'unknown'} />
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className={`text-right ${evClass(c.ev)}`}>
@@ -208,10 +245,14 @@ export function RecommendationsCard({
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
               {data.odds_source === 'live'
-                ? '※ 当日リアルオッズ'
+                ? '※ 当日リアルオッズ。'
                 : data.odds_source === 'past'
-                  ? '※ 確定オッズ（外れ combo は確定オッズなしのため空欄）'
-                  : '※ オッズ取得待ち or 該当データなし'}
+                  ? '※ 確定オッズ。'
+                  : '※ オッズ取得待ち or 該当データなし。'}
+              <span className="ml-1">
+                未取得の combo は単勝由来 Plackett-Luce 推定で補完
+                (バッジ「推定」、控除率込み)。
+              </span>
             </p>
           </>
         )}

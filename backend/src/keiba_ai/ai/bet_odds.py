@@ -498,3 +498,74 @@ def compute_past_race_odds_with_tansho_fill(
             confirmed[bet_type].setdefault(combo, odds)
 
     return confirmed
+
+
+def compute_race_odds_with_sources(
+    session: Session,
+    race_id: str,
+    n_samples: int = 10_000,
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, str]]]:
+    """確定オッズ + 単勝由来の推定オッズ統合版。レース時期を問わず使える。
+
+    優先順位:
+      1. live_odds テーブル（今日のレース・取得済み）         → "confirmed"
+      2. payouts / entries.odds_win / payout_place（過去）   → "confirmed"
+      3. 残りの combo は単勝由来 Plackett-Luce 推定で補完     → "implied"
+
+    両方の odds と source は同一構造の 2 段ネスト dict で返す:
+
+    Returns:
+        odds:    {bet_type: {combo: odds}}
+        sources: {bet_type: {combo: "confirmed" | "implied"}}
+
+    odds が空（単勝も取れない）→ ({}, {}) を返す。
+    """
+    # Step 1: live を試す
+    confirmed = compute_race_odds(session, race_id)
+
+    # Step 2: live が無ければ過去レースの payout 系
+    if not confirmed:
+        confirmed = compute_past_race_odds(session, race_id)
+
+    # confirmed 由来の combo に "confirmed" マーカーを付与
+    sources: dict[str, dict[str, str]] = {
+        bt: {c: "confirmed" for c in combos}
+        for bt, combos in confirmed.items()
+    }
+
+    # Step 3: 単勝オッズから連系券種の推定オッズを生成
+    tansho_odds = confirmed.get("単勝", {})
+    if not tansho_odds:
+        # confirmed に "単勝" が無い場合（live で連系のみ取得済み等）、
+        # entries.odds_win から直接拾う
+        entry_rows = session.execute(
+            select(Entry.post_position, Entry.odds_win)
+            .where(Entry.race_id == race_id)
+            .where(Entry.odds_win.is_not(None))
+            .where(Entry.post_position.is_not(None))
+        ).all()
+        tansho_odds = {
+            str(row.post_position): row.odds_win for row in entry_rows
+        }
+
+    if len(tansho_odds) < 2:
+        return confirmed, sources
+
+    try:
+        implied = compute_implied_combo_odds_from_tansho(
+            tansho_odds, n_samples=n_samples
+        )
+    except ValueError:
+        return confirmed, sources
+
+    # 未確定 combo のみ補完しつつ source も同時記録
+    for bet_type, combos in implied.items():
+        if bet_type not in confirmed:
+            confirmed[bet_type] = {}
+            sources[bet_type] = {}
+        for combo, odds in combos.items():
+            if combo not in confirmed[bet_type]:
+                confirmed[bet_type][combo] = odds
+                sources[bet_type][combo] = "implied"
+
+    return confirmed, sources

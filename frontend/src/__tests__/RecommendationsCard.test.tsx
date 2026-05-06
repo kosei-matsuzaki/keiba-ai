@@ -423,4 +423,66 @@ describe('RecommendationsCard', () => {
     const firstRowText = rows[0].textContent ?? '';
     expect(firstRowText).toContain('単勝');
   });
+
+  it('renders 確定 badge for confirmed est_odds_source', () => {
+    const data: RecommendationsResponse = {
+      race_id: '202406010101',
+      bankroll_at_decision: 100_000,
+      odds_source: 'live',
+      candidates: [
+        {
+          bet_type: '単勝',
+          combo: '1',
+          pattern: 'box',
+          prob: 0.4,
+          est_odds: 10.0,
+          est_odds_source: 'confirmed',
+          ev: 4.0,
+          stake: 500,
+          post_positions: [1],
+        },
+      ],
+    };
+    render(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={data}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+    expect(screen.getByText('確定')).toBeInTheDocument();
+  });
+
+  it('renders 推定 badge for implied est_odds_source', () => {
+    const data: RecommendationsResponse = {
+      race_id: '202406010101',
+      bankroll_at_decision: 100_000,
+      odds_source: 'past',
+      candidates: [
+        {
+          bet_type: '馬連',
+          combo: '2-3',
+          pattern: 'box',
+          prob: 0.05,
+          est_odds: 18.5,
+          est_odds_source: 'implied',
+          ev: 0.9,
+          stake: 0,
+          post_positions: [2, 3],
+        },
+      ],
+    };
+    render(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={data}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+    expect(screen.getByText('推定')).toBeInTheDocument();
+  });
 });

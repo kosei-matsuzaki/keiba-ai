@@ -238,13 +238,27 @@ export interface SettingsUpdate {
 
 // ── Recommendations ───────────────────────────────────────────────────────────
 
+/**
+ * est_odds の出所:
+ *   confirmed = live_odds / payouts / entries.odds_win 由来の確定値
+ *   implied   = 単勝オッズから Plackett-Luce で推定した値
+ *   unknown   = 推定不能（est_odds は null）
+ */
+export type EstOddsSource = 'confirmed' | 'implied' | 'unknown';
+
 export interface RecommendationCandidate {
   bet_type: string;
   combo: string;
   pattern: string;
   prob: number;
-  /** 確定オッズ。取得できなかった combo は null。 */
+  /** 推定込みのオッズ。確定オッズが取れなければ単勝由来の推定値。 */
   est_odds: number | null;
+  /**
+   * est_odds の出所。UI でバッジ表示する。
+   * 古い API レスポンスとの互換性のため optional だが、
+   * 新サーバは必ず "confirmed" / "implied" / "unknown" のいずれかを返す。
+   */
+  est_odds_source?: EstOddsSource;
   /** 期待値 = prob × est_odds。est_odds が null の場合は null。 */
   ev: number | null;
   stake: number;
