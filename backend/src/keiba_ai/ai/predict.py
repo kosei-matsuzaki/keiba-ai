@@ -33,9 +33,20 @@ from keiba_ai.features.builder import CATEGORICAL_FEATURES, FEATURE_COLUMNS
 _PLACE_PROB_METHOD = os.environ.get("KEIBA_PLACE_PROB_METHOD", "plackett_luce")
 
 
-def _prepare_features(frame: pd.DataFrame) -> pd.DataFrame:
-    """Extract and cast feature columns from frame."""
-    X = frame[FEATURE_COLUMNS].copy()
+def _prepare_features(
+    frame: pd.DataFrame, model: lgb.Booster | None = None
+) -> pd.DataFrame:
+    """Extract and cast feature columns from frame.
+
+    model が渡された場合、学習時の feature_name() を使って列を選ぶ
+    （odds 抜きモデルでも正しく動作する）。model=None のときは
+    後方互換のため FEATURE_COLUMNS を使う。
+    """
+    if model is not None:
+        cols = list(model.feature_name())
+    else:
+        cols = FEATURE_COLUMNS
+    X = frame[cols].copy()
     for col in CATEGORICAL_FEATURES:
         if col in X.columns:
             X[col] = X[col].astype("category")
@@ -70,7 +81,7 @@ def predict_race(model: lgb.Booster, frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=["horse_id", "score", "win_prob", "place_prob"])
 
-    X = _prepare_features(frame)
+    X = _prepare_features(frame, model=model)
     scores: np.ndarray = model.predict(X)
 
     win_probs = softmax_within_race(scores)
@@ -376,7 +387,8 @@ def predict_race_with_shap(
         base["top_features"] = pd.Series(dtype=object)
         return base
 
-    X = _prepare_features(frame)
+    X = _prepare_features(frame, model=model)
+    feature_names = list(model.feature_name())
 
     explainer = shap.TreeExplainer(model)
     raw_shap = explainer.shap_values(X)
@@ -400,7 +412,7 @@ def predict_race_with_shap(
         abs_vals = np.abs(shap_values[i])
         # argsort ascending, take last top_n in reverse
         sorted_idx = np.argsort(abs_vals)[::-1][:top_n]
-        top_features_list.append([FEATURE_COLUMNS[j] for j in sorted_idx])
+        top_features_list.append([feature_names[j] for j in sorted_idx])
 
     # Align top_features with sorted prediction order via horse_id
     horse_to_features = dict(zip(frame["horse_id"].values, top_features_list, strict=False))

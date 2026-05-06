@@ -44,8 +44,13 @@ def save_model(
     valid_range: str | None,
     metrics: dict,
     notes: str | None = None,
+    feature_columns: list[str] | None = None,
 ) -> Path:
-    """Persist model and metadata; return the model directory path."""
+    """Persist model and metadata; return the model directory path.
+
+    feature_columns: 学習で実際に使った特徴量列。None のときは LightGBM の
+    feature_name() を使う（lightgbm が学習時に設定済み）。
+    """
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     model_dir = _models_dir() / ts
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -53,13 +58,16 @@ def save_model(
     model_txt = model_dir / "model.txt"
     model.save_model(str(model_txt))
 
+    if feature_columns is None:
+        feature_columns = list(model.feature_name())
+
     meta = {
         "timestamp": ts,
         "params": params,
         "train_range": train_range,
         "valid_range": valid_range,
         "metrics": metrics,
-        "feature_columns": FEATURE_COLUMNS,
+        "feature_columns": feature_columns,
         "notes": notes,
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))

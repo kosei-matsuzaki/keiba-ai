@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,7 +28,11 @@ from keiba_ai.ai.splits import time_split
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models import ModelRun  # noqa: F401 — register table with Base
 from keiba_ai.db.session import make_engine, session_scope
-from keiba_ai.features.builder import CATEGORICAL_FEATURES, FEATURE_COLUMNS, build_training_frame
+from keiba_ai.features.builder import (
+    CATEGORICAL_FEATURES,
+    build_training_frame,
+    get_active_features,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -80,7 +85,10 @@ def _compute_ndcg(model: lgb.Booster, df: pd.DataFrame, at: int) -> float:
     if df.empty:
         return float("nan")
 
-    X = df[FEATURE_COLUMNS].copy()
+    # 学習時に使った特徴量を model から復元する（env flag 経由で odds 抜きに
+    # した場合でも model.feature_name() が正しい列名を返す）
+    feature_cols = list(model.feature_name())
+    X = df[feature_cols].copy()
     for col in CATEGORICAL_FEATURES:
         if col in X.columns:
             X[col] = X[col].astype("category")
@@ -148,7 +156,15 @@ def train(
         # rows into training (that would silently leak test → 1.0 NDCG).
         log.info("Valid set is empty — proceeding without early stopping.")
 
-    train_data = _make_lgb_dataset(train_df, FEATURE_COLUMNS, CATEGORICAL_FEATURES)
+    # 学習で使う特徴量列。KEIBA_EXCLUDE_ODDS_FEATURES=1 で 5 つの odds 派生を除外
+    feature_cols = get_active_features()
+    log.info(
+        "Training with %d features (KEIBA_EXCLUDE_ODDS_FEATURES=%s)",
+        len(feature_cols),
+        os.environ.get("KEIBA_EXCLUDE_ODDS_FEATURES", "0"),
+    )
+
+    train_data = _make_lgb_dataset(train_df, feature_cols, CATEGORICAL_FEATURES)
 
     callbacks = [lgb.log_evaluation(period=50)]
     valid_sets: list[lgb.Dataset] = [train_data]
@@ -156,7 +172,7 @@ def train(
 
     if not valid_df.empty:
         valid_data = _make_lgb_dataset(
-            valid_df, FEATURE_COLUMNS, CATEGORICAL_FEATURES, reference=train_data
+            valid_df, feature_cols, CATEGORICAL_FEATURES, reference=train_data
         )
         valid_sets.append(valid_data)
         valid_names.append("valid")
@@ -194,10 +210,20 @@ def train(
         f"{valid_df['date'].min()}/{valid_df['date'].max()}" if not valid_df.empty else None
     )
 
-    model_dir = save_model(model, params, train_range, valid_range, metrics)
+    model_dir = save_model(
+        model,
+        params,
+        train_range,
+        valid_range,
+        metrics,
+        feature_columns=feature_cols,
+    )
     log.info("Model saved to %s", model_dir)
 
-    # Record in model_runs
+    # Record in model_runs（odds 抜き判定をメモに残して A/B 比較しやすくする）
+    odds_excluded = "odds_excluded" if len(feature_cols) < 30 else "odds_included"
+    notes_str = f"M4 baseline lambdarank ({odds_excluded})"
+
     with session_scope(engine) as session:
         run = ModelRun(
             created_at=datetime.now(UTC).isoformat(),
@@ -206,7 +232,7 @@ def train(
             train_range=train_range,
             valid_range=valid_range,
             metrics_json=json.dumps(metrics),
-            notes="M4 baseline lambdarank",
+            notes=notes_str,
             is_active=0,
         )
         session.add(run)

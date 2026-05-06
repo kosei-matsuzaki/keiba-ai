@@ -108,6 +108,40 @@ CATEGORICAL_FEATURES: list[str] = [
     "sex",
 ]
 
+# 単勝オッズ由来の特徴量。市場予想を直接 model に流し込みたくない A/B 評価で
+# 除外可能にしておく。KEIBA_EXCLUDE_ODDS_FEATURES=1 のとき get_active_features
+# はこれらを取り除いた FEATURE_COLUMNS を返す。
+ODDS_FEATURE_COLUMNS: list[str] = [
+    "odds_win",
+    "popularity",
+    "log_odds_win",
+    "odds_win_rank",
+    "odds_win_diff_from_favorite",
+]
+
+
+def _exclude_odds_flag_set() -> bool:
+    """KEIBA_EXCLUDE_ODDS_FEATURES が truthy か。
+
+    "1" / "true" / "yes" を真として扱う（大小文字無視）。
+    """
+    raw = os.environ.get("KEIBA_EXCLUDE_ODDS_FEATURES", "").strip().lower()
+    return raw in {"1", "true", "yes"}
+
+
+def get_active_features() -> list[str]:
+    """学習・推論で実際に使う特徴量列を返す。
+
+    KEIBA_EXCLUDE_ODDS_FEATURES=1 のとき ODDS_FEATURE_COLUMNS を除外した
+    FEATURE_COLUMNS を返す。それ以外は FEATURE_COLUMNS のコピーをそのまま返す。
+
+    呼び出しごとに環境変数を読むため、テストや CLI 一回限りの上書きが効く。
+    """
+    if _exclude_odds_flag_set():
+        excluded = set(ODDS_FEATURE_COLUMNS)
+        return [c for c in FEATURE_COLUMNS if c not in excluded]
+    return list(FEATURE_COLUMNS)
+
 
 def _parse_date(date_str: str) -> date:
     return datetime.strptime(date_str, "%Y-%m-%d").date()
