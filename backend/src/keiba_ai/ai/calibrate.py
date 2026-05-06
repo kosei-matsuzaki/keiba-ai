@@ -4,9 +4,12 @@ softmax_within_race: standard approach used in M4.
 top_k_cumulative_prob: simple approximation for place probability.
 plackett_luce_*: Plackett-Luce Monte Carlo probability estimators.
 compute_all_combination_probs: compute all combination probabilities in one pass.
+compute_analytical_combo_probs: closed-form (no MC) combination probabilities.
 """
 
 from __future__ import annotations
+
+from itertools import combinations, permutations
 
 import numpy as np
 
@@ -361,3 +364,100 @@ def compute_all_combination_probs(
         result["ordered_triple"] = ordered_triple
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Analytical (closed-form) Plackett-Luce combination probabilities
+# ---------------------------------------------------------------------------
+#
+# 同じ k=3 PL モデルだが Monte Carlo の代わりに閉じた解析式で正確に計算する。
+# MC のサンプル数有限による量子化（10K samples だと最低確率粒度 = 1e-4 で
+# 三連単などの低確率 combo が 1/10000, 2/10000... の離散値しか取れない）を
+# 完全に解消する。
+#
+# PL の漸進公式:
+#   P(i 1着)              = p_i
+#   P(j 2着 | i 1着)      = p_j / (1 - p_i)              (j ≠ i)
+#   P(k 3着 | i, j 1-2着) = p_k / (1 - p_i - p_j)        (k ≠ i, j)
+
+
+def compute_analytical_combo_probs(scores: np.ndarray) -> dict:
+    """compute_all_combination_probs の解析式版。MC ノイズなし、k=3 固定。
+
+    入力 scores の softmax を勝率 p に正規化し、PL の漸進式から各券種確率を
+    閉じた形で算出する。
+
+    Args:
+        scores: PL utility score の配列 (shape (n,))
+
+    Returns:
+        compute_all_combination_probs(..., k=3) と同じ 5 キーの dict:
+          place         shape (n,)        — P(top-3)
+          pair          shape (n, n)      — P(unordered top-2 = {i,j})
+          ordered_pair  shape (n, n)      — P(i 1着, j 2着)
+          triple        dict[frozenset, float] — P(unordered top-3 = {i,j,k})
+          ordered_triple shape (n, n, n)  — P(i 1着, j 2着, k 3着)
+
+    Notes:
+        - 計算量 O(n³)。n=18 で 5832 ops、MC (10K samples) より速い。
+        - prob ≤ 0 / 確率質量逸脱の case では該当 entry を 0 にして安全に扱う。
+    """
+    # Softmax to get win probabilities; defensive renormalize.
+    shifted = scores - scores.max()
+    p = np.exp(shifted)
+    p = p / p.sum()
+    n = len(p)
+
+    # ── ordered_pair: P(i 1着, j 2着) = p_i * p_j / (1 - p_i) ───────────────
+    one_minus_p = 1.0 - p
+    # avoid division by zero (only when p_i == 1, which shouldn't occur for n>=2)
+    safe_denom = np.where(one_minus_p > 1e-15, one_minus_p, np.inf)
+    ordered_pair = (p[:, None] * p[None, :]) / safe_denom[:, None]
+    np.fill_diagonal(ordered_pair, 0.0)
+
+    # ── pair (unordered top-2): symmetric sum of ordered_pair ──────────────
+    pair = ordered_pair + ordered_pair.T
+
+    # ── ordered_triple: P(i 1着, j 2着, k 3着) ─────────────────────────────
+    #   = ordered_pair[i, j] * p_k / (1 - p_i - p_j)
+    # Build the 3D tensor with explicit loops (n is small, ~18 max).
+    ordered_triple = np.zeros((n, n, n), dtype=np.float64)
+    for i in range(n):
+        if one_minus_p[i] <= 1e-15:
+            continue
+        base_i = p[i] / one_minus_p[i]
+        for j in range(n):
+            if j == i:
+                continue
+            denom_ij = 1.0 - p[i] - p[j]
+            if denom_ij <= 1e-15:
+                continue
+            base_ij = base_i * p[j] / denom_ij
+            for k in range(n):
+                if k == i or k == j:
+                    continue
+                ordered_triple[i, j, k] = base_ij * p[k]
+
+    # ── triple (unordered top-3): sum over 6 permutations of (i, j, k) ─────
+    triple_dict: dict[frozenset, float] = {}
+    for i, j, k in combinations(range(n), 3):
+        total = 0.0
+        for a, b, c in permutations((i, j, k)):
+            total += ordered_triple[a, b, c]
+        if total > 0.0:
+            triple_dict[frozenset({i, j, k})] = total
+
+    # ── place: P(i top-3) = P(i 1着) + P(i 2着) + P(i 3着) ─────────────────
+    # P(i 2着) = Σ_a ordered_pair[a, i]   (column sum)
+    # P(i 3着) = Σ_{a, b} ordered_triple[a, b, i]
+    p_2nd = ordered_pair.sum(axis=0)
+    p_3rd = ordered_triple.sum(axis=(0, 1))
+    place = p + p_2nd + p_3rd
+
+    return {
+        "place": place,
+        "pair": pair,
+        "ordered_pair": ordered_pair,
+        "triple": triple_dict,
+        "ordered_triple": ordered_triple,
+    }

@@ -18,7 +18,10 @@ import numpy as np
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.calibrate import compute_all_combination_probs
+from keiba_ai.ai.calibrate import (
+    compute_all_combination_probs,
+    compute_analytical_combo_probs,
+)
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.payout import Payout
@@ -329,6 +332,7 @@ def compute_implied_combo_odds_from_tansho(
     odds_win_by_post: dict[str, float],
     n_samples: int = 10_000,
     rng: np.random.Generator | None = None,
+    use_analytical: bool = True,
 ) -> dict[str, dict[str, float]]:
     """単勝オッズから連系券種のオッズを Plackett-Luce で推定する。
 
@@ -336,7 +340,7 @@ def compute_implied_combo_odds_from_tansho(
     「市場ベース推定オッズ」を返す。控除率込みの実オッズ近似値:
 
       fair_odds  = 1 / P(combo)
-      est_odds   = fair_odds × (1 - takeout)
+      est_odds   = max(1.0, fair_odds × (1 - takeout))   # JRA 最低払戻 100 円
 
     Returns:
         {bet_type: {combo_str: odds, ...}, ...} の 2 段ネスト dict。
@@ -349,8 +353,12 @@ def compute_implied_combo_odds_from_tansho(
 
     Args:
         odds_win_by_post: 全馬の単勝オッズ。
-        n_samples: PL モンテカルロのサンプル数。
-        rng: テスト用に numpy Generator を注入可能。
+        n_samples: MC サンプル数 (use_analytical=False のときのみ意味を持つ)。
+        rng: numpy Generator (use_analytical=False のときのみ)。
+        use_analytical: True (デフォルト) で閉じた解析式を使用。MC サンプル
+            数有限による量子化（10K samples だと低確率 combo が 1/10000,
+            2/10000... の離散値しか取れない）を完全に回避する。
+            False で従来の MC 経路。
 
     Raises:
         ValueError: 有効なエントリが 2 件未満のとき（連系券種が組めない）。
@@ -360,12 +368,19 @@ def compute_implied_combo_odds_from_tansho(
     if n < 2:
         raise ValueError("連系オッズ推定には 2 頭以上の単勝オッズが必要です")
 
-    probs = compute_all_combination_probs(scores, k=3, n_samples=n_samples, rng=rng)
+    if use_analytical:
+        probs = compute_analytical_combo_probs(scores)
+    else:
+        probs = compute_all_combination_probs(
+            scores, k=3, n_samples=n_samples, rng=rng
+        )
 
     def _to_odds(prob: float, takeout: float) -> float | None:
+        """fair odds × (1-takeout) を返し、JRA 最低払戻 1.0 倍で floor する。"""
         if prob <= 0:
             return None
-        return (1.0 / prob) * (1.0 - takeout)
+        est = (1.0 / prob) * (1.0 - takeout)
+        return max(1.0, est)
 
     result: dict[str, dict[str, float]] = {}
 
