@@ -334,13 +334,34 @@ def build_training_frame(
             columns=["race_id", "horse_id", "date", "finish_position"] + FEATURE_COLUMNS
         )
 
+    n_total = len(races)
+    log.info(
+        "Building features for %d races (cache miss; this is N+1 SQL heavy)",
+        n_total,
+    )
+
     rows: list[dict[str, object]] = []
-    for race in races:
+    # 100 race ごとに進捗ログを出すのでユーザが進行状況を把握できる
+    progress_step = max(50, n_total // 50)
+    import time as _time
+
+    t0 = _time.perf_counter()
+    for i, race in enumerate(races):
         entry_stmt = select(Entry).where(Entry.race_id == race.race_id)
         entries = list(session.scalars(entry_stmt).all())
         if not entries:
             continue
         rows.extend(_build_race_rows(session, race, entries))
+        if (i + 1) % progress_step == 0 or (i + 1) == n_total:
+            elapsed = _time.perf_counter() - t0
+            eta_sec = elapsed / (i + 1) * (n_total - i - 1)
+            log.info(
+                "  feature progress: %d/%d races (%.0fs elapsed, ETA %.0fs)",
+                i + 1,
+                n_total,
+                elapsed,
+                eta_sec,
+            )
 
     df = pd.DataFrame(rows)
     # Ensure all feature columns exist (fill with NaN if missing)

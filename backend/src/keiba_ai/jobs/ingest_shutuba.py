@@ -235,6 +235,7 @@ async def _ingest_race_ids(
     """race_id リストを元に shutuba ingest を実行する。
 
     --race-ids と --date 両方の ingest フローから呼ばれる共通ロジック。
+    date_str は HTML から日付が取得できない場合の fallback のみに使う。
     """
     counters = {"fetched": 0, "skipped": 0, "errors": 0}
 
@@ -253,10 +254,21 @@ async def _ingest_race_ids(
         try:
             html = await client.fetch(shutuba_url, cache_max_age_hours=1)
             parsed = parse_shutuba(html, race_id)
-            # --date が指定されていれば HTML から抽出した date を上書きする。
-            # --date がない場合は HTML から抽出した date をそのまま使う。
-            if date_str is not None:
-                parsed.date = date_str
+            # HTML から抽出した date を最優先する。
+            # HTML に date が無い場合のみ date_str を fallback として使う。
+            # どちらも無い場合はこのレースをスキップしてエラー扱いにする
+            # （空文字の date row が無限に溜まるのを防ぐ）。
+            if not parsed.date:
+                if date_str:
+                    parsed.date = date_str  # HTML 解析失敗時の fallback
+                else:
+                    logger.warning(
+                        "Shutuba HTML lacks date for race %s; skipping", race_id
+                    )
+                    _record_scrape_log(session, shutuba_url, "error")
+                    session.commit()
+                    counters["errors"] += 1
+                    continue
 
             _upsert_race_from_shutuba(session, parsed)
             _upsert_masters_from_shutuba(session, parsed)
@@ -286,7 +298,7 @@ async def _ingest_race_ids(
 
 
 async def run_ingest_shutuba(
-    date_str: str,
+    date_str: str | None,
     client: NetkeibaClient,
     session: Session,
     limit: int | None = None,
@@ -295,7 +307,9 @@ async def run_ingest_shutuba(
     """Core shutuba ingest logic; returns summary counters.
 
     Args:
-        date_str: Race date (YYYY-MM-DD). Used as DB date value and for calendar fetch.
+        date_str: Race date (YYYY-MM-DD) used as fallback when the HTML lacks a date.
+            None は許容される — HTML から日付が取れる場合は使われない。
+            calendar fetch には必須（race_ids 未指定時）。
         client: NetkeibaClient instance.
         session: SQLAlchemy Session.
         limit: Max number of races to fetch (debug use).
@@ -309,7 +323,9 @@ async def run_ingest_shutuba(
         )
         return await _ingest_race_ids(race_ids, date_str, client, session, limit=limit)
 
-    # calendar 経由で race_id 一覧を取得
+    # calendar 経由で race_id 一覧を取得（date_str が必須）
+    if not date_str:
+        raise ValueError("date_str is required for calendar-based shutuba ingest")
     card_calendar_url = _CARD_CALENDAR_URL.format(date=date_str.replace("-", ""))
     logger.info("Fetching race-card calendar: %s", card_calendar_url)
     # 当日オッズは変動するため、shutuba ページは短いキャッシュ TTL (1 時間) を使う

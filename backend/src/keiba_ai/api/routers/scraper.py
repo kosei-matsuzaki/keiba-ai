@@ -203,11 +203,11 @@ async def run_shutuba_scraper(
 
     Returns 202 Accepted immediately; the actual scraping runs as a background job.
     """
-    import datetime as _dt
-
-    # race_ids 優先。date は DB 保存用として使い、None なら今日の日付をデフォルトとする。
+    # race_ids 優先。
+    # race_ids 指定時は date を None のまま渡す — HTML から日付を抽出させる。
+    # date が明示指定された場合のみ date_str に渡す（calendar fetch / CLI 互換）。
     race_ids = body.race_ids or None
-    date_str: str = body.date or _dt.date.today().isoformat()
+    date_str: str | None = body.date  # None は許容される（HTML date を優先させるため）
     limit = body.limit
 
     async def _coro() -> None:

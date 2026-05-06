@@ -20,6 +20,7 @@ import type {
   BetRecordOut,
   BetSummary,
   BetTimeseries,
+  BulkPredictionsResponse,
   DiscoverThisWeekendRaceIdsResponse,
   DiscoverTodayRaceIdsResponse,
   FetchLiveOddsRequest,
@@ -85,6 +86,20 @@ export function fetchRaceDetail(raceId: string): Promise<RaceDetail> {
 
 export function fetchPredictions(raceId: string): Promise<PredictionResponse> {
   return getClient().then((c) => c.get(`predictions/${raceId}`).json<PredictionResponse>());
+}
+
+export function fetchBulkPredictions(
+  race_ids: string[],
+  top_n = 3,
+): Promise<BulkPredictionsResponse> {
+  if (race_ids.length === 0) {
+    return Promise.resolve({ predictions: {} });
+  }
+  return getClient().then((c) =>
+    c
+      .get('predictions/bulk', { searchParams: { race_ids: race_ids.join(','), top_n } })
+      .json<BulkPredictionsResponse>()
+  );
 }
 
 export function fetchMetricsSummary(range = '30d'): Promise<MetricsSummary> {

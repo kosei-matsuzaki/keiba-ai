@@ -82,6 +82,20 @@ export interface PredictionResponse {
   combinations: CombinationPredictions | null;
 }
 
+export interface TopHorse {
+  post_position: number | null;
+  horse_name: string | null;
+  win_prob: number;
+}
+
+export interface RacePredictionSummary {
+  top_horses: TopHorse[];
+}
+
+export interface BulkPredictionsResponse {
+  predictions: Record<string, RacePredictionSummary>;
+}
+
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
 export interface MetricsSummary {

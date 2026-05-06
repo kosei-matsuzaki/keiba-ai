@@ -190,3 +190,66 @@ def test_predictions_include_combinations_false(
     assert resp.status_code == 200
     data = resp.json()
     assert data["combinations"] is None
+
+
+# ── /predictions/bulk tests ───────────────────────────────────────────────────
+
+def test_bulk_predictions_no_active_model(api_client: TestClient) -> None:
+    """active モデルが無い場合は空の predictions map を返すこと（503 でなく 200）。"""
+    resp = api_client.get("/api/predictions/bulk?race_ids=202406010101,202406010102")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "predictions" in data
+    # 全 race が空の top_horses で返ること
+    for race_id in ("202406010101", "202406010102"):
+        assert race_id in data["predictions"]
+        assert data["predictions"][race_id]["top_horses"] == []
+
+
+def test_bulk_predictions_empty_race_ids(api_client: TestClient) -> None:
+    """race_ids 省略 / 空文字の場合は空の predictions map を返すこと。"""
+    resp = api_client.get("/api/predictions/bulk")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["predictions"] == {}
+
+
+def test_bulk_predictions_success(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """正常系: active モデルあり + entries あり → top_horses が返ること。"""
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    RACE_ID = "BULK_RACE1"
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, RACE_ID, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_bulk1"))
+
+    fake_df = pd.DataFrame({
+        "horse_id": [f"HP_{RACE_ID}_{i}" for i in range(4)],
+        "score": [2.0, 1.5, 1.0, 0.5],
+        "win_prob": [0.4, 0.3, 0.2, 0.1],
+        "place_prob": [0.7, 0.6, 0.5, 0.3],
+        "post_position": [1, 2, 3, 4],
+    })
+
+    with (
+        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.predictions.predict_race", return_value=fake_df.head(3)),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/predictions/bulk?race_ids={RACE_ID}&top_n=3")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert RACE_ID in data["predictions"]
+    top_horses = data["predictions"][RACE_ID]["top_horses"]
+    assert len(top_horses) == 3
+    for h in top_horses:
+        assert "win_prob" in h
+        assert "horse_name" in h
+        assert "post_position" in h
