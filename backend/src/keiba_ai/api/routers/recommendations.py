@@ -9,10 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.bet_odds import (
-    compute_past_race_odds_with_tansho_fill,
-    compute_race_odds,
-)
+from keiba_ai.ai.bet_odds import compute_race_odds_with_sources
 from keiba_ai.ai.bet_strategy import recommend_for_race
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations
 from keiba_ai.ai.registry import get_active, load_model
@@ -32,6 +29,7 @@ class RecommendationCandidate(BaseModel):
     pattern: str
     prob: float
     est_odds: float | None
+    est_odds_source: Literal["confirmed", "implied", "unknown"] = "unknown"
     ev: float | None
     stake: int
     post_positions: list[int]
@@ -47,22 +45,32 @@ class RecommendationsResponse(BaseModel):
 def _resolve_odds_source(
     session: Session,
     race_id: str,
-) -> tuple[dict[str, dict[str, float]] | None, Literal["live", "past", "unknown"]]:
-    """Determine odds to use and the resulting odds_source label.
+) -> tuple[
+    dict[str, dict[str, float]] | None,
+    dict[str, dict[str, str]] | None,
+    Literal["live", "past", "unknown"],
+]:
+    """Determine odds + per-combo source labels.
 
-    Priority: live > past (past races only) > unknown.
+    Priority: live > past > unknown for the high-level odds_source label.
+    Per-combo source label is "confirmed" / "implied" (set by
+    compute_race_odds_with_sources). Missing combos remain absent from the dict.
 
     Returns:
-        (race_odds, odds_source) where race_odds is None when unknown.
+        (race_odds, sources, odds_source_label).
+        race_odds / sources are None when no data is available at all.
     """
-    # 1. Try live_odds table first
-    live_odds = compute_race_odds(session, race_id)
-    if live_odds:
-        return live_odds, "live"
+    odds, sources = compute_race_odds_with_sources(session, race_id)
+    if not odds:
+        return None, None, "unknown"
 
-    # 2. For past races only: try confirmed payouts / entries odds
-    # Determine if race date is before today to avoid calling compute_past_race_odds
-    # on today's races (which have no results yet).
+    # high-level label: live data exists ⇄ live; otherwise past
+    has_live = any(
+        src == "confirmed"
+        for combos in sources.values()
+        for src in combos.values()
+    )
+    # ざっくり live と past を区別: 過去レース判定は date < today で行う
     from keiba_ai.db.models.race import Race as RaceModel
     from sqlalchemy import select as sa_select
 
@@ -71,14 +79,18 @@ def _resolve_odds_source(
     ).first()
 
     today_str = datetime.date.today().isoformat()
-    if race_row is not None and race_row.date < today_str:
-        # 確定オッズを優先しつつ、未確定 combo は単勝由来の Plackett-Luce 推定で埋める。
-        # 全体平均 (compute_baseline_odds) より精度の高いレース固有推定が得られる。
-        past_odds = compute_past_race_odds_with_tansho_fill(session, race_id)
-        if past_odds:
-            return past_odds, "past"
+    is_past = race_row is not None and race_row.date < today_str
 
-    return None, "unknown"
+    label: Literal["live", "past", "unknown"]
+    if is_past:
+        label = "past"
+    elif has_live:
+        label = "live"
+    else:
+        # 当日レースだが live odds 取得前 → tansho-implied だけが入っている
+        label = "live"  # UI 上は "live" 扱いでよい (tansho 由来も market データ)
+
+    return odds, sources, label
 
 
 @router.get("/recommendations/{race_id}", response_model=RecommendationsResponse)
@@ -125,8 +137,8 @@ def get_recommendations(
     pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
-    # Step 4: resolve confirmed odds (live > past > unknown)
-    race_odds, odds_source = _resolve_odds_source(session, race_id)
+    # Step 4: resolve confirmed + implied odds + per-combo source
+    race_odds, race_odds_sources, odds_source = _resolve_odds_source(session, race_id)
     if odds_source == "unknown":
         logger.warning(
             "No confirmed odds available for race %s — est_odds will be null", race_id
@@ -139,6 +151,7 @@ def get_recommendations(
         session=session,
         top_k_combinations=top_k,
         race_odds=race_odds,
+        race_odds_sources=race_odds_sources,
     )
 
     # Step 6: load settings and run recommendation logic
@@ -166,6 +179,7 @@ def get_recommendations(
             pattern=c.pattern,
             prob=c.prob,
             est_odds=c.est_odds,
+            est_odds_source=c.est_odds_source,
             ev=c.ev,
             stake=c.stake,
             post_positions=list(c.post_positions),

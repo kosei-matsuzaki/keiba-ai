@@ -207,16 +207,32 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
   return (
     <Table>
       <TableHeader>
+        {/* 実績 vs AI 予想 を視覚的に分離するためのグループ行 */}
+        <TableRow>
+          <TableHead
+            colSpan={6}
+            className="border-r border-border/50 bg-muted/40 text-center text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400"
+          >
+            実績データ
+          </TableHead>
+          <TableHead
+            colSpan={3}
+            className="border-r border-border/50 bg-muted/40 text-center text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400"
+          >
+            AI 予想
+          </TableHead>
+          <TableHead colSpan={2} className="bg-muted/40" />
+        </TableRow>
         <TableRow>
           <SortableHeader label="馬番" sortKey="post_position" className="w-12" {...headerProps} />
           <SortableHeader label="馬名" sortKey="horse_name" {...headerProps} />
           <TableHead className="text-center">年齢/性別</TableHead>
           <SortableHeader label="単勝オッズ" sortKey="odds_win" className="text-right" {...headerProps} />
           <SortableHeader label="人気" sortKey="popularity" className="text-right" {...headerProps} />
-          <SortableHeader label="着順" sortKey="finish_position" className="text-center" {...headerProps} />
+          <SortableHeader label="着順" sortKey="finish_position" className="border-r border-border/50 text-center" {...headerProps} />
           <SortableHeader label="スコア" sortKey="score" className="text-right" {...headerProps} />
           <SortableHeader label="単勝確率" sortKey="win_prob" className="text-right" {...headerProps} />
-          <SortableHeader label="複勝確率" sortKey="place_prob" className="text-right" {...headerProps} />
+          <SortableHeader label="複勝確率" sortKey="place_prob" className="border-r border-border/50 text-right" {...headerProps} />
           <TableHead className="text-center">推奨</TableHead>
           <TableHead>SHAP</TableHead>
         </TableRow>
@@ -235,7 +251,7 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             </TableCell>
             <TableCell className="text-right">{formatOdds(entry.odds_win)}</TableCell>
             <TableCell className="text-right">{entry.popularity ?? '—'}</TableCell>
-            <TableCell className="text-center">
+            <TableCell className="border-r border-border/50 text-center">
               {entry.finish_position != null ? (
                 <Badge variant={entry.finish_position <= 3 ? 'default' : 'secondary'}>
                   {entry.finish_position}着
@@ -251,7 +267,7 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             <TableCell className="text-right">
               {pred != null ? formatPercent(pred.win_prob) : '—'}
             </TableCell>
-            <TableCell className="text-right">
+            <TableCell className="border-r border-border/50 text-right">
               {pred != null ? formatPercent(pred.place_prob) : '—'}
             </TableCell>
             <TableCell className="text-center">

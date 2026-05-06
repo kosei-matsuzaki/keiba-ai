@@ -147,6 +147,7 @@ def predict_race_with_combinations(
     rng: np.random.Generator | None = None,
     top_k_combinations: int | None = None,
     race_odds: dict[str, dict[str, float]] | None = None,
+    race_odds_sources: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race with EV calculations for all combination bet types.
 
@@ -185,6 +186,9 @@ def predict_race_with_combinations(
 
     # Normalise race_odds — None means no confirmed odds data available
     confirmed: dict[str, dict[str, float]] = race_odds if race_odds is not None else {}
+    sources_map: dict[str, dict[str, str]] = (
+        race_odds_sources if race_odds_sources is not None else {}
+    )
 
     # Compute all PL combination probs in one MC pass (k=3 for triple support).
     # predict_race sorts by score, so we re-align probabilities back to frame order via horse_id.
@@ -212,6 +216,18 @@ def predict_race_with_combinations(
         """
         return confirmed.get(bet_type, {}).get(combo)
 
+    def _est_source(bet_type: str, combo: str, has_odds: bool) -> str:
+        """est_odds_source の決定ロジック。
+
+        - source dict に明示的な値があればそれを使う ("confirmed" / "implied")
+        - 値が無く est_odds が取れた場合 → 後方互換で "confirmed"
+        - est_odds 取得不能 → "unknown"
+        """
+        explicit = sources_map.get(bet_type, {}).get(combo)
+        if explicit is not None:
+            return explicit
+        return "confirmed" if has_odds else "unknown"
+
     def _sort_key(cp: CombinationPrediction) -> tuple[int, float]:
         """ev が None の行は末尾固定（ev=−∞ 扱い）。"""
         if cp.ev is None:
@@ -230,6 +246,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("単勝", combo, est is not None),
             ev=ev,
             post_positions=(pp,),
         ))
@@ -248,6 +265,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("複勝", combo, est is not None),
             ev=ev,
             post_positions=(pp,),
         ))
@@ -269,6 +287,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("馬連", combo, est is not None),
             ev=ev,
             post_positions=(pp_lo, pp_hi),
         ))
@@ -289,6 +308,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("ワイド", combo, est is not None),
             ev=ev,
             post_positions=(pp_lo, pp_hi),
         ))
@@ -309,6 +329,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("馬単", combo, est is not None),
             ev=ev,
             post_positions=(pp_i, pp_j),
         ))
@@ -332,6 +353,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("三連複", combo, est is not None),
             ev=ev,
             post_positions=pps,
         ))
@@ -352,6 +374,7 @@ def predict_race_with_combinations(
             combo=combo,
             prob=prob,
             est_odds=est,
+            est_odds_source=_est_source("三連単", combo, est is not None),
             ev=ev,
             post_positions=(pp_i, pp_j, pp_k),
         ))

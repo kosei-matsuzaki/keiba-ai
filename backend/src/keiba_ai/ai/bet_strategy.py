@@ -53,6 +53,7 @@ def _make_candidate(
         pattern=pattern,  # type: ignore[arg-type]
         prob=cp.prob,
         est_odds=cp.est_odds,
+        est_odds_source=cp.est_odds_source,
         ev=cp.ev,
         stake=0,
         post_positions=cp.post_positions,
