@@ -424,6 +424,23 @@ def _parse_entry_row(
     return entry
 
 
+def extract_race_date_from_shutuba_html(html: str) -> str | None:
+    """Shutuba HTML から開催日 (YYYY-MM-DD) のみを抽出。
+
+    <title> タグの "YYYY年MM月DD日" パターンを使う。
+    タイトルに日付が含まれない合成フィクスチャや予期しない形式の場合は None を返す。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    title_el = soup.find("title")
+    if not title_el:
+        return None
+    m = _DATE_RE.search(title_el.get_text(strip=True))
+    if not m:
+        return None
+    y, mo, d = m.groups()
+    return f"{y}-{int(mo):02d}-{int(d):02d}"
+
+
 def parse_shutuba(html: str, race_id: str) -> ParsedShutuba:
     """Parse a shutuba page into ParsedShutuba.
 
