@@ -15,8 +15,10 @@ from keiba_ai.db.base import Base
 from keiba_ai.db.session import session_scope
 from keiba_ai.features.builder import (
     FEATURE_COLUMNS,
+    ODDS_FEATURE_COLUMNS,
     build_inference_frame,
     build_training_frame,
+    get_active_features,
 )
 from tests.synthetic import make_synthetic_db
 
@@ -284,3 +286,49 @@ def test_build_training_frame_cache_invalidates_on_db_mtime_change(
     pkls = list(cache_dir.glob("*.pkl"))
     assert len(pkls) == 2, f"expected 2 cache files (one per mtime), got {len(pkls)}"
     assert len(df1) == len(df2)
+
+
+# ---------------------------------------------------------------------------
+# get_active_features (env flag for A/B eval)
+# ---------------------------------------------------------------------------
+
+
+def test_get_active_features_default_returns_all(monkeypatch):
+    """env flag 未設定時は FEATURE_COLUMNS 全体のコピーを返す。"""
+    monkeypatch.delenv("KEIBA_EXCLUDE_ODDS_FEATURES", raising=False)
+    active = get_active_features()
+    assert active == FEATURE_COLUMNS
+    # コピーであることを確認（破壊的編集が原本に伝播しない）
+    active.append("__test_marker__")
+    assert "__test_marker__" not in FEATURE_COLUMNS
+
+
+def test_get_active_features_excludes_odds_when_flag_set(monkeypatch):
+    """KEIBA_EXCLUDE_ODDS_FEATURES=1 のとき odds 派生が除かれる。"""
+    monkeypatch.setenv("KEIBA_EXCLUDE_ODDS_FEATURES", "1")
+    active = get_active_features()
+
+    for odds_col in ODDS_FEATURE_COLUMNS:
+        assert odds_col not in active, f"{odds_col} should be excluded"
+
+    # 非 odds 列は全部残る
+    expected_remaining = [c for c in FEATURE_COLUMNS if c not in ODDS_FEATURE_COLUMNS]
+    assert active == expected_remaining
+
+
+@pytest.mark.parametrize("flag_value", ["true", "True", "yes", "YES"])
+def test_get_active_features_accepts_truthy_values(monkeypatch, flag_value):
+    """truthy 表記 (true / yes / 1) を許容する。"""
+    monkeypatch.setenv("KEIBA_EXCLUDE_ODDS_FEATURES", flag_value)
+    active = get_active_features()
+    for odds_col in ODDS_FEATURE_COLUMNS:
+        assert odds_col not in active
+
+
+@pytest.mark.parametrize("flag_value", ["0", "false", "no", ""])
+def test_get_active_features_falsy_values_keep_odds(monkeypatch, flag_value):
+    """falsy 表記 (0 / false / 空) では odds 列を保持する。"""
+    monkeypatch.setenv("KEIBA_EXCLUDE_ODDS_FEATURES", flag_value)
+    active = get_active_features()
+    for odds_col in ODDS_FEATURE_COLUMNS:
+        assert odds_col in active
