@@ -2,20 +2,34 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { UpcomingRaces } from '../routes/UpcomingRaces';
-import type { JobAccepted, JobInfo, UpcomingRacesResponse } from '../types/api';
+import type {
+  BulkPredictionsResponse,
+  JobAccepted,
+  JobInfo,
+  UpcomingRacesResponse,
+} from '../types/api';
 
 // Mock the api module so tests never hit the network
 vi.mock('../lib/api', () => ({
   fetchUpcomingRaces: vi.fn(),
+  fetchBulkPredictions: vi.fn(),
   discoverTodayRaceIds: vi.fn(),
   runShutubaScraper: vi.fn(),
   fetchJob: vi.fn(),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
 }));
 
-import { fetchUpcomingRaces, discoverTodayRaceIds, runShutubaScraper, fetchJob } from '../lib/api';
+import {
+  fetchUpcomingRaces,
+  fetchBulkPredictions,
+  discoverTodayRaceIds,
+  runShutubaScraper,
+  fetchJob,
+} from '../lib/api';
+
+// ── mock data ─────────────────────────────────────────────────────────────────
 
 const mockRaces: UpcomingRacesResponse = {
   races: [
@@ -39,7 +53,31 @@ const mockRaces: UpcomingRacesResponse = {
       race_class: null,
       n_runners: 12,
     },
+    {
+      race_id: '202406020101',
+      name: '皐月賞',
+      date: '2024-06-02',
+      course: '東京',
+      surface: '芝',
+      distance: 2000,
+      race_class: 'G1',
+      n_runners: 16,
+    },
   ],
+};
+
+const mockBulkPredictions: BulkPredictionsResponse = {
+  predictions: {
+    '202406010101': {
+      top_horses: [
+        { post_position: 1, horse_name: 'メイショウ', win_prob: 0.4 },
+        { post_position: 2, horse_name: 'キタサン', win_prob: 0.3 },
+        { post_position: 3, horse_name: 'ドゥラ', win_prob: 0.2 },
+      ],
+    },
+    '202406010102': { top_horses: [] },
+    '202406020101': { top_horses: [] },
+  },
 };
 
 const mockJobAccepted: JobAccepted = {
@@ -57,21 +95,32 @@ const mockJobCompleted: JobInfo = {
   error: null,
 };
 
-function renderUpcoming() {
+// ── render helper ─────────────────────────────────────────────────────────────
+
+function renderUpcoming(initialPath = '/upcoming') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <UpcomingRaces />
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/upcoming" element={<UpcomingRaces />} />
+          <Route
+            path="/races/:race_id"
+            element={<div data-testid="race-detail">Race Detail</div>}
+          />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>
   );
 }
 
+// ── setup ─────────────────────────────────────────────────────────────────────
+
 beforeEach(() => {
   vi.mocked(fetchUpcomingRaces).mockResolvedValue(mockRaces);
+  vi.mocked(fetchBulkPredictions).mockResolvedValue(mockBulkPredictions);
   vi.mocked(discoverTodayRaceIds).mockResolvedValue({
     race_ids: ['202406010101', '202406010102'],
     discovered_at: '2026-05-05T10:00:00Z',
@@ -80,19 +129,70 @@ beforeEach(() => {
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
 
-describe('UpcomingRaces', () => {
-  it('renders the correct number of race cards', async () => {
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+describe('UpcomingRaces table layout', () => {
+  it('renders the page title', async () => {
     renderUpcoming();
-    const buttons = await screen.findAllByRole('button', { name: '予想を見る' });
-    expect(buttons).toHaveLength(2);
+    expect(await screen.findByRole('heading', { name: 'Upcoming Races' })).toBeInTheDocument();
   });
 
-  it('displays race course names', async () => {
+  it('groups races by course with section headings', async () => {
     renderUpcoming();
-    expect(await screen.findByText(/東京/)).toBeInTheDocument();
-    expect(screen.getByText(/中山/)).toBeInTheDocument();
+    await screen.findByText('東京');
+    expect(screen.getByText('中山')).toBeInTheDocument();
   });
 
+  it('renders race rows as table rows (not cards)', async () => {
+    renderUpcoming();
+    // Rows are rendered as role="button" table rows per the PastRaces pattern
+    expect(await screen.findByRole('button', { name: '東京 01R' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '中山 01R' })).toBeInTheDocument();
+  });
+
+  it('shows race name column', async () => {
+    renderUpcoming();
+    expect(await screen.findByText('日本ダービー')).toBeInTheDocument();
+    // null name should show dash
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('shows date column with formatted date (M/D (曜))', async () => {
+    renderUpcoming();
+    // 2024-06-01 is a Saturday → "6/1 (土)"
+    expect(await screen.findByText('6/1 (土)')).toBeInTheDocument();
+  });
+
+  it('shows AI 予想 column header', async () => {
+    renderUpcoming();
+    await screen.findByRole('columnheader', { name: 'AI 予想' });
+  });
+
+  it('shows AI prediction top horses for a race', async () => {
+    renderUpcoming();
+    // 202406010101 has メイショウ as top horse
+    expect(await screen.findByText(/①メイショウ/)).toBeInTheDocument();
+  });
+
+  it('shows 再取込 button', async () => {
+    renderUpcoming();
+    await screen.findByRole('button', { name: '再取込' });
+  });
+});
+
+describe('UpcomingRaces navigation', () => {
+  it('navigates to RaceDetail with date param on row click', async () => {
+    const user = userEvent.setup();
+    renderUpcoming();
+    const row = await screen.findByRole('button', { name: '東京 01R' });
+    await user.click(row);
+    await waitFor(() => {
+      expect(screen.getByTestId('race-detail')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('UpcomingRaces empty/error states', () => {
   it('shows error state when API fails', async () => {
     vi.mocked(fetchUpcomingRaces).mockRejectedValue(new Error('network error'));
     renderUpcoming();
@@ -101,30 +201,30 @@ describe('UpcomingRaces', () => {
     });
   });
 
-  it('renders 再取込 button', async () => {
+  it('shows skeleton while loading', () => {
+    vi.mocked(fetchUpcomingRaces).mockReturnValue(new Promise(() => {}));
     renderUpcoming();
-    await screen.findByRole('button', { name: '再取込' });
+    const skeletons = document.querySelectorAll('[data-slot="skeleton"]');
+    expect(skeletons.length).toBeGreaterThan(0);
   });
+});
 
-  // ── Auto bootstrap ────────────────────────────────────────────────────────
-
+describe('UpcomingRaces auto-bootstrap', () => {
   it('shows bootstrap progress banner when races are 0 and discovery starts', async () => {
-    // Return empty races on first call so bootstrap fires
     vi.mocked(fetchUpcomingRaces).mockResolvedValue({ races: [] });
-    // discoverTodayRaceIds is slow — keep promise pending to catch mid-flight UI
     let resolveDisco!: (v: { race_ids: string[]; discovered_at: string }) => void;
     vi.mocked(discoverTodayRaceIds).mockReturnValue(
-      new Promise((r) => { resolveDisco = r; })
+      new Promise((r) => {
+        resolveDisco = r;
+      })
     );
 
     renderUpcoming();
 
-    // Progress banner should appear while discovering
     await waitFor(() => {
       expect(screen.getByText(/本日の開催レースを確認中/)).toBeInTheDocument();
     });
 
-    // Resolve to avoid dangling promises
     resolveDisco({ race_ids: [], discovered_at: '' });
   });
 
@@ -162,7 +262,6 @@ describe('UpcomingRaces', () => {
       expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledTimes(1);
     });
 
-    // After job resolves, races are still 0 (mock not updated)
     const btn = screen.getByRole('button', { name: '再取込' });
     await user.click(btn);
 

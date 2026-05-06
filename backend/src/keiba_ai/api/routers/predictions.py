@@ -1,25 +1,123 @@
-"""GET /api/predictions/{race_id} — per-horse prediction probabilities."""
+"""Prediction endpoints.
+
+- GET /api/predictions/bulk       — bulk top-N predictions for multiple races
+- GET /api/predictions/{race_id}  — per-horse prediction probabilities
+
+NOTE: /predictions/bulk must be declared BEFORE /predictions/{race_id} so that
+FastAPI does not match the literal "bulk" as a race_id path parameter.
+"""
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.predict import predict_race_with_combinations, predict_race_with_shap
+from keiba_ai.ai.predict import predict_race, predict_race_with_combinations, predict_race_with_shap
 from keiba_ai.ai.registry import get_active, load_model
 from keiba_ai.api.deps import get_session
 from keiba_ai.api.schemas import (
+    BulkPredictionsResponse,
     CombinationPredictions,
     HorsePrediction,
     PredictionResponse,
+    RacePredictionSummary,
+    TopHorse,
 )
+from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.features.builder import build_inference_frame
 
+log = logging.getLogger(__name__)
+
 router = APIRouter()
+
+_BULK_MAX_RACE_IDS = 100
+
+
+@router.get("/predictions/bulk", response_model=BulkPredictionsResponse)
+def get_bulk_predictions(
+    session: Annotated[Session, Depends(get_session)],
+    race_ids: Annotated[str, Query(description="カンマ区切り race_id リスト（最大 100 件）")] = "",
+    top_n: Annotated[int, Query(ge=1, le=20, description="返す上位馬の件数")] = 3,
+) -> BulkPredictionsResponse:
+    """複数レースの上位 top_n 馬予想を一括取得する。
+
+    - active モデルが無い場合は全 race を空の RacePredictionSummary で返す（503 ではなく空）。
+    - entries が無い race も空の RacePredictionSummary を返す。
+    - 最大 _BULK_MAX_RACE_IDS 件まで処理する。
+    """
+    if not race_ids.strip():
+        return BulkPredictionsResponse(predictions={})
+
+    parsed_ids = [rid.strip() for rid in race_ids.split(",") if rid.strip()]
+    parsed_ids = parsed_ids[:_BULK_MAX_RACE_IDS]
+
+    # active モデルが無ければ全レースを空で返す
+    active_path = get_active(session)
+    if active_path is None:
+        log.info("No active model; returning empty bulk predictions for %d races", len(parsed_ids))
+        return BulkPredictionsResponse(
+            predictions={rid: RacePredictionSummary(top_horses=[]) for rid in parsed_ids}
+        )
+
+    model = load_model(active_path)
+
+    # horse_id → horse_name マップをキャッシュ（per-request）
+    horse_name_cache: dict[str, str | None] = {}
+
+    def _horse_name(horse_id: str) -> str | None:
+        if horse_id not in horse_name_cache:
+            h = session.get(Horse, horse_id)
+            horse_name_cache[horse_id] = h.name if h else None
+        return horse_name_cache[horse_id]
+
+    result: dict[str, RacePredictionSummary] = {}
+
+    for race_id in parsed_ids:
+        try:
+            frame = build_inference_frame(session, race_id)
+        except ValueError:
+            result[race_id] = RacePredictionSummary(top_horses=[])
+            continue
+
+        if frame.empty:
+            result[race_id] = RacePredictionSummary(top_horses=[])
+            continue
+
+        try:
+            pred_df = predict_race(model, frame)
+        except Exception as exc:
+            log.warning("Prediction failed for race %s: %s", race_id, exc)
+            result[race_id] = RacePredictionSummary(top_horses=[])
+            continue
+
+        # 上位 top_n 馬を抽出（score 降順ですでにソート済み）
+        top_rows = pred_df.head(top_n)
+
+        # post_position は feature frame から取得する
+        post_pos_map: dict[str, int | None] = {}
+        if "post_position" in frame.columns:
+            for _, frow in frame.iterrows():
+                hid = str(frow.get("horse_id", ""))
+                pp = frow.get("post_position")
+                post_pos_map[hid] = int(pp) if pp is not None else None
+
+        top_horses = []
+        for _, row in top_rows.iterrows():
+            hid = str(row["horse_id"])
+            top_horses.append(TopHorse(
+                post_position=post_pos_map.get(hid),
+                horse_name=_horse_name(hid),
+                win_prob=float(row["win_prob"]),
+            ))
+
+        result[race_id] = RacePredictionSummary(top_horses=top_horses)
+
+    return BulkPredictionsResponse(predictions=result)
 
 
 @router.get("/predictions/{race_id}", response_model=PredictionResponse)

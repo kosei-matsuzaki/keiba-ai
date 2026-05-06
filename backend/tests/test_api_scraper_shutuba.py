@@ -106,3 +106,32 @@ def test_run_shutuba_validates_race_id_format(api_client: TestClient) -> None:
         json={"race_ids": ["short"]},
     )
     assert resp.status_code == 422
+
+
+def test_run_shutuba_race_ids_without_date_passes_none_date_str(api_client: TestClient) -> None:
+    """race_ids + date 省略時は date_str=None が渡されること（HTML date を尊重する）。
+
+    旧実装では date が省略されると今日の日付をデフォルト値として run_ingest_shutuba に
+    渡していた。この修正後は date=None が渡され、HTML から抽出した日付が使われる。
+    """
+    stop_flag.clear_stopped()
+
+    called_with: dict = {}
+
+    async def _capture(date_str, client, session, *, limit=None, race_ids=None) -> dict:
+        called_with["date_str"] = date_str
+        called_with["race_ids"] = race_ids
+        return {"fetched": 1, "skipped": 0, "errors": 0}
+
+    with patch("keiba_ai.jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
+        resp = api_client.post(
+            "/api/scraper/run_shutuba",
+            json={"race_ids": ["202506050911"]},
+        )
+    assert resp.status_code == 202
+
+    # date が指定されていないので date_str は None であること
+    assert called_with.get("date_str") is None, (
+        f"race_ids のみ指定時に date_str が None でない: {called_with.get('date_str')!r}"
+    )
+    assert called_with.get("race_ids") == ["202506050911"]

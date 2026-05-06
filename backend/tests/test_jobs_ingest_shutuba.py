@@ -511,6 +511,58 @@ async def test_race_ids_with_limit(db_session, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_html_date_not_overwritten_by_today(
+    db_session, tmp_path, monkeypatch
+):
+    """HTML から抽出した race.date が today で上書きされないこと（date 上書きバグ回帰テスト）。
+
+    シナリオ:
+      - shutuba HTML は内部で 2024-12-22 という日付を返す
+      - date_str (fallback) として今日の日付を渡す
+      - DB に保存された race.date が 2024-12-22 であること（今日で上書きされない）
+    """
+    import datetime
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    RACE_ID = "202406010111"
+    HTML_DATE = "2024-12-22"
+    today_str = datetime.date.today().isoformat()
+
+    # HTML から HTML_DATE が返るよう ParsedShutuba.date を差し込む
+    from keiba_ai.scraper.parsers.shutuba import ParsedShutuba
+
+    original_parse = None
+
+    def _patched_parse(html: str, race_id: str) -> ParsedShutuba:
+        result = original_parse(html, race_id)
+        result.date = HTML_DATE  # HTML が 2024-12-22 を返す想定
+        return result
+
+    import keiba_ai.jobs.ingest_shutuba as _shutuba_mod
+    original_parse = _shutuba_mod.parse_shutuba
+    monkeypatch.setattr(_shutuba_mod, "parse_shutuba", _patched_parse)
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_no_calendar(SHUTUBA_HTML)  # type: ignore[method-assign]
+
+    # today_str を fallback として渡す（旧バグではこれで上書きされていた）
+    await run_ingest_shutuba(today_str, client, db_session, race_ids=[RACE_ID])
+
+    row = db_session.execute(
+        select(Race).where(Race.race_id == RACE_ID)
+    ).scalar_one_or_none()
+    assert row is not None, f"Race {RACE_ID} was not inserted"
+    assert row.date == HTML_DATE, (
+        f"HTML date {HTML_DATE!r} が today {today_str!r} で上書きされた: {row.date!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_idempotency_same_date_multiple_runs(
     db_session, mock_client, tmp_path, monkeypatch
 ):

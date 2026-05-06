@@ -83,6 +83,27 @@ class PredictionResponse(BaseModel):
     combinations: CombinationPredictions | None = None
 
 
+class TopHorse(BaseModel):
+    """上位馬の簡易情報 — bulk predictions 用。"""
+    post_position: int | None
+    horse_name: str | None
+    win_prob: float
+
+
+class RacePredictionSummary(BaseModel):
+    """1 レース分の top-N 馬情報。entries が無い or モデル無しは top_horses=[]。"""
+    top_horses: list[TopHorse]
+
+
+class BulkPredictionsResponse(BaseModel):
+    """GET /api/predictions/bulk レスポンス。
+
+    race_id → RacePredictionSummary のマップ。
+    active モデルが無い場合は全 race を空の RacePredictionSummary で返す。
+    """
+    predictions: dict[str, RacePredictionSummary]
+
+
 # ── Metrics schemas ───────────────────────────────────────────────────────────
 
 class MetricsSummary(BaseModel):
