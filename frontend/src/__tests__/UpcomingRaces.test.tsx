@@ -215,6 +215,7 @@ describe('UpcomingRaces empty/error states', () => {
   });
 });
 
+describe('UpcomingRaces auto-bootstrap', () => {
   it('shows today-weekend title', async () => {
     renderUpcoming();
     expect(await screen.findByText(/今週末のレース/)).toBeInTheDocument();
