@@ -175,6 +175,14 @@ class TestDiscoverThisWeekendRaceIds:
             return_value=(sat, sun),
         )
 
+    def _clear_cache(self) -> None:
+        """Module-level discover cache をテスト間でリセットする。"""
+        from keiba_ai.api.routers.scraper import _DISCOVER_CACHE
+        _DISCOVER_CACHE.clear()
+
+    def setup_method(self) -> None:  # pytest hook: called before each test
+        self._clear_cache()
+
     def test_returns_only_weekend_jra_ids(self, api_client: TestClient) -> None:
         """JRA の土・日 race_id のみ返り、NAR や他週の race_id は除外される。"""
         sat = date(2026, 5, 9)
@@ -199,14 +207,18 @@ class TestDiscoverThisWeekendRaceIds:
 
         mock_top = _make_top_response(race_ids_all)
 
-        def _shutuba_side_effect(url: str):
+        async def _async_get(url: str, *args, **kwargs) -> MagicMock:
+            """並列 probe 環境では URL ベースで dispatch しないと順序が壊れる。"""
             mock = MagicMock()
             mock.raise_for_status = MagicMock()
-            if "202605090501" in url:
+            if "api_get_race_info_top" in url:
+                # race_info_top JSON は元の mock_top をそのまま返す
+                return mock_top
+            if "race_id=202605090501" in url:
                 mock.text = shutuba_html_sat
-            elif "202605100601" in url:
+            elif "race_id=202605100601" in url:
                 mock.text = shutuba_html_sun
-            elif "202605160501" in url:
+            elif "race_id=202605160501" in url:
                 mock.text = shutuba_html_next
             else:
                 mock.text = "<html></html>"
@@ -219,17 +231,8 @@ class TestDiscoverThisWeekendRaceIds:
                 return_value=True,
             ),
             patch(
-                "keiba_ai.api.routers.scraper.AsyncRateLimiter.acquire",
-                new=AsyncMock(),
-            ),
-            patch(
                 "httpx.AsyncClient.get",
-                new=AsyncMock(side_effect=[
-                    mock_top,                         # race_info_top
-                    _shutuba_side_effect("202605090501"),  # 今週土の代表
-                    _shutuba_side_effect("202605100601"),  # 今週日の代表
-                    _shutuba_side_effect("202605160501"),  # 来週土の代表
-                ]),
+                new=AsyncMock(side_effect=_async_get),
             ),
         ):
             resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
@@ -309,6 +312,11 @@ class TestDiscoverThisWeekendRaceIds:
 
         mock_top = _make_top_response(race_ids_all)
 
+        async def _async_get(url: str, *args, **kwargs):
+            if "api_get_race_info_top" in url:
+                return mock_top
+            return eucjp_response
+
         with (
             self._patch_this_weekend(sat, sun),
             patch(
@@ -316,12 +324,8 @@ class TestDiscoverThisWeekendRaceIds:
                 return_value=True,
             ),
             patch(
-                "keiba_ai.api.routers.scraper.AsyncRateLimiter.acquire",
-                new=AsyncMock(),
-            ),
-            patch(
                 "httpx.AsyncClient.get",
-                new=AsyncMock(side_effect=[mock_top, eucjp_response]),
+                new=AsyncMock(side_effect=_async_get),
             ),
         ):
             resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
@@ -356,3 +360,83 @@ class TestDiscoverThisWeekendRaceIds:
         # NAR は groups に入らないので probed=0、race_ids=[]
         assert resp.json()["race_ids"] == []
         assert resp.json()["total_kaisai_days_probed"] == 0
+
+    def test_caches_result_within_ttl(self, api_client: TestClient) -> None:
+        """初回 probe 後 TTL 内の 2 回目呼び出しは netkeiba を再 fetch しない。
+
+        race_info_top も含めて httpx.get が 0 回でないことだけを確認すると
+        厳密性を欠くので、初回コール直後の 2 回目で `httpx.get` 呼び出し数が
+        増えないことをアサートする。
+        """
+        sat = date(2026, 5, 9)
+        sun = date(2026, 5, 10)
+        race_ids_all = ["202605090501"]
+
+        shutuba_html = _make_shutuba_html("2026-05-09")
+        mock_top = _make_top_response(race_ids_all)
+
+        async def _async_get(url: str, *args, **kwargs):
+            if "api_get_race_info_top" in url:
+                return mock_top
+            mock = MagicMock()
+            mock.raise_for_status = MagicMock()
+            mock.text = shutuba_html
+            return mock
+
+        get_mock = AsyncMock(side_effect=_async_get)
+
+        with (
+            self._patch_this_weekend(sat, sun),
+            patch(
+                "keiba_ai.api.routers.scraper.RobotsCache.is_allowed",
+                return_value=True,
+            ),
+            patch("httpx.AsyncClient.get", new=get_mock),
+        ):
+            r1 = api_client.get("/api/scraper/discover_this_weekend_race_ids")
+            calls_after_first = get_mock.call_count
+            r2 = api_client.get("/api/scraper/discover_this_weekend_race_ids")
+            calls_after_second = get_mock.call_count
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert r1.json()["race_ids"] == r2.json()["race_ids"] == ["202605090501"]
+        # 2 回目はキャッシュヒットで httpx を 1 回も叩かない
+        assert calls_after_second == calls_after_first
+
+    def test_refresh_query_param_bypasses_cache(self, api_client: TestClient) -> None:
+        """?refresh=true は in-process キャッシュを無視して再 fetch する。"""
+        sat = date(2026, 5, 9)
+        sun = date(2026, 5, 10)
+        race_ids_all = ["202605090501"]
+
+        shutuba_html = _make_shutuba_html("2026-05-09")
+        mock_top = _make_top_response(race_ids_all)
+
+        async def _async_get(url: str, *args, **kwargs):
+            if "api_get_race_info_top" in url:
+                return mock_top
+            mock = MagicMock()
+            mock.raise_for_status = MagicMock()
+            mock.text = shutuba_html
+            return mock
+
+        get_mock = AsyncMock(side_effect=_async_get)
+
+        with (
+            self._patch_this_weekend(sat, sun),
+            patch(
+                "keiba_ai.api.routers.scraper.RobotsCache.is_allowed",
+                return_value=True,
+            ),
+            patch("httpx.AsyncClient.get", new=get_mock),
+        ):
+            api_client.get("/api/scraper/discover_this_weekend_race_ids")
+            calls_after_first = get_mock.call_count
+            api_client.get(
+                "/api/scraper/discover_this_weekend_race_ids?refresh=true"
+            )
+            calls_after_refresh = get_mock.call_count
+
+        # refresh=true は再フェッチするので少なくとも 1 件以上増える
+        assert calls_after_refresh > calls_after_first
