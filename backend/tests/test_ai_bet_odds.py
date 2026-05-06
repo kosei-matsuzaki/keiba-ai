@@ -421,25 +421,45 @@ def test_tansho_to_pl_scores_raises_on_empty():
 
 
 def test_compute_implied_combo_odds_returns_all_bet_types():
-    """単勝オッズから 馬連 / ワイド / 馬単 / 三連複 / 三連単 すべてが返る。"""
+    """単勝オッズから 複勝 / 馬連 / ワイド / 馬単 / 三連複 / 三連単 すべてが返る。"""
     import numpy as np
 
     odds = {"1": 2.5, "2": 3.5, "3": 5.0, "4": 8.0, "5": 12.0, "6": 18.0, "7": 30.0, "8": 60.0}
     rng = np.random.default_rng(0)
     result = compute_implied_combo_odds_from_tansho(odds, n_samples=50_000, rng=rng)
 
-    assert {"馬連", "ワイド", "馬単", "三連複", "三連単"} <= result.keys()
+    assert {"複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"} <= result.keys()
 
     # 8 頭から組み合わせ:
-    #   馬連 = C(8,2) = 28, ワイド = C(8,2) = 28, 馬単 = P(8,2) = 56,
-    #   三連複 = C(8,3) = 56, 三連単 = P(8,3) = 336
+    #   複勝   = 8 (per horse), 馬連 = C(8,2) = 28, ワイド = C(8,2) = 28,
+    #   馬単   = P(8,2) = 56, 三連複 = C(8,3) = 56, 三連単 = P(8,3) = 336
     # ただし PL モンテカルロでサンプル 0 の三連単 combo は dict に入らないため
     # 厳密 56/336 にはならない。下限のみ確認。
+    assert len(result["複勝"]) == 8
     assert len(result["馬連"]) == 28
     assert len(result["ワイド"]) == 28
     assert len(result["馬単"]) == 56
     assert len(result["三連複"]) <= 56
     assert len(result["三連単"]) <= 336
+
+
+def test_compute_implied_combo_odds_fukusho_favorite_lower():
+    """1番人気の複勝オッズは穴馬より低い (より高確率で top-3 に来る)。"""
+    import numpy as np
+
+    odds = {"1": 1.5, "2": 3.0, "3": 8.0, "4": 30.0, "5": 60.0}
+    rng = np.random.default_rng(11)
+    result = compute_implied_combo_odds_from_tansho(odds, n_samples=100_000, rng=rng)
+
+    fuku = result["複勝"]
+    # 1番人気の複勝オッズ < 4-5 番人気
+    assert fuku["1"] < fuku["4"]
+    assert fuku["1"] < fuku["5"]
+    # 控除率 0.20 込みで実 JRA レンジ内 (1.0 倍以上が一般的)
+    # 単勝 1.5 倍の馬は ほぼ確実に top-3 → 複勝 < 1 になることもある
+    # （3 頭 / 5 頭以下のレースでは特に）。下限 0.5、上限 50 倍以内のチェック。
+    for combo, val in fuku.items():
+        assert 0 < val < 200, f"{combo}: {val}"
 
 
 def test_compute_implied_combo_odds_favorite_combo_cheaper():

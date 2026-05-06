@@ -341,6 +341,7 @@ def compute_implied_combo_odds_from_tansho(
     Returns:
         {bet_type: {combo_str: odds, ...}, ...} の 2 段ネスト dict。
         bet_type と combo 形式は compute_past_race_odds と一致:
+          - 複勝:         "3"     (post_position のみ; top-3 入着確率の逆数)
           - 馬連 / ワイド: "3-7"  (post_position 昇順)
           - 馬単:         "3→7"  (1着→2着)
           - 三連複:       "3-5-7" (post_position 昇順)
@@ -367,6 +368,20 @@ def compute_implied_combo_odds_from_tansho(
         return (1.0 / prob) * (1.0 - takeout)
 
     result: dict[str, dict[str, float]] = {}
+
+    # ── 複勝: place ベクトル (n,), P(horse i in top-3) ─────────────────────
+    place_vec = probs.get("place")
+    if place_vec is not None:
+        fukusho: dict[str, float] = {}
+        takeout = _JRA_TAKEOUT_RATES["複勝"]
+        for i in range(n):
+            prob = float(place_vec[i])
+            est = _to_odds(prob, takeout)
+            if est is None:
+                continue
+            fukusho[str(int(posts[i]))] = est
+        if fukusho:
+            result["複勝"] = fukusho
 
     # ── 馬連: pair_matrix (n, n) 対称, P({i, j}) ────────────────────────────
     pair_matrix = probs.get("pair")
