@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from keiba_ai.api.deps import get_session
 from keiba_ai.api.schemas import EntrySummary, RaceDetail, RaceSummary, UpcomingRacesResponse
+from keiba_ai.core.dates import this_weekend_dates
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.race import Race
@@ -56,6 +57,25 @@ def _build_entry_summaries(entries: list[Entry], session: Session) -> list[Entry
         )
         for entry in entries
     ]
+
+
+@router.get("/races/this_weekend", response_model=UpcomingRacesResponse)
+def get_this_weekend_races(
+    session: Annotated[Session, Depends(get_session)],
+) -> UpcomingRacesResponse:
+    """今週末 (土・日) の JRA レース一覧を返す。
+
+    DB に保存済みのレース（shutuba ingest 済み）を JST の今週土・日に絞って返す。
+    未 ingest の場合は空リストを返す（404 ではない）。
+    """
+    sat, sun = this_weekend_dates()
+    stmt = (
+        select(Race)
+        .where(Race.date.in_([sat.isoformat(), sun.isoformat()]))
+        .order_by(Race.date, Race.race_id)
+    )
+    races = session.scalars(stmt).all()
+    return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
 
 
 @router.get("/races/upcoming", response_model=UpcomingRacesResponse)

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from keiba_ai.api.deps import get_job_registry, get_session
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.schemas import (
+    DiscoverThisWeekendRaceIdsResponse,
     DiscoverTodayRaceIdsResponse,
     FetchLiveOddsRequest,
     JobAccepted,
@@ -27,7 +28,12 @@ from keiba_ai.api.schemas import (
     ScraperStatus,
 )
 from keiba_ai.scraper.parsers.race_info_top import ParseError as RaceInfoParseError
-from keiba_ai.scraper.parsers.race_info_top import parse_race_ids
+from keiba_ai.scraper.parsers.race_info_top import (
+    extract_jra_race_ids_with_kaisai_groups,
+    parse_race_ids,
+)
+from keiba_ai.scraper.parsers.shutuba import extract_race_date_from_shutuba_html
+from keiba_ai.core.dates import this_weekend_dates
 from keiba_ai.core.config import load_settings
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models.scrape_log import ScrapeLog
@@ -259,6 +265,8 @@ _RACE_INFO_TOP_URL = (
     "https://race.netkeiba.com/api/api_get_race_info_top.html?kaisai_date={date}"
 )
 
+_SHUTUBA_URL = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+
 
 @router.get("/scraper/discover_today_race_ids", response_model=DiscoverTodayRaceIdsResponse)
 async def discover_today_race_ids(
@@ -316,6 +324,124 @@ async def discover_today_race_ids(
 
     discovered_at = datetime.now(UTC).isoformat()
     return DiscoverTodayRaceIdsResponse(race_ids=race_ids, discovered_at=discovered_at)
+
+
+@router.get(
+    "/scraper/discover_this_weekend_race_ids",
+    response_model=DiscoverThisWeekendRaceIdsResponse,
+)
+async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse:
+    """今週末 (土・日) の JRA 開催 race_id 一覧を netkeiba から自動発見する。
+
+    手順:
+      1. api_get_race_info_top.html を 1 回 fetch（kaisai_date 引数なし → 全 active kaisai）
+      2. JRA 場コード (race_id[4:6] in '01'..'10') のみ残す
+      3. unique 開催日キー (race_id[:10]) ごとに代表 race_id を選ぶ
+      4. 各代表の shutuba ページを fetch して date を抽出（rate_limiter 経由）
+      5. date が今週土 or 今週日に一致する開催日キーの race_id だけ返す
+
+    - 開催なし → race_ids=[] を返す（404 ではない）
+    - netkeiba 通信エラー・パース失敗 → 502
+    """
+    this_sat, this_sun = this_weekend_dates()
+    sat_str = this_sat.isoformat()
+    sun_str = this_sun.isoformat()
+
+    settings = load_settings()
+    robots_cache = RobotsCache(settings.user_agent)
+    rate_limiter = AsyncRateLimiter(settings)
+
+    # ── Step 1: race_info_top を fetch ───────────────────────────────────────
+    # kaisai_date を指定しないと全 active kaisai（複数週分）が返るため、
+    # 直近の土曜を渡して同等の「今後の開催全部」を取得する。
+    # 実際には date 引数を無視して 156 件返すことが確認されているが、
+    # 明示的に今週土曜を渡すことで netkeiba 側キャッシュを正しく引ける。
+    top_url = _RACE_INFO_TOP_URL.format(date=this_sat.strftime("%Y%m%d"))
+
+    if not robots_cache.is_allowed(top_url):
+        raise HTTPException(status_code=502, detail="robots.txt disallows race_info_top URL")
+
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": settings.user_agent},
+            timeout=15.0,
+            follow_redirects=True,
+        ) as http_client:
+            resp = await http_client.get(top_url)
+            resp.raise_for_status()
+            payload = resp.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"netkeiba race_info_top へのアクセスに失敗しました: {exc}",
+        ) from exc
+
+    try:
+        _jra_race_ids, groups = extract_jra_race_ids_with_kaisai_groups(payload)
+    except RaceInfoParseError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"netkeiba API レスポンスのパースに失敗しました: {exc}",
+        ) from exc
+
+    if not groups:
+        discovered_at = datetime.now(UTC).isoformat()
+        return DiscoverThisWeekendRaceIdsResponse(
+            race_ids=[],
+            saturday_date=sat_str,
+            sunday_date=sun_str,
+            total_kaisai_days_probed=0,
+            discovered_at=discovered_at,
+        )
+
+    # ── Step 2: 各 unique 開催日キーの代表 race_id で shutuba fetch ──────────
+    # 代表は各グループの先頭（最若番、= race_id が最小のもの）
+    weekend_keys: set[str] = set()
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": settings.user_agent},
+        timeout=20.0,
+        follow_redirects=True,
+    ) as http_client:
+        for key, ids in groups.items():
+            rep_id = ids[0]
+            shutuba_url = _SHUTUBA_URL.format(race_id=rep_id)
+
+            if not robots_cache.is_allowed(shutuba_url):
+                continue
+
+            # rate_limiter で過剰 fetch を抑制
+            await rate_limiter.wait()
+
+            try:
+                sresp = await http_client.get(shutuba_url)
+                sresp.raise_for_status()
+                race_date = extract_race_date_from_shutuba_html(sresp.text)
+            except Exception:
+                # 1 つの shutuba 失敗で全体を abort しない
+                continue
+
+            if race_date in (sat_str, sun_str):
+                weekend_keys.add(key)
+
+    # ── Step 3: 今週末キーに属する race_id だけ抽出 ─────────────────────────
+    this_weekend_ids = sorted(
+        rid
+        for key, ids in groups.items()
+        if key in weekend_keys
+        for rid in ids
+    )
+
+    discovered_at = datetime.now(UTC).isoformat()
+    return DiscoverThisWeekendRaceIdsResponse(
+        race_ids=this_weekend_ids,
+        saturday_date=sat_str,
+        sunday_date=sun_str,
+        total_kaisai_days_probed=len(groups),
+        discovered_at=discovered_at,
+    )
 
 
 @router.post("/scraper/stop", status_code=200)

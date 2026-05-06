@@ -21,6 +21,7 @@ import type {
   BetSummary,
   BetTimeseries,
   BulkPredictionsResponse,
+  DiscoverThisWeekendRaceIdsResponse,
   DiscoverTodayRaceIdsResponse,
   FetchLiveOddsRequest,
   HealthResponse,
@@ -64,6 +65,12 @@ export function fetchHealth(): Promise<HealthResponse> {
 export function fetchUpcomingRaces(days = 7): Promise<UpcomingRacesResponse> {
   return getClient().then((c) =>
     c.get('races/upcoming', { searchParams: { days } }).json<UpcomingRacesResponse>()
+  );
+}
+
+export function fetchThisWeekendRaces(): Promise<UpcomingRacesResponse> {
+  return getClient().then((c) =>
+    c.get('races/this_weekend').json<UpcomingRacesResponse>()
   );
 }
 
@@ -162,6 +169,12 @@ export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceId
     c
       .get('scraper/discover_today_race_ids', Object.keys(searchParams).length ? { searchParams } : {})
       .json<DiscoverTodayRaceIdsResponse>()
+  );
+}
+
+export function discoverThisWeekendRaceIds(): Promise<DiscoverThisWeekendRaceIdsResponse> {
+  return getClient().then((c) =>
+    c.get('scraper/discover_this_weekend_race_ids').json<DiscoverThisWeekendRaceIdsResponse>()
   );
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-import { useUpcomingRaces } from '@/hooks/useUpcomingRaces';
+import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
 import { useRunShutuba } from '@/hooks/useRunShutuba';
 import { useJobStatus } from '@/hooks/useJobStatus';
 import { useBulkPredictions } from '@/hooks/useBulkPredictions';
@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { discoverTodayRaceIds, formatErrorMessage } from '@/lib/api';
+import { discoverThisWeekendRaceIds, formatErrorMessage } from '@/lib/api';
 import { toast } from '@/components/ui/toast';
 import type { RaceSummary, RacePredictionSummary } from '@/types/api';
 
@@ -168,7 +168,7 @@ type BootstrapState =
 
 export function UpcomingRaces() {
   const navigate = useNavigate();
-  const { data, isPending, isError, refetch } = useUpcomingRaces(7);
+  const { data, isPending, isError, refetch } = useThisWeekendRaces();
 
   const [bootstrap, setBootstrap] = useState<BootstrapState>({ phase: 'idle' });
   // Tracks whether auto-bootstrap has already been attempted this mount.
@@ -217,7 +217,7 @@ export function UpcomingRaces() {
 
     let raceIds: string[];
     try {
-      const result = await discoverTodayRaceIds();
+      const result = await discoverThisWeekendRaceIds();
       raceIds = result.race_ids;
     } catch (err) {
       const msg = await formatErrorMessage(err);
@@ -265,8 +265,8 @@ export function UpcomingRaces() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         icon={CalendarClock}
-        title="Upcoming Races"
-        description="直近 7 日に予定されているレース一覧"
+        title="今週末のレース（JRA）"
+        description="今週土・日に予定されている JRA レース一覧"
       >
         <Button
           variant="outline"
@@ -284,8 +284,8 @@ export function UpcomingRaces() {
       {isBootstrapping && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
           {bootstrap.phase === 'discovering'
-            ? '本日の開催レースを確認中...'
-            : '当日のレース情報を取得中...（最大 3 分かかります）'}
+            ? '今週末の JRA レースを確認中...'
+            : '今週末の JRA レースを取得中...（最大 5 分）'}
         </div>
       )}
 
@@ -299,8 +299,8 @@ export function UpcomingRaces() {
       ) : sections.length === 0 ? (
         bootstrap.phase === 'no_races' ? (
           <EmptyState
-            message="本日の JRA レースはありません"
-            description="開催予定がない日です。週末の開催日にご利用ください。"
+            message="今週末の JRA レースはありません"
+            description="開催予定がない週末です。次の開催日にご利用ください。"
           />
         ) : bootstrap.phase === 'error' ? (
           <EmptyState
@@ -311,7 +311,7 @@ export function UpcomingRaces() {
           <TableSkeleton />
         ) : (
           <EmptyState
-            message="今週の予定レースはありません"
+            message="今週末の予定レースはありません"
             description="スクレイパーでデータを取り込んでください。"
           />
         )
