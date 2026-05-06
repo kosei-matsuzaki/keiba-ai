@@ -129,7 +129,7 @@ function BreakdownTable({ rows }: { rows: BetBreakdownRow[] }) {
             <TableCell className={row.profit >= 0 ? 'text-green-600' : 'text-red-500'}>
               {row.profit >= 0 ? '+' : ''}{formatYen(row.profit)}
             </TableCell>
-            <TableCell>{(row.payback_rate * 100).toFixed(1)}%</TableCell>
+            <TableCell>{formatPercent(row.payback_rate)}</TableCell>
             <TableCell>{formatPercent(row.hit_rate)}</TableCell>
           </TableRow>
         ))}

@@ -8,13 +8,13 @@ import json
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.registry import set_active
 from keiba_ai.ai.train import train
-from keiba_ai.api.deps import get_job_registry, get_session
+from keiba_ai.api.deps import get_job_registry, get_or_404, get_session
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.schemas import JobAccepted, ModelMeta, TrainRequest
 from keiba_ai.db.models.model_run import ModelRun
@@ -60,9 +60,7 @@ def get_model(
     model_id: int,
     session: Annotated[Session, Depends(get_session)],
 ) -> ModelMeta:
-    run = session.get(ModelRun, model_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+    run = get_or_404(session, ModelRun, model_id, label="Model")
     return _run_to_schema(run)
 
 
@@ -71,9 +69,7 @@ def activate_model(
     model_id: int,
     session: Annotated[Session, Depends(get_session)],
 ) -> ModelMeta:
-    run = session.get(ModelRun, model_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+    run = get_or_404(session, ModelRun, model_id, label="Model")
 
     set_active(Path(run.model_path), session)
     # Refresh after flush so is_active reflects the change

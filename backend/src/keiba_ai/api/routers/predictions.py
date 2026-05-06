@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations, predict_race_with_shap
 from keiba_ai.ai.registry import get_active, load_model
-from keiba_ai.api.deps import get_session
+from keiba_ai.api.deps import build_inference_frame_or_404, get_session
 from keiba_ai.api.schemas import (
     BulkPredictionsResponse,
     CombinationPredictions,
@@ -131,13 +131,7 @@ def get_predictions(
     if active_path is None:
         raise HTTPException(status_code=503, detail="No active model. Train and activate a model first.")
 
-    try:
-        frame = build_inference_frame(session, race_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    if frame.empty:
-        raise HTTPException(status_code=404, detail=f"No entries found for race {race_id!r}")
+    frame = build_inference_frame_or_404(session, race_id)
 
     model = load_model(active_path)
     result_df = predict_race_with_shap(model, frame)

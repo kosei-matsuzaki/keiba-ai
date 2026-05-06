@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import datetime
 import os
 
 import httpx
 import sqlalchemy as sa
-from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -27,9 +25,9 @@ from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.jockey import Jockey
 from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.models.trainer import Trainer
 from keiba_ai.db.session import make_engine, session_scope
+from keiba_ai.jobs.scrape_log import already_scraped, record_scrape_log
 from keiba_ai.scraper import cache as cache_module
 from keiba_ai.scraper import stop_flag
 from keiba_ai.scraper.netkeiba import NetkeibaClient
@@ -47,23 +45,6 @@ logger = get_logger(__name__)
 
 _CALENDAR_URL = "https://db.netkeiba.com/race/list/{date}/"
 _RESULT_URL = "https://db.netkeiba.com/race/{race_id}/"
-
-
-def _already_scraped(session: Session, url: str) -> bool:
-    row = session.execute(
-        select(ScrapeLog).where(ScrapeLog.url == url, ScrapeLog.status == "ok").limit(1)
-    ).first()
-    return row is not None
-
-
-def _record_scrape_log(
-    session: Session,
-    url: str,
-    status: str,
-    content_hash: str | None = None,
-) -> None:
-    fetched_at = datetime.datetime.now(datetime.UTC).isoformat()
-    session.add(ScrapeLog(url=url, fetched_at=fetched_at, status=status, content_hash=content_hash))
 
 
 def _upsert_race(session: Session, result: ParsedRaceResult) -> None:
@@ -262,7 +243,7 @@ async def run_ingest(
 
         result_url = _RESULT_URL.format(race_id=race_id)
 
-        if _already_scraped(session, result_url):
+        if already_scraped(session, result_url):
             logger.debug("Skipping already-scraped race: %s", race_id)
             counters["skipped"] += 1
             continue
@@ -276,7 +257,7 @@ async def run_ingest(
             await _ensure_masters(session, parsed, client=client)
             _insert_entries(session, parsed)
             n_payouts = _upsert_payouts(session, race_id, html)
-            _record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
+            record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
 
             # 結果 ingest (finish_position あり) のみ bet 突合せを実行する。
             # shutuba ingest は finish_position が無いためここには到達しない。
@@ -300,7 +281,7 @@ async def run_ingest(
             logger.error("Error ingesting race %s: %s", race_id, exc)
             session.rollback()
             try:
-                _record_scrape_log(session, result_url, "error")
+                record_scrape_log(session, result_url, "error")
                 session.commit()
             except Exception:
                 session.rollback()

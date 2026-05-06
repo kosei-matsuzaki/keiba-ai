@@ -26,7 +26,7 @@ import logging
 import math
 import os
 import pickle
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -163,10 +163,6 @@ def get_active_features() -> list[str]:
     return list(FEATURE_COLUMNS)
 
 
-def _parse_date(date_str: str) -> date:
-    return datetime.strptime(date_str, "%Y-%m-%d").date()
-
-
 def _build_entry_row(
     session: Session,
     race: Race,
@@ -297,7 +293,7 @@ def _build_race_rows(
     and merge it back. This avoids re-querying the DB for those stats.
     """
     n_runners = race.n_runners or len(entries)
-    race_date = _parse_date(race.date)
+    race_date = date.fromisoformat(race.date)
 
     rows = [
         _build_entry_row(
@@ -528,3 +524,5 @@ def build_inference_frame(session: Session, race_id: str) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = float("nan")
     return df
+
+

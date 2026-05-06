@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.api.deps import get_session
+from keiba_ai.api.deps import get_or_404, get_session
 from keiba_ai.api.schemas import (
     BetBreakdown,
     BetBreakdownRow,
@@ -132,41 +132,45 @@ def get_bet_summary(
 
 # ── GET /api/bets/timeseries ──────────────────────────────────────────────────
 
-def _bucket_date(settled_at: str, bucket: str) -> str:
-    """ISO 8601 文字列から bucket キーを生成する。settled_at を使用する。"""
-    date_part = settled_at[:10]  # "YYYY-MM-DD"
+_BucketType = Literal["day", "week", "month"]
+
+
+def _format_bucket_key(d: datetime.date, bucket: _BucketType) -> str:
+    """date から bucket key 文字列を生成する。"""
     if bucket == "day":
-        return date_part
+        return d.isoformat()
     if bucket == "week":
-        d = datetime.date.fromisoformat(date_part)
-        # ISO week: YYYY-Www
-        return f"{d.isocalendar().year}-W{d.isocalendar().week:02d}"
-    # month
-    return date_part[:7]  # "YYYY-MM"
+        iso = d.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    return f"{d.year}-{d.month:02d}"
 
 
-def _iter_day_buckets(start: datetime.date, end: datetime.date) -> list[str]:
+def _bucket_date(settled_at: str, bucket: _BucketType) -> str:
+    """ISO 8601 settled_at 文字列から bucket key を生成する。"""
+    return _format_bucket_key(datetime.date.fromisoformat(settled_at[:10]), bucket)
+
+
+def _iter_buckets(start: datetime.date, end: datetime.date, bucket: _BucketType) -> list[str]:
+    """[start, end] の範囲をカバーする bucket key を昇順に列挙する。"""
     keys: list[str] = []
-    cur = start
-    while cur <= end:
-        keys.append(cur.isoformat())
-        cur += datetime.timedelta(days=1)
-    return keys
+    if bucket == "day":
+        cur = start
+        step = datetime.timedelta(days=1)
+        while cur <= end:
+            keys.append(_format_bucket_key(cur, bucket))
+            cur += step
+        return keys
 
+    if bucket == "week":
+        # ISO 週の月曜にアラインしてから 1 週ずつ進める
+        cur = start - datetime.timedelta(days=start.weekday())
+        step = datetime.timedelta(days=7)
+        while cur <= end:
+            keys.append(_format_bucket_key(cur, bucket))
+            cur += step
+        return keys
 
-def _iter_week_buckets(start: datetime.date, end: datetime.date) -> list[str]:
-    # Align start to the Monday of the ISO week containing 'start'
-    keys: list[str] = []
-    cur = start - datetime.timedelta(days=start.weekday())  # Monday of start's week
-    while cur <= end:
-        iso = cur.isocalendar()
-        keys.append(f"{iso.year}-W{iso.week:02d}")
-        cur += datetime.timedelta(days=7)
-    return keys
-
-
-def _iter_month_buckets(start: datetime.date, end: datetime.date) -> list[str]:
-    keys: list[str] = []
+    # month: 年月を 1 ずつインクリメント
     year, month = start.year, start.month
     end_ym = (end.year, end.month)
     while (year, month) <= end_ym:
@@ -230,12 +234,7 @@ def get_bet_timeseries(
 
     # Build ordered bucket keys with 0-filled gaps
     if range_start is not None and range_end is not None:
-        if bucket == "day":
-            all_keys = _iter_day_buckets(range_start, range_end)
-        elif bucket == "week":
-            all_keys = _iter_week_buckets(range_start, range_end)
-        else:
-            all_keys = _iter_month_buckets(range_start, range_end)
+        all_keys = _iter_buckets(range_start, range_end, bucket)
     else:
         all_keys = sorted(data_buckets.keys())
 
@@ -412,9 +411,7 @@ def create_bet(
     races テーブルに該当 race_id が存在しない場合は 404 を返す。
     payouts またはfallback フィールドが揃っていれば登録と同時に確定する。
     """
-    race = session.get(Race, body.race_id)
-    if race is None:
-        raise HTTPException(status_code=404, detail=f"Race {body.race_id!r} not found")
+    get_or_404(session, Race, body.race_id, label="Race")
 
     record = BetRecord(
         created_at=_now_iso(),
@@ -471,9 +468,7 @@ def get_bet(
     bet_id: int,
     session: Annotated[Session, Depends(get_session)],
 ) -> BetRecordOut:
-    record = session.get(BetRecord, bet_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"BetRecord {bet_id} not found")
+    record = get_or_404(session, BetRecord, bet_id, label="BetRecord")
     return _to_out(record)
 
 
@@ -484,9 +479,7 @@ def update_bet(
     session: Annotated[Session, Depends(get_session)],
 ) -> BetRecordOut:
     """notes のみ更新可。settled な bet の更新は 409 を返す。"""
-    record = session.get(BetRecord, bet_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"BetRecord {bet_id} not found")
+    record = get_or_404(session, BetRecord, bet_id, label="BetRecord")
     if record.settled_at is not None:
         raise HTTPException(
             status_code=409,
@@ -504,9 +497,7 @@ def delete_bet(
     session: Annotated[Session, Depends(get_session)],
 ) -> None:
     """bet_record を削除する。settled な bet は 409 を返す。"""
-    record = session.get(BetRecord, bet_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"BetRecord {bet_id} not found")
+    record = get_or_404(session, BetRecord, bet_id, label="BetRecord")
     if record.settled_at is not None:
         raise HTTPException(
             status_code=409,

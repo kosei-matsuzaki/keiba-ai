@@ -4,6 +4,9 @@
 set -e
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
 BACKEND_DIR="$SCRIPT_DIR/../backend"
 
 cd "$BACKEND_DIR"

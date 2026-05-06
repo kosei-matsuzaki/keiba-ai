@@ -68,45 +68,22 @@ from dataclasses import dataclass, field
 from bs4 import BeautifulSoup, Tag
 
 from keiba_ai.core.logging import get_logger
+from keiba_ai.scraper.parsers.common import (
+    COURSE_CODE_MAP,
+    SURFACE_DIST_RE,
+    WEATHER_RE,
+    WEIGHT_RE,
+    extract_id_from_href,
+    normalize_race_class,
+)
 
 logger = get_logger(__name__)
 
-_WEIGHT_RE = re.compile(r"(\d+)\s*\(([+-]?\d+)\)")  # "484 (0)" / "478 (+2)" / "494(-2)"
-_SURFACE_DIST_RE = re.compile(r"(芝|ダ|障)(?:\s*[右左])?(?:\s*[内外])?\s*(\d{3,4})\s*m")
-_WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
 _DATE_RE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")
 
 # race.netkeiba.com の出馬表ページの race_class/name 判定用。
 # db.netkeiba とは異なり RaceData01 / RaceName が使われることが多い。
 _GRADE_RE = re.compile(r"(GⅠ|GⅡ|GⅢ|G[1-3]|Listed|\(L\)|重賞|未勝利|新馬|[1-3]勝クラス|オープン|\bOP\b)")
-
-_CLASS_NORM_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"GⅠ|G1"), "G1"),
-    (re.compile(r"GⅡ|G2"), "G2"),
-    (re.compile(r"GⅢ|G3"), "G3"),
-    (re.compile(r"Listed|\(L\)"), "Listed"),
-    (re.compile(r"重賞"), "重賞"),
-    (re.compile(r"未勝利"), "未勝利"),
-    (re.compile(r"新馬"), "新馬"),
-    (re.compile(r"1勝クラス"), "1勝クラス"),
-    (re.compile(r"2勝クラス"), "2勝クラス"),
-    (re.compile(r"3勝クラス"), "3勝クラス"),
-    (re.compile(r"オープン|\bOP\b"), "OP"),
-]
-
-
-def _normalize_class(raw: str) -> str | None:
-    for pattern, label in _CLASS_NORM_RULES:
-        if pattern.search(raw):
-            return label
-    return None
-
-
-# JRA トラックコード（race_id の 5-6 桁目）→ コース名
-_COURSE_CODE_MAP = {
-    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
-    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
-}
 
 # 実 HTML のヘッダ列名 → 合成 fixture と共通の正規化列名へのエイリアス。
 # 実 HTML では "厩舎"/"馬体重(増減)"/"更新" という名前が使われるが、
@@ -166,18 +143,6 @@ class ParsedShutuba:
     entries: list[ShutubaEntry] = field(default_factory=list)
 
 
-def _extract_id_from_href(href: str, kind: str) -> str | None:
-    """Extract entity ID from a netkeiba path.
-
-    Supports:
-      - /horse/<id>/                       (馬)
-      - /jockey/result/recent/<id>/        (騎手)
-      - /trainer/result/recent/<id>/       (調教師)
-    """
-    m = re.search(rf"/{kind}/(?:[a-z_]+/)*([0-9a-zA-Z]+)", href)
-    return m.group(1) if m else None
-
-
 def _build_col_aliases(col: dict[str, int]) -> dict[str, int]:
     """実 HTML のヘッダ列名を合成 fixture と共通の列名に正規化して返す。
 
@@ -203,7 +168,7 @@ def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> N
       ingest_shutuba.py は --date CLI 引数で上書きするため、実運用への影響はない。
 
     race_class:
-      1. <title> タグから _normalize_class()（実 HTML の G1/G2/G3 に有効）
+      1. <title> タグから normalize_race_class()（実 HTML の G1/G2/G3 に有効）
       2. <div class="RaceData02"> テキスト（合成 fixture の "G1" など）
       3. <div class="RaceData01"> テキスト
       4. <span class="smalltxt"> テキスト（db.netkeiba 互換）
@@ -219,7 +184,7 @@ def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> N
       <h1 class="RaceName"> → <span class="RaceTitle"> → <span class="race_name"> → data_intro > h1。
     """
     if len(race_id) >= 6:
-        result.course = _COURSE_CODE_MAP.get(race_id[4:6])
+        result.course = COURSE_CODE_MAP.get(race_id[4:6])
 
     # --- 日付 ---
     title_el = soup.find("title")
@@ -235,13 +200,13 @@ def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> N
     racedata01 = soup.find(class_="RaceData01")
     search_area = racedata01.get_text(" ", strip=True) if racedata01 else soup.get_text(" ", strip=True)
 
-    sd_m = _SURFACE_DIST_RE.search(search_area)
+    sd_m = SURFACE_DIST_RE.search(search_area)
     if sd_m:
         result.surface = sd_m.group(1)
         result.distance = int(sd_m.group(2))
 
     # 天候は開催前のため公表されていない場合がある（None のまま）
-    weather_m = _WEATHER_RE.search(search_area)
+    weather_m = WEATHER_RE.search(search_area)
     if weather_m:
         result.weather = weather_m.group(1)
 
@@ -264,24 +229,24 @@ def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> N
     race_class: str | None = None
 
     if title_el:
-        race_class = _normalize_class(title_el.get_text(strip=True))
+        race_class = normalize_race_class(title_el.get_text(strip=True))
 
     if race_class is None:
         for cls in ("RaceData02", "RaceData01"):
             el = soup.find(class_=cls)
             if el:
                 text = el.get_text(strip=True)
-                race_class = _normalize_class(text)
+                race_class = normalize_race_class(text)
                 if race_class is not None:
                     break
 
     if race_class is None:
         smalltxt = soup.find(class_="smalltxt")
         if smalltxt:
-            race_class = _normalize_class(smalltxt.get_text(strip=True))
+            race_class = normalize_race_class(smalltxt.get_text(strip=True))
 
     if race_class is None and result.name:
-        race_class = _normalize_class(result.name)
+        race_class = normalize_race_class(result.name)
 
     result.race_class = race_class
 
@@ -371,7 +336,7 @@ def _parse_entry_row(
     horse_link = link_for("馬名", 3)
     if horse_link is None:
         return None
-    horse_id = _extract_id_from_href(horse_link["href"], "horse")
+    horse_id = extract_id_from_href(horse_link["href"], "horse")
     if horse_id is None:
         return None
 
@@ -393,22 +358,22 @@ def _parse_entry_row(
 
     jockey_link = link_for("騎手", 6)
     if jockey_link:
-        entry.jockey_id = _extract_id_from_href(jockey_link["href"], "jockey")
+        entry.jockey_id = extract_id_from_href(jockey_link["href"], "jockey")
         entry.jockey_name = name_from_link(jockey_link)
 
     # "調教師" は合成 fixture の列名。実 HTML では "厩舎" が使われるが、
     # _build_col_aliases() で "調教師" にエイリアスされている。
     trainer_link = link_for("調教師")
     if trainer_link:
-        entry.trainer_id = _extract_id_from_href(trainer_link["href"], "trainer")
+        entry.trainer_id = extract_id_from_href(trainer_link["href"], "trainer")
         entry.trainer_name = name_from_link(trainer_link)
 
     # 馬体重: "計不" や未公表の場合は None。
     # "馬体重" は合成 fixture の列名。実 HTML では "馬体重(増減)" が使われるが、
     # _build_col_aliases() で "馬体重" にエイリアスされている。
-    # 実 HTML では "484 (0)" のようにスペースあり -> _WEIGHT_RE の \s* で吸収。
+    # 実 HTML では "484 (0)" のようにスペースあり -> WEIGHT_RE の \s* で吸収。
     hw_text = text_for("馬体重")
-    m = _WEIGHT_RE.search(hw_text)
+    m = WEIGHT_RE.search(hw_text)
     if m:
         entry.horse_weight = int(m.group(1))
         entry.horse_weight_diff = int(m.group(2))
@@ -448,7 +413,7 @@ def parse_shutuba(html: str, race_id: str) -> ParsedShutuba:
 
     実 HTML 対応のポイント:
       - 列名エイリアス: 厩舎→調教師, 馬体重(増減)→馬体重, 更新→単勝
-      - 馬体重の "484 (0)" 形式（スペースあり括弧）を _WEIGHT_RE で処理
+      - 馬体重の "484 (0)" 形式（スペースあり括弧）を WEIGHT_RE で処理
       - <title> タグから日付 (YYYY-MM-DD) と race_class (G1/G2/G3 等) を抽出
       - 単勝オッズ "---.-" と人気 "**" は None として扱う（発走前未公開）
 

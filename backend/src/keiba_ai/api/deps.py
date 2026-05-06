@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, TypeVar
 
-from fastapi import Depends, Request
+import pandas as pd
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.core.settings_store import SettingsStore
 from keiba_ai.db.session import session_scope
+from keiba_ai.features.builder import build_inference_frame
+
+T = TypeVar("T")
 
 
 def get_engine(request: Request) -> Engine:
@@ -31,3 +35,23 @@ def get_settings_store(request: Request) -> SettingsStore:
 
 def get_job_registry(request: Request) -> JobRegistry:
     return request.app.state.job_registry
+
+
+def get_or_404(session: Session, model: type[T], pk: object, label: str | None = None) -> T:
+    """`session.get(model, pk)` の結果が None なら 404 を投げる。"""
+    obj = session.get(model, pk)
+    if obj is None:
+        name = label or model.__name__
+        raise HTTPException(status_code=404, detail=f"{name} {pk!r} not found")
+    return obj
+
+
+def build_inference_frame_or_404(session: Session, race_id: str) -> pd.DataFrame:
+    """`build_inference_frame` の API ラッパ。Race 不在 / entry 0 を 404 に変換する。"""
+    try:
+        frame = build_inference_frame(session, race_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if frame.empty:
+        raise HTTPException(status_code=404, detail=f"No entries found for race {race_id!r}")
+    return frame

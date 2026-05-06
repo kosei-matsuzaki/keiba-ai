@@ -205,23 +205,29 @@ export interface BetFilterParams {
   source?: string;      // 'recommendation' | 'manual'
 }
 
+/**
+ * params オブジェクトから空でない値だけを searchParams 形式の dict にまとめる。
+ * undefined/null/空文字は除外。bet 系 fetcher で重複していた if-set ブロックを共通化。
+ */
+function buildSearchParams(params: object): Record<string, string | number> {
+  const result: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 export function fetchBetList(
   params: BetFilterParams & { page?: number; page_size?: number }
 ): Promise<BetRecordList> {
-  const searchParams: Record<string, string | number> = {};
-  if (params.from) searchParams['from'] = params.from;
-  if (params.to) searchParams['to'] = params.to;
-  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
-  if (params.source) searchParams['source'] = params.source;
+  const searchParams = buildSearchParams(params);
   return getClient().then((c) => c.get('bets', { searchParams }).json<BetRecordList>());
 }
 
 export function fetchBetSummary(params: BetFilterParams = {}): Promise<BetSummary> {
-  const searchParams: Record<string, string> = {};
-  if (params.from) searchParams['from'] = params.from;
-  if (params.to) searchParams['to'] = params.to;
-  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
-  if (params.source) searchParams['source'] = params.source;
+  const searchParams = buildSearchParams(params);
   return getClient().then((c) =>
     c.get('bets/summary', { searchParams }).json<BetSummary>()
   );
@@ -230,12 +236,7 @@ export function fetchBetSummary(params: BetFilterParams = {}): Promise<BetSummar
 export function fetchBetTimeseries(
   params: BetFilterParams & { bucket?: 'day' | 'week' | 'month' }
 ): Promise<BetTimeseries> {
-  const searchParams: Record<string, string> = {};
-  if (params.from) searchParams['from'] = params.from;
-  if (params.to) searchParams['to'] = params.to;
-  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
-  if (params.source) searchParams['source'] = params.source;
-  if (params.bucket) searchParams['bucket'] = params.bucket;
+  const searchParams = buildSearchParams(params);
   return getClient().then((c) =>
     c.get('bets/timeseries', { searchParams }).json<BetTimeseries>()
   );
@@ -244,12 +245,7 @@ export function fetchBetTimeseries(
 export function fetchBetBreakdown(
   params: BetFilterParams & { group_by?: 'bet_type' | 'race_class' | 'month' | 'source' }
 ): Promise<BetBreakdown> {
-  const searchParams: Record<string, string> = {};
-  if (params.from) searchParams['from'] = params.from;
-  if (params.to) searchParams['to'] = params.to;
-  if (params.bet_type) searchParams['bet_type'] = params.bet_type;
-  if (params.source) searchParams['source'] = params.source;
-  if (params.group_by) searchParams['group_by'] = params.group_by;
+  const searchParams = buildSearchParams(params);
   return getClient().then((c) =>
     c.get('bets/breakdown', { searchParams }).json<BetBreakdown>()
   );
@@ -259,10 +255,9 @@ export function fetchBetBreakdown(
 export async function buildBetExportUrl(params: BetFilterParams): Promise<string> {
   const baseUrl = await getApiBaseUrl();
   const searchParams = new URLSearchParams();
-  if (params.from) searchParams.set('from', params.from);
-  if (params.to) searchParams.set('to', params.to);
-  if (params.bet_type) searchParams.set('bet_type', params.bet_type);
-  if (params.source) searchParams.set('source', params.source);
+  for (const [key, value] of Object.entries(buildSearchParams(params))) {
+    searchParams.set(key, String(value));
+  }
   const qs = searchParams.toString();
   return `${baseUrl}/api/bets/export.csv${qs ? '?' + qs : ''}`;
 }

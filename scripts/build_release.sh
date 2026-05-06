@@ -11,12 +11,10 @@
 set -e
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-GAME_DIR="$SCRIPT_DIR/.."
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
 
-is_windows() {
-    [[ "$(uname -s)" == *MINGW* ]] || [[ "$(uname -s)" == *CYGWIN* ]] || \
-    [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "win"* ]]
-}
+GAME_DIR="$SCRIPT_DIR/.."
 
 # ── Step 1: Build the Python sidecar ───────────────────────────────────────
 # build_backend.sh は src-tauri/binaries/ と games/keiba-ai/binaries/ の

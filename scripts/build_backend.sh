@@ -5,6 +5,9 @@
 set -e
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
 GAME_DIR="$SCRIPT_DIR/.."
 BACKEND_DIR="$GAME_DIR/backend"
 BINARIES_DIR="$GAME_DIR/src-tauri/binaries"
@@ -37,23 +40,10 @@ uv run pyinstaller \
     src/keiba_ai/main.py
 
 # Determine target triple from rustc so the filename matches Tauri's expectation.
-if command -v rustc &>/dev/null; then
-    TARGET_TRIPLE=$(rustc -vV | sed -n 's/host: //p')
-else
-    # Fallback: detect OS/arch manually when rustc is unavailable.
-    OS=$(uname -s)
-    ARCH=$(uname -m)
-    case "$OS" in
-        Linux*)  TARGET_TRIPLE="${ARCH}-unknown-linux-gnu" ;;
-        Darwin*) TARGET_TRIPLE="${ARCH}-apple-darwin" ;;
-        MINGW*|MSYS*|CYGWIN*) TARGET_TRIPLE="${ARCH}-pc-windows-msvc" ;;
-        *) TARGET_TRIPLE="${ARCH}-unknown-unknown" ;;
-    esac
-fi
+TARGET_TRIPLE=$(detect_target_triple)
 
 # On Windows the PyInstaller output has .exe; on Linux/macOS it does not.
-if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "win"* ]] || \
-   [[ "$(uname -s)" == *MINGW* ]] || [[ "$(uname -s)" == *CYGWIN* ]]; then
+if is_windows; then
     SRC_EXE="dist/keiba-ai-backend.exe"
     DEST_NAME="keiba-ai-backend-${TARGET_TRIPLE}.exe"
 else
