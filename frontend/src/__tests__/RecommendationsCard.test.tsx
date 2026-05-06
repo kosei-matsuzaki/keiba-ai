@@ -17,7 +17,7 @@ vi.mock('../lib/api', () => ({
 const mockData: RecommendationsResponse = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
-  odds_source: 'baseline',
+  odds_source: 'live',
   candidates: [
     {
       bet_type: '単勝',
@@ -45,7 +45,7 @@ const mockData: RecommendationsResponse = {
 const mockDataWithZeroStake: RecommendationsResponse = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
-  odds_source: 'baseline',
+  odds_source: 'past',
   candidates: [
     {
       bet_type: '単勝',
@@ -66,6 +66,34 @@ const mockDataWithZeroStake: RecommendationsResponse = {
       ev: 0.5,
       stake: 0,
       post_positions: [2, 3],
+    },
+  ],
+};
+
+const mockDataWithNullOdds: RecommendationsResponse = {
+  race_id: '202406010101',
+  bankroll_at_decision: 100_000,
+  odds_source: 'past',
+  candidates: [
+    {
+      bet_type: '単勝',
+      combo: '3',
+      pattern: 'box',
+      prob: 0.35,
+      est_odds: 3.0,
+      ev: 1.05,
+      stake: 300,
+      post_positions: [3],
+    },
+    {
+      bet_type: '馬連',
+      combo: '1-3',
+      pattern: 'box',
+      prob: 0.2,
+      est_odds: null,
+      ev: null,
+      stake: 0,
+      post_positions: [1, 3],
     },
   ],
 };
@@ -114,7 +142,7 @@ describe('RecommendationsCard', () => {
     wrap(
       <RecommendationsCard
         raceId="202406010101"
-        data={{ race_id: '202406010101', bankroll_at_decision: 100_000, odds_source: 'baseline', candidates: [] }}
+        data={{ race_id: '202406010101', bankroll_at_decision: 100_000, odds_source: 'unknown', candidates: [] }}
         isPending={false}
         isError={false}
         error={null}
@@ -277,7 +305,7 @@ describe('RecommendationsCard', () => {
     expect(screen.getByText(/候補.*うち.*件が推奨/)).toBeInTheDocument();
   });
 
-  it('shows est_odds note below the table', () => {
+  it('shows live odds note when odds_source is live', () => {
     wrap(
       <RecommendationsCard
         raceId="202406010101"
@@ -288,8 +316,111 @@ describe('RecommendationsCard', () => {
       />
     );
 
-    expect(
-      screen.getByText(/推定オッズは過去払戻の平均値.*暫定/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/当日リアルオッズ/)).toBeInTheDocument();
+  });
+
+  it('shows past odds note when odds_source is past', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithZeroStake}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    expect(screen.getByText(/確定オッズ.*外れ combo/)).toBeInTheDocument();
+  });
+
+  it('shows unknown odds note when odds_source is unknown', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={{
+          race_id: '202406010101',
+          bankroll_at_decision: 100_000,
+          odds_source: 'unknown',
+          candidates: [
+            {
+              bet_type: '単勝',
+              combo: '1',
+              pattern: 'box',
+              prob: 0.4,
+              est_odds: null,
+              ev: null,
+              stake: 0,
+              post_positions: [1],
+            },
+          ],
+        }}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    expect(screen.getByText(/オッズ取得待ち/)).toBeInTheDocument();
+  });
+
+  it('shows — for null est_odds and null ev', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithNullOdds}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    // The em dash "—" should appear for the null odds row
+    const dashCells = screen.getAllByText('—');
+    // est_odds and ev both null → 2 dashes for that row
+    expect(dashCells.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('null est_odds row has stake=0 and buy button disabled', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithNullOdds}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    const buyButtons = screen.getAllByRole('button', { name: '買う' });
+    // 馬連 row has null odds → stake=0 → disabled
+    const disabledButtons = buyButtons.filter((btn) => btn.hasAttribute('disabled'));
+    expect(disabledButtons.length).toBeGreaterThan(0);
+  });
+
+  it('null ev rows sort after rows with ev values', () => {
+    const dataWithMixed: RecommendationsResponse = {
+      race_id: '202406010101',
+      bankroll_at_decision: 100_000,
+      odds_source: 'past',
+      candidates: [
+        { bet_type: '馬連', combo: '1-3', pattern: 'box', prob: 0.2, est_odds: null, ev: null, stake: 0, post_positions: [1, 3] },
+        { bet_type: '単勝', combo: '3', pattern: 'box', prob: 0.35, est_odds: 3.0, ev: 1.05, stake: 300, post_positions: [3] },
+      ],
+    };
+
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={dataWithMixed}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    const rows = screen.getAllByRole('row').slice(1); // skip header
+    // 単勝 (ev=1.05, stake=300) should appear before 馬連 (ev=null, stake=0)
+    const firstRowText = rows[0].textContent ?? '';
+    expect(firstRowText).toContain('単勝');
   });
 });

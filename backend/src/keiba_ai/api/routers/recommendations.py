@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.bet_odds import compute_race_odds
+from keiba_ai.ai.bet_odds import compute_past_race_odds, compute_race_odds
 from keiba_ai.ai.bet_strategy import recommend_for_race
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations
 from keiba_ai.ai.registry import get_active, load_model
@@ -27,8 +28,8 @@ class RecommendationCandidate(BaseModel):
     combo: str
     pattern: str
     prob: float
-    est_odds: float
-    ev: float
+    est_odds: float | None
+    ev: float | None
     stake: int
     post_positions: list[int]
 
@@ -37,7 +38,42 @@ class RecommendationsResponse(BaseModel):
     race_id: str
     bankroll_at_decision: int
     candidates: list[RecommendationCandidate]
-    odds_source: Literal["live", "baseline"] = "baseline"
+    odds_source: Literal["live", "past", "unknown"] = "unknown"
+
+
+def _resolve_odds_source(
+    session: Session,
+    race_id: str,
+) -> tuple[dict[str, dict[str, float]] | None, Literal["live", "past", "unknown"]]:
+    """Determine odds to use and the resulting odds_source label.
+
+    Priority: live > past (past races only) > unknown.
+
+    Returns:
+        (race_odds, odds_source) where race_odds is None when unknown.
+    """
+    # 1. Try live_odds table first
+    live_odds = compute_race_odds(session, race_id)
+    if live_odds:
+        return live_odds, "live"
+
+    # 2. For past races only: try confirmed payouts / entries odds
+    # Determine if race date is before today to avoid calling compute_past_race_odds
+    # on today's races (which have no results yet).
+    from keiba_ai.db.models.race import Race as RaceModel
+    from sqlalchemy import select as sa_select
+
+    race_row = session.execute(
+        sa_select(RaceModel.date).where(RaceModel.race_id == race_id)
+    ).first()
+
+    today_str = datetime.date.today().isoformat()
+    if race_row is not None and race_row.date < today_str:
+        past_odds = compute_past_race_odds(session, race_id)
+        if past_odds:
+            return past_odds, "past"
+
+    return None, "unknown"
 
 
 @router.get("/recommendations/{race_id}", response_model=RecommendationsResponse)
@@ -54,9 +90,10 @@ def get_recommendations(
     1. Resolve active model (503 if none).
     2. Build inference frame for race_id (404 if not found or empty).
     3. Run predict_race to get win_prob / place_prob per horse.
-    4. Run predict_race_with_combinations for combination EVs.
-    5. Load Settings (bankroll, kelly_fraction, etc.) and call recommend_for_race.
-    6. Return RecommendationsResponse.
+    4. Resolve race odds: live → past → unknown.
+    5. Run predict_race_with_combinations for combination EVs.
+    6. Load Settings (bankroll, kelly_fraction, etc.) and call recommend_for_race.
+    7. Return RecommendationsResponse.
     """
     active_path = get_active(session)
     if active_path is None:
@@ -83,26 +120,23 @@ def get_recommendations(
     pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
-    # Step 3.5: fetch live odds if available
-    race_odds = compute_race_odds(session, race_id)
-    if race_odds:
-        odds_source: str = "live"
-    else:
-        odds_source = "baseline"
+    # Step 4: resolve confirmed odds (live > past > unknown)
+    race_odds, odds_source = _resolve_odds_source(session, race_id)
+    if odds_source == "unknown":
         logger.warning(
-            "live_odds not available for race %s — falling back to baseline odds", race_id
+            "No confirmed odds available for race %s — est_odds will be null", race_id
         )
 
-    # Step 4: combination EVs (capped by top_k for performance)
+    # Step 5: combination EVs (capped by top_k for performance)
     combinations_by_type = predict_race_with_combinations(
         model,
         frame,
         session=session,
         top_k_combinations=top_k,
-        race_odds=race_odds if race_odds else None,
+        race_odds=race_odds,
     )
 
-    # Step 5: load settings and run recommendation logic
+    # Step 6: load settings and run recommendation logic
     settings = store.load()
     bankroll: int = int(settings.get("bankroll", 100_000))
     kelly_fraction: float = float(settings.get("kelly_fraction", 0.25))

@@ -11,9 +11,12 @@ are rough estimates at best.
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
@@ -104,6 +107,104 @@ def compute_race_odds(
         if row.bet_type not in result:
             result[row.bet_type] = {}
         result[row.bet_type][row.combo] = row.odds
+
+    return result
+
+
+def compute_past_race_odds(
+    session: Session,
+    race_id: str,
+) -> dict[str, dict[str, float]]:
+    """過去レースの確定オッズを返す（取れた combo のみ）。
+
+    - 単勝: entries.odds_win から全馬の確定オッズ（締切時オッズ）
+    - 複勝: races.payout_place JSON の 1〜3 着馬のみ payout/100 = 確定オッズ
+    - 連系（馬連/ワイド/馬単/三連複/三連単）: payouts テーブルの amount/100 のみ（的中 combo のみ）
+
+    取得不能な combo（複勝の 4 着以下、連系の外れ）は dict に含めない。
+    呼び出し側は「ない combo は est_odds=None」で扱うこと。
+
+    Args:
+        session: SQLAlchemy Session.
+        race_id: 対象レースの race_id。
+
+    Returns:
+        {bet_type: {combo: odds}} 形式の 2 段ネスト dict。
+        compute_race_odds と同じ構造。
+    """
+    result: dict[str, dict[str, float]] = {}
+
+    # ── 単勝: entries.odds_win から全馬 ─────────────────────────────────────
+    entry_rows = session.execute(
+        select(Entry.post_position, Entry.odds_win)
+        .where(Entry.race_id == race_id)
+        .where(Entry.odds_win.is_not(None))
+        .where(Entry.post_position.is_not(None))
+    ).all()
+
+    if entry_rows:
+        result["単勝"] = {
+            str(row.post_position): row.odds_win
+            for row in entry_rows
+        }
+
+    # ── 複勝: races.payout_place JSON の 1〜3 着馬 ─────────────────────────
+    race_row = session.execute(
+        select(Race.payout_place)
+        .where(Race.race_id == race_id)
+    ).first()
+
+    if race_row is not None and race_row.payout_place is not None:
+        try:
+            # payout_place は {"1": 110, "2": 160, "3": 150} 形式の JSON 文字列
+            payout_place_map: dict[str, int] = json.loads(race_row.payout_place)
+        except (json.JSONDecodeError, TypeError):
+            payout_place_map = {}
+
+        if payout_place_map:
+            # finish_position ごとの post_position を引く
+            # payout_place_map のキーは finish_position（着順）
+            finish_positions = [int(k) for k in payout_place_map if k.isdigit()]
+            if finish_positions:
+                place_entry_rows = session.execute(
+                    select(Entry.post_position, Entry.finish_position)
+                    .where(Entry.race_id == race_id)
+                    .where(Entry.finish_position.in_(finish_positions))
+                    .where(Entry.post_position.is_not(None))
+                ).all()
+
+                finish_to_post = {
+                    row.finish_position: row.post_position
+                    for row in place_entry_rows
+                }
+
+                fuku_odds: dict[str, float] = {}
+                for finish_pos_str, amount in payout_place_map.items():
+                    if not finish_pos_str.isdigit():
+                        continue
+                    finish_pos = int(finish_pos_str)
+                    post_pos = finish_to_post.get(finish_pos)
+                    if post_pos is not None and amount is not None:
+                        fuku_odds[str(post_pos)] = amount / 100.0
+
+                if fuku_odds:
+                    result["複勝"] = fuku_odds
+
+    # ── 連系: payouts テーブルから的中 combo のみ ─────────────────────────
+    payout_rows = session.execute(
+        select(Payout.bet_type, Payout.combo, Payout.amount)
+        .where(Payout.race_id == race_id)
+        .where(Payout.amount.is_not(None))
+    ).all()
+
+    for row in payout_rows:
+        if row.bet_type in ("単勝", "複勝"):
+            # 単勝・複勝は上記で別途処理済み（payouts の単勝/複勝も入れると重複するが
+            # payouts テーブルの方が着順 1 位の確定値なので上書きでも OK）
+            continue
+        if row.bet_type not in result:
+            result[row.bet_type] = {}
+        result[row.bet_type][row.combo] = row.amount / 100.0
 
     return result
 

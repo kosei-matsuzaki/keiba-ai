@@ -47,7 +47,8 @@ combo 文字列形式は payouts.combo と一致させる:
   三連複: "3-5-9" 昇順
   三連単: "3→5→9" 順序つき
 
-オッズ未確定（"---.-" 等）は None。
+オッズ未確定（"---.-" 等）の行は LiveOddsRow を返さない（skip）。
+確定オッズが取れた combo のみ live_odds テーブルに書き込まれる。
 """
 
 from __future__ import annotations
@@ -181,6 +182,9 @@ def parse_tan_fuku_odds(html: str) -> list[LiveOddsRow]:
 
             if is_range:
                 odds_min, odds_max = _parse_range_odds(odds_text)
+                # オッズ未確定の行は live_odds に書き込まない
+                if odds_min is None:
+                    continue
                 rows.append(LiveOddsRow(
                     bet_type=bet_type,
                     combo=str(horse_no),
@@ -190,6 +194,9 @@ def parse_tan_fuku_odds(html: str) -> list[LiveOddsRow]:
                 ))
             else:
                 odds_val = _parse_odds_text(odds_text)
+                # オッズ未確定の行は live_odds に書き込まない
+                if odds_val is None:
+                    continue
                 rows.append(LiveOddsRow(
                     bet_type=bet_type,
                     combo=str(horse_no),
@@ -282,6 +289,9 @@ def _parse_pair_odds_tables(
 
             if is_range:
                 odds_min, odds_max = _parse_range_odds(odds_text)
+                # オッズ未確定の行は live_odds に書き込まない
+                if odds_min is None:
+                    continue
                 rows.append(LiveOddsRow(
                     bet_type=bet_type,
                     combo=combo,
@@ -290,10 +300,14 @@ def _parse_pair_odds_tables(
                     popularity=None,
                 ))
             else:
+                odds_val = _parse_odds_text(odds_text)
+                # オッズ未確定の行は live_odds に書き込まない
+                if odds_val is None:
+                    continue
                 rows.append(LiveOddsRow(
                     bet_type=bet_type,
                     combo=combo,
-                    odds=_parse_odds_text(odds_text),
+                    odds=odds_val,
                     odds_max=None,
                     popularity=None,
                 ))
@@ -336,12 +350,16 @@ def parse_umatan_odds(html: str) -> list[LiveOddsRow]:
                 continue
 
             odds_text = cells[1].get_text(strip=True)
+            odds_val = _parse_odds_text(odds_text)
+            # オッズ未確定の行は live_odds に書き込まない
+            if odds_val is None:
+                continue
             combo = _combo_ordered(axis_no, partner_no)
 
             rows.append(LiveOddsRow(
                 bet_type="馬単",
                 combo=combo,
-                odds=_parse_odds_text(odds_text),
+                odds=odds_val,
                 odds_max=None,
                 popularity=None,
             ))
@@ -411,12 +429,16 @@ def parse_sanrenpuku_odds(html: str) -> list[LiveOddsRow]:
                 continue
 
             odds_text = cells[1].get_text(strip=True)
+            odds_val = _parse_odds_text(odds_text)
+            # オッズ未確定の行は live_odds に書き込まない
+            if odds_val is None:
+                continue
             combo = _combo_ascending(axis_no, second_no, third_no)
 
             rows.append(LiveOddsRow(
                 bet_type="三連複",
                 combo=combo,
-                odds=_parse_odds_text(odds_text),
+                odds=odds_val,
                 odds_max=None,
                 popularity=None,
             ))
@@ -481,12 +503,16 @@ def parse_sanrentan_odds(html: str) -> list[LiveOddsRow]:
                 continue
 
             odds_text = cells[1].get_text(strip=True)
+            odds_val = _parse_odds_text(odds_text)
+            # オッズ未確定の行は live_odds に書き込まない
+            if odds_val is None:
+                continue
             combo = _combo_ordered(axis_no, second_no, third_no)
 
             rows.append(LiveOddsRow(
                 bet_type="三連単",
                 combo=combo,
-                odds=_parse_odds_text(odds_text),
+                odds=odds_val,
                 odds_max=None,
                 popularity=None,
             ))

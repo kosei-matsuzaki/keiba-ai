@@ -21,16 +21,17 @@ class CombinationPrediction(BaseModel):
             - 馬連/ワイド/三連複: post positions joined by '-' in ascending order (e.g. '3-7')
             - 馬単/三連単: post positions joined by '→' in order (e.g. '3→7')
         prob: Estimated probability for this combination.
-        est_odds: Estimated odds multiplier (baseline from historical payouts).
-        ev: Expected value = prob * est_odds.
+        est_odds: Confirmed odds multiplier. None when odds are not available for this combo
+            (e.g. non-winning combos in past-race mode, or race_odds not yet fetched).
+        ev: Expected value = prob * est_odds. None when est_odds is None.
         post_positions: Tuple of post position numbers involved (ascending for
             unordered bets, prediction-order for ordered bets).
     """
 
     combo: str
     prob: float
-    est_odds: float
-    ev: float
+    est_odds: float | None
+    ev: float | None
     post_positions: tuple[int, ...]
 
 
@@ -42,9 +43,9 @@ class BetCandidate(BaseModel):
         combo: Human-readable combination string (same format as CombinationPrediction.combo).
         pattern: Buy pattern used to generate this candidate.
         prob: Estimated probability for this combination.
-        est_odds: Estimated odds multiplier.
-        ev: Expected value = prob * est_odds.
-        stake: Recommended stake in yen (0 if not recommended or EV <= 1.0).
+        est_odds: Confirmed odds multiplier. None when odds data is unavailable for this combo.
+        ev: Expected value = prob * est_odds. None when est_odds is None.
+        stake: Recommended stake in yen (0 if not recommended, EV <= 1.0, or est_odds is None).
         post_positions: Tuple of post position numbers involved.
     """
 
@@ -52,8 +53,8 @@ class BetCandidate(BaseModel):
     combo: str
     pattern: Literal["nagashi", "box", "formation"]
     prob: float
-    est_odds: float
-    ev: float
+    est_odds: float | None
+    ev: float | None
     stake: int
     post_positions: tuple[int, ...]
 
