@@ -16,7 +16,11 @@ from keiba_ai.db.base import Base
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.race import Race
-from keiba_ai.features.pedigree import compute_pedigree_features
+from keiba_ai.features.pedigree import (
+    build_pedigree_cache,
+    compute_pedigree_features,
+    compute_pedigree_features_from_cache,
+)
 
 
 @pytest.fixture()
@@ -142,3 +146,75 @@ def test_sire_with_all_wins(pedigree_engine):
 
     # H003 has no entries in DB → rate is None
     assert result["sire_progeny_win_rate"] is None
+
+
+# ---------------------------------------------------------------------------
+# Cache parity tests (build_pedigree_cache + compute_pedigree_features_from_cache)
+# ---------------------------------------------------------------------------
+
+
+def _assert_pedigree_equal(a: dict, b: dict, *, ctx: str) -> None:
+    assert a.keys() == b.keys()
+    for k in a:
+        # both sides may be float or None
+        assert a[k] == b[k], f"{k} {ctx}: {a[k]!r} vs {b[k]!r}"
+
+
+def test_pedigree_cache_parity_known_sire_and_dam(pedigree_engine):
+    """Known sire / dam combinations match SQL version bit-for-bit."""
+    base = date(2024, 6, 15)
+    cases = [
+        ("ディープインパクト", "スターオブコジーン"),
+        ("ディープインパクト", "アドマイヤグルーヴ"),
+        ("ディープインパクト", None),
+        (None, "アドマイヤグルーヴ"),
+    ]
+    with Session(pedigree_engine) as session:
+        cache = build_pedigree_cache(session)
+        for sire, dam in cases:
+            sql_r = compute_pedigree_features(session, sire, dam, before_date=base)
+            cache_r = compute_pedigree_features_from_cache(cache, sire, dam, before_date=base)
+            _assert_pedigree_equal(sql_r, cache_r, ctx=f"sire={sire!r}, dam={dam!r}")
+
+
+def test_pedigree_cache_parity_unknown_names(pedigree_engine):
+    """Unknown / NULL sire/dam → SQL と同じ None を返す。"""
+    base = date(2024, 6, 15)
+    with Session(pedigree_engine) as session:
+        cache = build_pedigree_cache(session)
+        # 1. completely unknown sire
+        sql_r = compute_pedigree_features(session, "ゴールドシップ", None, before_date=base)
+        cache_r = compute_pedigree_features_from_cache(cache, "ゴールドシップ", None, before_date=base)
+        _assert_pedigree_equal(sql_r, cache_r, ctx="(unknown sire)")
+        # 2. both None
+        sql_r = compute_pedigree_features(session, None, None, before_date=base)
+        cache_r = compute_pedigree_features_from_cache(cache, None, None, before_date=base)
+        _assert_pedigree_equal(sql_r, cache_r, ctx="(both None)")
+
+
+def test_pedigree_cache_horse_to_sire_dam_lookup(pedigree_engine):
+    """horse_to_sire_dam が全ての horse を含み正しい sire/dam を返す。"""
+    with Session(pedigree_engine) as session:
+        cache = build_pedigree_cache(session)
+    assert cache.horse_to_sire_dam["H001"] == ("ディープインパクト", "スターオブコジーン")
+    assert cache.horse_to_sire_dam["H002"] == ("ディープインパクト", "アドマイヤグルーヴ")
+    assert cache.horse_to_sire_dam["H003"] == ("キングカメハメハ", None)
+
+
+def test_pedigree_cache_two_sql_queries(pedigree_engine):
+    """build_pedigree_cache emits exactly 2 SELECTs (horses + entries-join)."""
+    from sqlalchemy import event
+
+    queries: list[str] = []
+
+    def _capture(conn, cursor, statement, params, context, executemany):  # noqa: ARG001
+        queries.append(statement)
+
+    event.listen(pedigree_engine, "before_cursor_execute", _capture)
+    try:
+        with Session(pedigree_engine) as session:
+            build_pedigree_cache(session)
+        select_count = sum(1 for q in queries if q.strip().lower().startswith("select"))
+        assert select_count == 2, f"expected 2 SELECTs, got {select_count}: {queries}"
+    finally:
+        event.remove(pedigree_engine, "before_cursor_execute", _capture)
