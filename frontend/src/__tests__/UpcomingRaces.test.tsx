@@ -208,7 +208,7 @@ describe('UpcomingRaces empty/error states', () => {
   });
 
   it('shows skeleton while loading', () => {
-    vi.mocked(fetchUpcomingRaces).mockReturnValue(new Promise(() => {}));
+    vi.mocked(fetchThisWeekendRaces).mockReturnValue(new Promise(() => {}));
     renderUpcoming();
     const skeletons = document.querySelectorAll('[data-slot="skeleton"]');
     expect(skeletons.length).toBeGreaterThan(0);
