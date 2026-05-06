@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from keiba_ai.scraper.parsers.race_info_top import ParseError, parse_race_ids
+from keiba_ai.scraper.parsers.race_info_top import (
+    ParseError,
+    extract_jra_race_ids_with_kaisai_groups,
+    parse_race_ids,
+)
 
 
 def _make_payload(*race_ids: str) -> dict:
@@ -81,3 +85,49 @@ class TestParseRaceIds:
         payload = {"status": "OK", "data": {"info": "not-a-list"}}
         with pytest.raises(ParseError):
             parse_race_ids(payload)
+
+
+class TestExtractJraRaceIdsWithKaisaiGroups:
+    def test_dedupes_repeated_race_ids_within_a_group(self) -> None:
+        """netkeiba race_info_top API は同じ race_id を 4-5 回返すことがあるため、
+        groups[key] と jra_race_ids 双方で重複排除されている必要がある。
+        """
+        # 同じ race_id を 4 回繰り返す（実 API の挙動を再現）
+        payload = _make_payload(
+            "202605020501", "202605020501", "202605020501", "202605020501",
+            "202605020502", "202605020502", "202605020502",
+        )
+        jra_ids, groups = extract_jra_race_ids_with_kaisai_groups(payload)
+
+        assert jra_ids == ["202605020501", "202605020502"]
+        assert "2026050205" in groups
+        assert groups["2026050205"] == ["202605020501", "202605020502"]
+
+    def test_groups_by_kaisai_day_key(self) -> None:
+        """race_id[:10] で kaisai_day_key を作り、別キーごとにリスト化する。"""
+        payload = _make_payload(
+            # venue 05 / kaisai 02 / day 05
+            "202605020501", "202605020512",
+            # venue 06 / kaisai 02 / day 05
+            "202606020501",
+            # venue 05 / kaisai 02 / day 06 (異なる日)
+            "202605020601",
+        )
+        _, groups = extract_jra_race_ids_with_kaisai_groups(payload)
+
+        assert set(groups.keys()) == {"2026050205", "2026060205", "2026050206"}
+        assert groups["2026050205"] == ["202605020501", "202605020512"]
+        assert groups["2026060205"] == ["202606020501"]
+        assert groups["2026050206"] == ["202605020601"]
+
+    def test_excludes_nar_venues(self) -> None:
+        """venue code 11 以上 (NAR) は除外する。"""
+        payload = _make_payload(
+            "202605020501",  # JRA (venue 05)
+            "202605021101",  # NAR (venue 11)
+            "202605021201",  # NAR (venue 12)
+        )
+        jra_ids, groups = extract_jra_race_ids_with_kaisai_groups(payload)
+
+        assert jra_ids == ["202605020501"]
+        assert list(groups.keys()) == ["2026050205"]
