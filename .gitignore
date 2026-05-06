@@ -13,13 +13,17 @@ src-tauri/binaries/
 src-tauri/gen/
 binaries/
 data/raw/
-data/keiba.db
-data/keiba.db-journal
-data/keiba.db-wal
-data/keiba.db-shm
+data/cache/
+data/logs/
 data/models/
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/*.log
+data/settings.json
+data/lgb_params_prod.json
 
 # 調査用に curl で取得した HTML サンプル（コミット対象外）
-horse_sample.html
-horse_ped_sample.html
 *_sample.html
+*_ped.html

@@ -42,7 +42,6 @@ import os
 
 import httpx
 import sqlalchemy as sa
-from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -54,9 +53,9 @@ from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.jockey import Jockey
 from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.scrape_log import ScrapeLog
 from keiba_ai.db.models.trainer import Trainer
 from keiba_ai.db.session import make_engine, session_scope
+from keiba_ai.jobs.scrape_log import record_scrape_log
 from keiba_ai.scraper import cache as cache_module
 from keiba_ai.scraper import stop_flag
 from keiba_ai.scraper.netkeiba import NetkeibaClient
@@ -70,23 +69,6 @@ logger = get_logger(__name__)
 
 _CARD_CALENDAR_URL = "https://race.netkeiba.com/top/race_list.html?kaisai_date={date}"
 _SHUTUBA_URL = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
-
-
-def _already_scraped(session: Session, url: str) -> bool:
-    row = session.execute(
-        select(ScrapeLog).where(ScrapeLog.url == url, ScrapeLog.status == "ok").limit(1)
-    ).first()
-    return row is not None
-
-
-def _record_scrape_log(
-    session: Session,
-    url: str,
-    status: str,
-    content_hash: str | None = None,
-) -> None:
-    fetched_at = datetime.datetime.now(datetime.UTC).isoformat()
-    session.add(ScrapeLog(url=url, fetched_at=fetched_at, status=status, content_hash=content_hash))
 
 
 def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
@@ -274,7 +256,7 @@ async def _ingest_race_ids(
                     logger.warning(
                         "Shutuba HTML lacks date for race %s; skipping", race_id
                     )
-                    _record_scrape_log(session, shutuba_url, "error")
+                    record_scrape_log(session, shutuba_url, "error")
                     session.commit()
                     counters["errors"] += 1
                     continue
@@ -285,7 +267,7 @@ async def _ingest_race_ids(
             for e in parsed.entries:
                 _upsert_entry_from_shutuba(session, e)
 
-            _record_scrape_log(session, shutuba_url, "ok", cache_module.content_hash(html))
+            record_scrape_log(session, shutuba_url, "ok", cache_module.content_hash(html))
             session.commit()
 
             counters["fetched"] += 1
@@ -297,7 +279,7 @@ async def _ingest_race_ids(
             logger.error("Error ingesting shutuba race %s: %s", race_id, exc)
             session.rollback()
             try:
-                _record_scrape_log(session, shutuba_url, "error")
+                record_scrape_log(session, shutuba_url, "error")
                 session.commit()
             except Exception:
                 session.rollback()

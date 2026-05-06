@@ -6,18 +6,10 @@ No random shuffling — future data must never appear in training or validation.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
-
-
-def _to_date(s: str) -> date:
-    return datetime.strptime(s, "%Y-%m-%d").date()
-
-
-def _date_minus_months(d: date, months: int) -> date:
-    return d - relativedelta(months=months)
 
 
 def time_split(
@@ -42,10 +34,10 @@ def time_split(
         return empty, empty, empty
 
     max_date_str: str = frame["date"].max()
-    ref_date = _to_date(train_end) if train_end else _to_date(max_date_str)
+    ref_date = date.fromisoformat(train_end if train_end else max_date_str)
 
-    test_start = _date_minus_months(ref_date, test_months)
-    valid_start = _date_minus_months(test_start, valid_months)
+    test_start = ref_date - relativedelta(months=test_months)
+    valid_start = test_start - relativedelta(months=valid_months)
 
     test_start_str = test_start.isoformat()
     valid_start_str = valid_start.isoformat()

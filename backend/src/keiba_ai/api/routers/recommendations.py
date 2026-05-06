@@ -13,10 +13,9 @@ from keiba_ai.ai.bet_odds import compute_race_odds_with_sources
 from keiba_ai.ai.bet_strategy import recommend_for_race
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations
 from keiba_ai.ai.registry import get_active, load_model
-from keiba_ai.api.deps import get_session, get_settings_store
+from keiba_ai.api.deps import build_inference_frame_or_404, get_session, get_settings_store
 from keiba_ai.core.logging import get_logger
 from keiba_ai.core.settings_store import SettingsStore
-from keiba_ai.features.builder import build_inference_frame
 
 logger = get_logger(__name__)
 
@@ -119,13 +118,7 @@ def get_recommendations(
             detail="No active model. Train and activate a model first.",
         )
 
-    try:
-        frame = build_inference_frame(session, race_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    if frame.empty:
-        raise HTTPException(status_code=404, detail=f"No entries found for race {race_id!r}")
+    frame = build_inference_frame_or_404(session, race_id)
 
     model = load_model(active_path)
 

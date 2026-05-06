@@ -26,22 +26,20 @@ from dataclasses import dataclass, field
 from bs4 import BeautifulSoup, Tag
 
 from keiba_ai.core.logging import get_logger
+from keiba_ai.scraper.parsers.common import (
+    COURSE_CODE_MAP,
+    SURFACE_DIST_RE,
+    WEATHER_RE,
+    WEIGHT_RE,
+    extract_id_from_href,
+    normalize_race_class,
+)
 from keiba_ai.scraper.parsers.payout import parse_payout
 
 logger = get_logger(__name__)
 
 _TIME_RE = re.compile(r"(\d+):(\d+)\.(\d+)")
-_WEIGHT_RE = re.compile(r"(\d+)\(([+-]?\d+)\)")
 
-# 実 HTML ヘッダ形式（2026 時点）:
-#   "ダ右1200m / 天候:晴 / 馬場:良"
-#   "芝右 外1600m / 天候:晴 / 馬場:良"
-#   "障芝1200m" 等の障害競走
-# 旧フィクスチャ形式:
-#   "芝1600m / 天候:晴 / 馬場:良"
-# surface の直後にコース方向（右/左）、内外（内/外）、距離 が続く
-_SURFACE_DIST_RE = re.compile(r"(芝|ダ|障)(?:\s*[右左])?(?:\s*[内外])?\s*(\d{3,4})\s*m")
-_WEATHER_RE = re.compile(r"天候\s*[:：]\s*([^\s/]+)")
 # 馬場状態は「馬場 : 良」(旧フィクスチャ形式) または surface に続く形式（新）のどちらか
 # 新形式は芝→「芝 : 良」、ダート→「ダート : 良」、障害→「障 : 良」のように
 # surface 表記が異なる（"ダ" 1 文字ではなく "ダート" のフルスペル）。
@@ -56,45 +54,6 @@ _TRACK_NEW_RE = re.compile(r"(?:ダート|芝|ダ|障)\s*[:：]\s*([^\s/]+)")
 _GRADE_RE_LEGACY = re.compile(
     r"(GⅢ|GIII|G3|GⅡ|GII|G2|GⅠ|GI(?![IV])|G1|Listed|\bL\b|\bOP\b|重賞)"
 )
-
-# race_class 正規化マッピング（優先順序に従った (pattern, normalized) リスト）
-# Roman numeral と Unicode 全角ローマ数字を両方サポート。
-# "GIII" は "GII" / "GI" を内包するので順序が重要 (G3 → G2 → G1 の順で評価)。
-_CLASS_NORM_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"GⅢ|GIII|G3"), "G3"),
-    (re.compile(r"GⅡ|GII|G2"), "G2"),
-    # GI は GII / GIII の prefix と被るので、後ろが I/V でないことを保証
-    (re.compile(r"GⅠ|G1|GI(?![IV])"), "G1"),
-    (re.compile(r"Listed|\(L\)"), "Listed"),
-    (re.compile(r"重賞"), "重賞"),
-    (re.compile(r"未勝利"), "未勝利"),
-    (re.compile(r"新馬"), "新馬"),
-    (re.compile(r"1勝クラス"), "1勝クラス"),
-    (re.compile(r"2勝クラス"), "2勝クラス"),
-    (re.compile(r"3勝クラス"), "3勝クラス"),
-    (re.compile(r"オープン|\bOP\b"), "OP"),
-]
-
-
-def _normalize_class(raw: str) -> str | None:
-    """Map raw grade/class keyword to a canonical label.
-
-    Applies the first matching rule in priority order so that, for example,
-    "G1" takes precedence over "重賞" when both keywords appear in the text.
-    Returns None when no known pattern matches.
-    """
-    for pattern, label in _CLASS_NORM_RULES:
-        if pattern.search(raw):
-            return label
-    return None
-
-
-# JRA トラックコード（race_id の 5-6 桁目）→ コース名
-_COURSE_CODE_MAP = {
-    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
-    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
-}
-
 
 class ParseError(Exception):
     pass
@@ -141,21 +100,6 @@ class ParsedRaceResult:
     entries: list[ParsedEntry] = field(default_factory=list)
 
 
-def _extract_id_from_href(href: str, kind: str) -> str | None:
-    """Extract entity ID from a netkeiba path.
-
-    Supports:
-      - /horse/<id>/              (馬は直接、id は日本馬 10 桁数字 or 外国馬 10 文字英数字)
-      - /jockey/result/recent/<id>/    (騎手は result/recent 配下、5 桁数字)
-      - /trainer/result/recent/<id>/   (調教師も同様)
-
-    `/<kind>/` の後（必要なら中継パスをスキップ）にある最初の英数字 ID を返す。
-    """
-    # 中継パス (result/recent/ 等) を 0 回以上スキップしてから英数字 ID を取る
-    m = re.search(rf"/{kind}/(?:[a-z_]+/)*([0-9a-zA-Z]+)", href)
-    return m.group(1) if m else None
-
-
 def _parse_time_to_seconds(text: str) -> float | None:
     m = _TIME_RE.search(text)
     if not m:
@@ -173,16 +117,16 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
     """
     # Course は race_id の 5-6 桁目（JRA トラックコード）から導出
     if len(race_id) >= 6:
-        result.course = _COURSE_CODE_MAP.get(race_id[4:6])
+        result.course = COURSE_CODE_MAP.get(race_id[4:6])
 
     page_text = soup.get_text(" ", strip=True)
 
-    sd_m = _SURFACE_DIST_RE.search(page_text)
+    sd_m = SURFACE_DIST_RE.search(page_text)
     if sd_m:
         result.surface = sd_m.group(1)
         result.distance = int(sd_m.group(2))
 
-    weather_m = _WEATHER_RE.search(page_text)
+    weather_m = WEATHER_RE.search(page_text)
     if weather_m:
         result.weather = weather_m.group(1)
 
@@ -206,13 +150,13 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
 
         if h1:
             h1_text = h1.get_text(strip=True)
-            race_class = _normalize_class(h1_text)
+            race_class = normalize_race_class(h1_text)
 
         if race_class is None:
             smalltxt = data_intro.find(class_="smalltxt")
             if smalltxt:
                 st_text = smalltxt.get_text(strip=True)
-                race_class = _normalize_class(st_text)
+                race_class = normalize_race_class(st_text)
 
         result.race_class = race_class
     else:
@@ -230,7 +174,7 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
         for text in candidates:
             m = _GRADE_RE_LEGACY.search(text)
             if m:
-                result.race_class = _normalize_class(m.group(1))
+                result.race_class = normalize_race_class(m.group(1))
                 break
 
 
@@ -313,7 +257,7 @@ def _parse_entry_row(
     horse_link = link_for("馬名", 3)
     if horse_link is None:
         return None
-    horse_id = _extract_id_from_href(horse_link["href"], "horse")
+    horse_id = extract_id_from_href(horse_link["href"], "horse")
     if horse_id is None:
         return None
 
@@ -335,14 +279,14 @@ def _parse_entry_row(
 
     jockey_link = link_for("騎手", 6)
     if jockey_link:
-        entry.jockey_id = _extract_id_from_href(jockey_link["href"], "jockey")
+        entry.jockey_id = extract_id_from_href(jockey_link["href"], "jockey")
         entry.jockey_name = name_from_link(jockey_link)
 
     entry.finish_time = _parse_time_to_seconds(text_for("タイム", 7))
     entry.margin = text_for("着差", 8) or None
 
     hw_text = text_for("馬体重")
-    m = _WEIGHT_RE.search(hw_text)
+    m = WEIGHT_RE.search(hw_text)
     if m:
         entry.horse_weight = int(m.group(1))
         entry.horse_weight_diff = int(m.group(2))
@@ -352,7 +296,7 @@ def _parse_entry_row(
 
     trainer_link = link_for("調教師")
     if trainer_link:
-        entry.trainer_id = _extract_id_from_href(trainer_link["href"], "trainer")
+        entry.trainer_id = extract_id_from_href(trainer_link["href"], "trainer")
         entry.trainer_name = name_from_link(trainer_link)
 
     # 上り3F（<span>38.5</span> 等、innerTextをfloat変換）

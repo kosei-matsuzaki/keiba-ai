@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.api.deps import get_session
+from keiba_ai.api.deps import get_or_404, get_session
 from keiba_ai.api.schemas import EntrySummary, RaceDetail, RaceSummary, UpcomingRacesResponse
 from keiba_ai.core.dates import this_weekend_dates
 from keiba_ai.db.models.entry import Entry
@@ -186,9 +186,7 @@ def get_race_detail(
     race_id: str,
     session: Annotated[Session, Depends(get_session)],
 ) -> RaceDetail:
-    race = session.get(Race, race_id)
-    if race is None:
-        raise HTTPException(status_code=404, detail=f"Race {race_id!r} not found")
+    race = get_or_404(session, Race, race_id, label="Race")
 
     entries_stmt = select(Entry).where(Entry.race_id == race_id).order_by(Entry.post_position)
     entries = list(session.scalars(entries_stmt).all())
