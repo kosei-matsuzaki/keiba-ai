@@ -51,7 +51,12 @@ from keiba_ai.features.jockey import (
     compute_jockey_stats_from_cache,
 )
 from keiba_ai.features.odds import extract_odds_features
-from keiba_ai.features.pedigree import compute_pedigree_features
+from keiba_ai.features.pedigree import (
+    PedigreeCache,
+    build_pedigree_cache,
+    compute_pedigree_features,
+    compute_pedigree_features_from_cache,
+)
 from keiba_ai.features.relative_features import compute_within_race_features
 from keiba_ai.features.trainer import (
     TrainerHistoryCache,
@@ -171,6 +176,7 @@ def _build_entry_row(
     horse_cache: HorseHistoryCache | None = None,
     jockey_cache: JockeyHistoryCache | None = None,
     trainer_cache: TrainerHistoryCache | None = None,
+    pedigree_cache: PedigreeCache | None = None,
 ) -> dict[str, object]:
     """Build a single feature row for one entry in one race.
 
@@ -243,10 +249,18 @@ def _build_entry_row(
     odds_feats = extract_odds_features(entry)
 
     # Pedigree features (PR-C); None → NaN so LightGBM gets float columns
-    horse = session.get(Horse, entry.horse_id)
-    sire = horse.sire if horse else None
-    dam = horse.dam if horse else None
-    _ped = compute_pedigree_features(session, sire, dam, race_date)
+    if pedigree_cache is not None:
+        sire, dam = pedigree_cache.horse_to_sire_dam.get(
+            entry.horse_id, (None, None)
+        )
+        _ped = compute_pedigree_features_from_cache(
+            pedigree_cache, sire, dam, race_date
+        )
+    else:
+        horse = session.get(Horse, entry.horse_id)
+        sire = horse.sire if horse else None
+        dam = horse.dam if horse else None
+        _ped = compute_pedigree_features(session, sire, dam, race_date)
     pedigree_feats = {
         k: (v if v is not None else math.nan) for k, v in _ped.items()
     }
@@ -274,6 +288,7 @@ def _build_race_rows(
     horse_cache: HorseHistoryCache | None = None,
     jockey_cache: JockeyHistoryCache | None = None,
     trainer_cache: TrainerHistoryCache | None = None,
+    pedigree_cache: PedigreeCache | None = None,
 ) -> list[dict[str, object]]:
     """Build all entry rows for a single race, including within-race relative features.
 
@@ -290,6 +305,7 @@ def _build_race_rows(
             horse_cache=horse_cache,
             jockey_cache=jockey_cache,
             trainer_cache=trainer_cache,
+            pedigree_cache=pedigree_cache,
         )
         for entry in entries
     ]
@@ -428,22 +444,27 @@ def build_training_frame(
     n_total = len(races)
     import time as _time
 
-    # 全 horse / jockey / trainer の race history を 1 query ずつで先読みし、
+    # 全 horse / jockey / trainer / pedigree の race history を一括ロードし、
     # per-call SQL を完全に排除する (N+1 SQL の最大要因)。
-    log.info("Pre-loading horse / jockey / trainer histories (3 SQL passes)...")
+    log.info("Pre-loading horse / jockey / trainer / pedigree caches...")
     t_preload = _time.perf_counter()
     horse_cache = build_horse_history_cache(session)
     jockey_cache = build_jockey_history_cache(session)
     trainer_cache = build_trainer_history_cache(session)
+    pedigree_cache = build_pedigree_cache(session)
     log.info(
-        "Pre-loaded: horse=%d rows, jockey=%d rows, trainer=%d rows in %.1fs",
+        "Pre-loaded: horse=%d, jockey=%d, trainer=%d rows, "
+        "pedigree=%d horses (%d sires, %d dams) in %.1fs",
         len(horse_cache.df),
         len(jockey_cache.df),
         len(trainer_cache.df),
+        len(pedigree_cache.horse_to_sire_dam),
+        len(pedigree_cache.by_sire),
+        len(pedigree_cache.by_dam),
         _time.perf_counter() - t_preload,
     )
 
-    log.info("Building features for %d races (pedigree still per-call SQL)", n_total)
+    log.info("Building features for %d races (all DB lookups now bulk-cached)", n_total)
 
     rows: list[dict[str, object]] = []
     # 100 race ごとに進捗ログを出すのでユーザが進行状況を把握できる
@@ -460,6 +481,7 @@ def build_training_frame(
             horse_cache=horse_cache,
             jockey_cache=jockey_cache,
             trainer_cache=trainer_cache,
+            pedigree_cache=pedigree_cache,
         ))
         if (i + 1) % progress_step == 0 or (i + 1) == n_total:
             elapsed = _time.perf_counter() - t0
