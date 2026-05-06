@@ -18,7 +18,11 @@ from keiba_ai.db.base import Base
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.race import Race
-from keiba_ai.features.horse_history import compute_horse_history
+from keiba_ai.features.horse_history import (
+    build_horse_history_cache,
+    compute_horse_history,
+    compute_horse_history_from_cache,
+)
 
 
 @pytest.fixture()
@@ -290,3 +294,90 @@ def test_horse_history_excludes_races_after_before_date(rich_engine):
     r2_date = base - timedelta(days=20)  # 2024-05-26
     expected_days = float((before - r2_date).days)
     assert result["days_since_last_race"] == pytest.approx(expected_days)
+
+
+# ---------------------------------------------------------------------------
+# Cache parity tests (build_horse_history_cache + compute_horse_history_from_cache)
+# ---------------------------------------------------------------------------
+
+
+def _assert_dicts_equal(a: dict, b: dict, *, ctx: str = "") -> None:
+    """Compare two horse_history result dicts allowing NaN == NaN."""
+    assert a.keys() == b.keys(), f"keys differ {ctx}: {a.keys()} vs {b.keys()}"
+    for k in a:
+        va, vb = a[k], b[k]
+        # NaN を等しく扱う
+        if isinstance(va, float) and math.isnan(va):
+            assert isinstance(vb, float) and math.isnan(vb), f"{k} {ctx}: {va!r} vs {vb!r}"
+        else:
+            assert va == vb, f"{k} {ctx}: {va!r} vs {vb!r}"
+
+
+def test_cache_parity_with_sql_version(rich_engine):
+    """compute_horse_history_from_cache の出力が compute_horse_history と
+    bit-for-bit (NaN 含む) 一致することを多パターンで確認する。"""
+    base = date(2024, 6, 15)
+
+    test_cases = [
+        # (before_date, distance, course)
+        (base, None, None),
+        (base, 1600, "東京"),
+        (base, 1600, None),
+        (base, None, "東京"),
+        (base - timedelta(days=18), 1600, "東京"),  # 一部レースだけ含む cutoff
+        (base + timedelta(days=365), 1600, "東京"),  # 全レース含む
+    ]
+
+    with Session(rich_engine) as session:
+        cache = build_horse_history_cache(session)
+        for before, distance, course in test_cases:
+            ctx = f"(before={before}, dist={distance}, course={course})"
+            sql_result = compute_horse_history(
+                session, horse_id="H001", before_date=before,
+                distance=distance, course=course,
+            )
+            cache_result = compute_horse_history_from_cache(
+                cache, horse_id="H001", before_date=before,
+                distance=distance, course=course,
+            )
+            _assert_dicts_equal(sql_result, cache_result, ctx=ctx)
+
+
+def test_cache_parity_unknown_horse(rich_engine):
+    """履歴のない horse_id でも SQL 版と同一 (NaN/0) を返す。"""
+    with Session(rich_engine) as session:
+        cache = build_horse_history_cache(session)
+        sql_result = compute_horse_history(
+            session, horse_id="UNKNOWN", before_date=date(2024, 6, 15),
+        )
+        cache_result = compute_horse_history_from_cache(
+            cache, horse_id="UNKNOWN", before_date=date(2024, 6, 15),
+        )
+        _assert_dicts_equal(sql_result, cache_result, ctx="(unknown horse)")
+
+
+def test_cache_single_sql_query(rich_engine):
+    """build_horse_history_cache が 1 SQL で全行を取得することを確認。
+
+    sqlalchemy event listener で session 経由のクエリ数を数える。
+    """
+    from sqlalchemy import event
+
+    queries: list[str] = []
+
+    def _capture(conn, cursor, statement, params, context, executemany):  # noqa: ARG001
+        queries.append(statement)
+
+    event.listen(rich_engine, "before_cursor_execute", _capture)
+    try:
+        with Session(rich_engine) as session:
+            cache = build_horse_history_cache(session)
+        assert cache.df is not None
+        # Building the cache should emit at most 1 SELECT against entries (the
+        # join with races counts as the same statement).
+        select_queries = [q for q in queries if q.strip().lower().startswith("select")]
+        assert len(select_queries) == 1, (
+            f"expected 1 SELECT, got {len(select_queries)}: {select_queries}"
+        )
+    finally:
+        event.remove(rich_engine, "before_cursor_execute", _capture)
