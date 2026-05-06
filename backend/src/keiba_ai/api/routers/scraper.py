@@ -418,6 +418,10 @@ async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse
             try:
                 sresp = await http_client.get(shutuba_url)
                 sresp.raise_for_status()
+                # race.netkeiba.com は Content-Type に charset を付けないため
+                # httpx は UTF-8 と推定するが、実体は EUC-JP。明示しないと
+                # title 内の "YYYY年MM月DD日" が mojibake 化して正規表現にマッチしない。
+                sresp.encoding = "euc-jp"
                 race_date = extract_race_date_from_shutuba_html(sresp.text)
             except Exception:
                 # 1 つの shutuba 失敗で全体を abort しない

@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -218,7 +219,7 @@ class TestDiscoverThisWeekendRaceIds:
                 return_value=True,
             ),
             patch(
-                "keiba_ai.api.routers.scraper.AsyncRateLimiter.wait",
+                "keiba_ai.api.routers.scraper.AsyncRateLimiter.acquire",
                 new=AsyncMock(),
             ),
             patch(
@@ -285,6 +286,49 @@ class TestDiscoverThisWeekendRaceIds:
             resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
 
         assert resp.status_code == 502
+
+    def test_decodes_eucjp_shutuba_pages(self, api_client: TestClient) -> None:
+        """race.netkeiba.com は Content-Type charset 空で EUC-JP を返す。
+
+        httpx のデフォルト UTF-8 デコードのままでは title 内の "YYYY年..." が
+        mojibake 化して日付抽出に失敗するため、明示的に encoding="euc-jp" を
+        セットする必要がある。実体は httpx.Response (bytes ベース) で組み立てて、
+        encoding 切替に依存する挙動を再現する。
+        """
+        sat = date(2026, 5, 9)
+        sun = date(2026, 5, 10)
+        race_ids_all = ["202605090501"]
+
+        # 実 race.netkeiba.com 同様、EUC-JP のバイト列を charset なしで返す
+        shutuba_html_eucjp = _make_shutuba_html("2026-05-09").encode("euc-jp")
+        eucjp_response = httpx.Response(
+            200,
+            content=shutuba_html_eucjp,
+            headers={"Content-Type": "text/html"},  # charset を意図的に省略
+        )
+
+        mock_top = _make_top_response(race_ids_all)
+
+        with (
+            self._patch_this_weekend(sat, sun),
+            patch(
+                "keiba_ai.api.routers.scraper.RobotsCache.is_allowed",
+                return_value=True,
+            ),
+            patch(
+                "keiba_ai.api.routers.scraper.AsyncRateLimiter.acquire",
+                new=AsyncMock(),
+            ),
+            patch(
+                "httpx.AsyncClient.get",
+                new=AsyncMock(side_effect=[mock_top, eucjp_response]),
+            ),
+        ):
+            resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
+
+        assert resp.status_code == 200
+        # encoding="euc-jp" がセットされていれば日付が抽出され race_id が残る
+        assert resp.json()["race_ids"] == ["202605090501"]
 
     def test_filters_nar_venues(self, api_client: TestClient) -> None:
         """NAR 場コード (11〜) の race_id は shutuba fetch 前に除外される。"""
