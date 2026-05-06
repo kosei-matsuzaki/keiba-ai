@@ -36,7 +36,8 @@ function PatternBadge({ pattern }: { pattern: string }) {
 
 // ── EV coloring ───────────────────────────────────────────────────────────────
 
-function evClass(ev: number): string {
+function evClass(ev: number | null): string {
+  if (ev === null) return 'text-muted-foreground';
   if (ev >= 1.5) return 'text-green-600 font-semibold';
   if (ev >= 1.2) return 'text-yellow-600';
   return 'text-muted-foreground';
@@ -77,12 +78,17 @@ function BuyButton({ candidate, raceId }: BuyButtonProps) {
 // ── Candidate sorting ─────────────────────────────────────────────────────────
 
 /**
- * Sort candidates: stake desc → ev desc → prob desc.
- * This ensures recommended (stake > 0) candidates appear above zero-stake ones.
+ * Sort candidates: stake desc → ev desc (null last) → prob desc.
+ * This ensures recommended (stake > 0) candidates appear above zero-stake ones,
+ * and candidates with null ev/est_odds are pinned to the bottom.
  */
 function sortCandidates(candidates: RecommendationCandidate[]): RecommendationCandidate[] {
   return [...candidates].sort((a, b) => {
     if (b.stake !== a.stake) return b.stake - a.stake;
+    // null ev rows sink to the bottom
+    if (a.ev === null && b.ev === null) return b.prob - a.prob;
+    if (a.ev === null) return 1;
+    if (b.ev === null) return -1;
     if (b.ev !== a.ev) return b.ev - a.ev;
     return b.prob - a.prob;
   });
@@ -171,9 +177,19 @@ export function RecommendationsCard({
                         <PatternBadge pattern={c.pattern} />
                       </TableCell>
                       <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
-                      <TableCell className="text-right">{formatRatio(c.est_odds)}</TableCell>
+                      <TableCell className="text-right">
+                        {c.est_odds === null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          formatRatio(c.est_odds)
+                        )}
+                      </TableCell>
                       <TableCell className={`text-right ${evClass(c.ev)}`}>
-                        {formatRatio(c.ev)}
+                        {c.ev === null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          formatRatio(c.ev)
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         {isZeroStake ? (
@@ -192,8 +208,10 @@ export function RecommendationsCard({
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
               {data.odds_source === 'live'
-                ? '※ 推定オッズ: 当日リアルオッズ'
-                : '※ 推定オッズ: 過去払戻の平均値（暫定）'}
+                ? '※ 当日リアルオッズ'
+                : data.odds_source === 'past'
+                  ? '※ 確定オッズ（外れ combo は確定オッズなしのため空欄）'
+                  : '※ オッズ取得待ち or 該当データなし'}
             </p>
           </>
         )}

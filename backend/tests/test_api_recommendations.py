@@ -16,6 +16,7 @@ from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.live_odds import LiveOdds
 from keiba_ai.db.models.model_run import ModelRun
+from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
 
 
@@ -102,6 +103,46 @@ def _fake_recommendation_result(race_id: str, bankroll: int = 100_000) -> Recomm
                 ev=15.0,
                 stake=200,
                 post_positions=(1, 2),
+            ),
+        ],
+    )
+
+
+def _fake_recommendation_result_with_null_odds(race_id: str, bankroll: int = 100_000) -> RecommendationResult:
+    """Return a RecommendationResult with some null est_odds / ev candidates."""
+    return RecommendationResult(
+        race_id=race_id,
+        bankroll_at_decision=bankroll,
+        candidates=[
+            BetCandidate(
+                bet_type="単勝",
+                combo="3",
+                pattern="box",
+                prob=0.35,
+                est_odds=3.0,
+                ev=1.05,
+                stake=300,
+                post_positions=(3,),
+            ),
+            BetCandidate(
+                bet_type="馬連",
+                combo="1-3",
+                pattern="box",
+                prob=0.2,
+                est_odds=None,
+                ev=None,
+                stake=0,
+                post_positions=(1, 3),
+            ),
+            BetCandidate(
+                bet_type="ワイド",
+                combo="3-5",
+                pattern="box",
+                prob=0.4,
+                est_odds=None,
+                ev=None,
+                stake=0,
+                post_positions=(3, 5),
             ),
         ],
     )
@@ -456,19 +497,19 @@ def test_recommendations_empty_candidates(
     assert data["candidates"] == []
 
 
-def test_recommendations_odds_source_baseline_when_no_live_odds(
+def test_recommendations_odds_source_unknown_when_no_odds(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """odds_source='baseline' when live_odds table has no rows for the race."""
-    race_id = "REC_RACE_ODDS_BASELINE"
+    """odds_source='unknown' when no live or past odds are available (today's race)."""
+    race_id = "REC_RACE_ODDS_UNKNOWN"
     from keiba_ai.core.paths import db_path
     from keiba_ai.db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
         _seed_race_and_entries(session, race_id, n_horses=4)
-        _seed_active_model(session, str(tmp_path / "fake_model_baseline"))
+        _seed_active_model(session, str(tmp_path / "fake_model_unknown"))
 
     fake_df = _fake_predictions_df(race_id, n=4)
     fake_result = _fake_recommendation_result(race_id)
@@ -486,7 +527,8 @@ def test_recommendations_odds_source_baseline_when_no_live_odds(
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["odds_source"] == "baseline"
+    # Today's race with no live_odds → unknown (past fallback skipped for today)
+    assert data["odds_source"] == "unknown"
 
 
 def test_recommendations_odds_source_live_when_live_odds_present(
@@ -543,3 +585,115 @@ def test_recommendations_odds_source_live_when_live_odds_present(
     assert captured_race_odds["value"] is not None
     assert "馬連" in captured_race_odds["value"]
     assert captured_race_odds["value"]["馬連"]["1-2"] == pytest.approx(30.5)
+
+
+def test_recommendations_odds_source_past_for_past_race(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """odds_source='past' when no live odds but past-race payouts are available."""
+    from datetime import date, timedelta
+    race_id = "REC_RACE_PAST_ODDS"
+    past_date = (date.today() - timedelta(days=1)).isoformat()
+
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.models.horse import Horse
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        # Seed a past race with payouts
+        session.add(Race(
+            race_id=race_id,
+            date=past_date,
+            course="東京",
+            surface="芝",
+            distance=2000,
+            n_runners=4,
+        ))
+        session.flush()
+        for i in range(4):
+            hid = f"H_{race_id}_{i}"
+            if not session.get(Horse, hid):
+                session.add(Horse(horse_id=hid, name=None))
+            session.flush()
+            session.add(Entry(
+                race_id=race_id,
+                horse_id=hid,
+                post_position=i + 1,
+                age=4,
+                sex="牡",
+                odds_win=5.0 + i,
+                popularity=i + 1,
+                horse_weight=480,
+                finish_position=i + 1,
+            ))
+        session.flush()
+        session.add(Payout(race_id=race_id, bet_type="馬連", combo="1-2", amount=4000))
+        session.commit()
+        _seed_active_model(session, str(tmp_path / "fake_model_past"))
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+    fake_result = _fake_recommendation_result(race_id)
+
+    with (
+        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+              return_value=fake_result),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["odds_source"] == "past"
+
+
+def test_recommendations_null_est_odds_candidates(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """candidates with est_odds=null and ev=null serialize correctly (no validation error)."""
+    race_id = "REC_RACE_NULL_ODDS"
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_null"))
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+    null_result = _fake_recommendation_result_with_null_odds(race_id)
+
+    with (
+        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+              return_value=null_result),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    candidates = data["candidates"]
+    assert len(candidates) == 3
+
+    # The 単勝 candidate has real odds
+    tan_cand = next(c for c in candidates if c["bet_type"] == "単勝")
+    assert tan_cand["est_odds"] == pytest.approx(3.0)
+    assert tan_cand["ev"] == pytest.approx(1.05)
+
+    # The 馬連 and ワイド candidates have null odds
+    null_cands = [c for c in candidates if c["est_odds"] is None]
+    assert len(null_cands) == 2
+    for nc in null_cands:
+        assert nc["est_odds"] is None
+        assert nc["ev"] is None
+        assert nc["stake"] == 0

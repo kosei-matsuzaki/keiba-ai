@@ -221,8 +221,10 @@ export interface RecommendationCandidate {
   combo: string;
   pattern: string;
   prob: number;
-  est_odds: number;
-  ev: number;
+  /** 確定オッズ。取得できなかった combo は null。 */
+  est_odds: number | null;
+  /** 期待値 = prob × est_odds。est_odds が null の場合は null。 */
+  ev: number | null;
   stake: number;
   post_positions: number[];
 }
@@ -231,8 +233,12 @@ export interface RecommendationsResponse {
   race_id: string;
   bankroll_at_decision: number;
   candidates: RecommendationCandidate[];
-  /** 'live' = 当日リアルオッズ反映済み, 'baseline' = 過去払戻平均（暫定） */
-  odds_source: 'live' | 'baseline';
+  /**
+   * 'live'    = 当日リアルオッズ（live_odds テーブルより）
+   * 'past'    = 確定オッズ（payouts/entries より。外れ combo は null）
+   * 'unknown' = オッズ取得待ち or 該当データなし
+   */
+  odds_source: 'live' | 'past' | 'unknown';
 }
 
 // ── Bet records ───────────────────────────────────────────────────────────────

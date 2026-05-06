@@ -112,7 +112,10 @@ def test_predict_combinations_output_keys(trained_combo_model):
 
 
 def test_predict_combinations_items_are_dataclass(trained_combo_model):
-    """Each element in each list must be a CombinationPrediction."""
+    """Each element in each list must be a CombinationPrediction.
+
+    When no race_odds is provided, est_odds and ev are None (no baseline fallback).
+    """
     engine, db_file, model_dir = trained_combo_model
     model = load_model(model_dir)
 
@@ -128,28 +131,37 @@ def test_predict_combinations_items_are_dataclass(trained_combo_model):
             assert isinstance(p, CombinationPrediction), f"{bet_type}: item is not CombinationPrediction"
             assert isinstance(p.combo, str)
             assert isinstance(p.prob, float)
-            assert isinstance(p.est_odds, float)
-            assert isinstance(p.ev, float)
+            # est_odds and ev are None when no race_odds provided (no baseline fallback)
+            assert p.est_odds is None
+            assert p.ev is None
             assert isinstance(p.post_positions, tuple)
 
 
 def test_predict_combinations_ev_equals_prob_times_odds(trained_combo_model):
-    """EV must equal prob * est_odds for every combination."""
+    """When race_odds is provided, EV must equal prob * est_odds for confirmed combos."""
     engine, db_file, model_dir = trained_combo_model
     model = load_model(model_dir)
 
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
+        # Provide synthetic race_odds so some combos have confirmed odds
+        race_odds = {"単勝": {"1": 5.0, "2": 8.0, "3": 12.0}}
         result = predict_race_with_combinations(
-            model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(3)
+            model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(3),
+            race_odds=race_odds,
         )
 
-    for bet_type, preds in result.items():
-        for p in preds[:5]:  # spot-check first 5 per type
+    # For 単勝 combos that have confirmed odds, ev == prob * est_odds
+    for p in result.get("単勝", []):
+        if p.est_odds is not None and p.ev is not None:
             assert p.ev == pytest.approx(p.prob * p.est_odds, rel=1e-5), (
-                f"{bet_type} {p.combo}: ev mismatch"
+                f"単勝 {p.combo}: ev mismatch"
             )
+        else:
+            # combos without confirmed odds must have both None
+            assert p.est_odds is None
+            assert p.ev is None
 
 
 def test_predict_combinations_probs_in_range(trained_combo_model):
@@ -217,21 +229,44 @@ def test_predict_combinations_sanrenpuku_prob_sum_approx(trained_combo_model):
     assert total == pytest.approx(1.0, abs=0.05)
 
 
-def test_predict_combinations_sorted_by_ev_descending(trained_combo_model):
-    """Each bet_type list must be sorted by EV descending."""
+def test_predict_combinations_sorted_ev_none_last(trained_combo_model):
+    """When race_odds=None, all ev are None and sorted at the end (all rows equal).
+
+    When race_odds is provided, non-None ev rows appear before None ev rows,
+    and among non-None rows they are sorted descending.
+    """
     engine, db_file, model_dir = trained_combo_model
     model = load_model(model_dir)
 
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        # All combos get None ev when no race_odds provided
+        result_no_odds = predict_race_with_combinations(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(8)
         )
+        # With race_odds: 単勝 gets confirmed odds, others are None
+        race_odds = {"単勝": {str(i + 1): float(5 + i) for i in range(len(frame))}}
+        result_with_odds = predict_race_with_combinations(
+            model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(8),
+            race_odds=race_odds,
+        )
 
-    for bet_type, preds in result.items():
-        evs = [p.ev for p in preds]
-        assert evs == sorted(evs, reverse=True), f"{bet_type}: not sorted by EV descending"
+    # Without race_odds: all ev are None
+    for bet_type, preds in result_no_odds.items():
+        assert all(p.ev is None for p in preds), f"{bet_type}: expected all None ev"
+
+    # With race_odds: 単勝 has all non-None ev, sorted descending
+    tansho = result_with_odds["単勝"]
+    non_none_evs = [p.ev for p in tansho if p.ev is not None]
+    assert non_none_evs == sorted(non_none_evs, reverse=True), "単勝: non-None ev not sorted descending"
+    # None ev rows must appear after all non-None ev rows
+    saw_none = False
+    for p in tansho:
+        if p.ev is None:
+            saw_none = True
+        elif saw_none:
+            pytest.fail(f"単勝: non-None ev row after None ev row: {p}")
 
 
 def test_predict_combinations_top_k(trained_combo_model):

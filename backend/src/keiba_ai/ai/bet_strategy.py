@@ -313,15 +313,16 @@ def assign_stakes(
     cap = bankroll * max_stake_per_race_pct
 
     # Step 1 + 2: compute raw Kelly stakes
-    # ev <= 1.0 candidates get stake=0 and are tracked separately when keep_zero_stake=True
+    # ev is None or ev <= 1.0 candidates get stake=0 and are tracked separately
     zero_stake_candidates: list[BetCandidate] = []
     staked: list[tuple[BetCandidate, int]] = []
     for c in candidates:
-        if c.ev <= 1.0:
+        if c.ev is None or c.ev <= 1.0:
             if keep_zero_stake:
                 zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
             continue
-        s = kelly_stake(c.prob, c.est_odds, bankroll, kelly_fraction, round_to)
+        # est_odds is guaranteed non-None here since ev = prob * est_odds
+        s = kelly_stake(c.prob, c.est_odds, bankroll, kelly_fraction, round_to)  # type: ignore[arg-type]
         if s > 0:
             staked.append((c, s))
         elif keep_zero_stake:
@@ -454,12 +455,13 @@ def recommend_for_race(
         # Select the pattern with the highest total_stake_proxy * mean_ev.
         # Since stake is not yet assigned, use prob * est_odds (= ev) as a
         # proxy for quality and len(candidates) as coverage.
+        # Candidates with ev=None count as 0 for scoring purposes.
         best_pattern: str | None = None
         best_score = -1.0
         for pat, cands in pattern_candidates.items():
             if not cands:
                 continue
-            mean_ev = sum(c.ev for c in cands) / len(cands)
+            mean_ev = sum(c.ev for c in cands if c.ev is not None) / len(cands)
             score = len(cands) * mean_ev
             if score > best_score:
                 best_score = score
@@ -468,12 +470,18 @@ def recommend_for_race(
         if best_pattern is not None:
             all_candidates.extend(pattern_candidates[best_pattern])
 
-    # Deduplicate by (bet_type, combo) — keep highest EV
+    # Deduplicate by (bet_type, combo) — keep highest EV (None < any float)
     seen: dict[tuple[str, str], BetCandidate] = {}
     for c in all_candidates:
         key = (c.bet_type, c.combo)
-        if key not in seen or c.ev > seen[key].ev:
+        if key not in seen:
             seen[key] = c
+        else:
+            existing_ev = seen[key].ev
+            new_ev = c.ev
+            # None is treated as lower priority; otherwise keep the higher ev
+            if existing_ev is None or (new_ev is not None and new_ev > existing_ev):
+                seen[key] = c
     deduped = list(seen.values())
 
     final_candidates = assign_stakes(
