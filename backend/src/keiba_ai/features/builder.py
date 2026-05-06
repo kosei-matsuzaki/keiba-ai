@@ -44,11 +44,21 @@ from keiba_ai.features.horse_history import (
     compute_horse_history,
     compute_horse_history_from_cache,
 )
-from keiba_ai.features.jockey import compute_jockey_stats
+from keiba_ai.features.jockey import (
+    JockeyHistoryCache,
+    build_jockey_history_cache,
+    compute_jockey_stats,
+    compute_jockey_stats_from_cache,
+)
 from keiba_ai.features.odds import extract_odds_features
 from keiba_ai.features.pedigree import compute_pedigree_features
 from keiba_ai.features.relative_features import compute_within_race_features
-from keiba_ai.features.trainer import compute_trainer_stats
+from keiba_ai.features.trainer import (
+    TrainerHistoryCache,
+    build_trainer_history_cache,
+    compute_trainer_stats,
+    compute_trainer_stats_from_cache,
+)
 
 log = logging.getLogger(__name__)
 
@@ -159,6 +169,8 @@ def _build_entry_row(
     n_runners: int,
     race_date: date,
     horse_cache: HorseHistoryCache | None = None,
+    jockey_cache: JockeyHistoryCache | None = None,
+    trainer_cache: TrainerHistoryCache | None = None,
 ) -> dict[str, object]:
     """Build a single feature row for one entry in one race.
 
@@ -166,9 +178,9 @@ def _build_entry_row(
     Relative features are absent here — _build_race_rows merges them in a
     second pass once the full field is known.
 
-    horse_cache: 渡された場合は per-call SQL を avoidし、preload 済みの
-    pandas DataFrame から horse history を計算する（build_training_frame の
-    N+1 解消用）。None なら従来通り compute_horse_history で SQL する。
+    *_cache: 渡された場合は per-call SQL を avoid し、preload 済みの pandas
+    DataFrame から該当の特徴量を計算する（build_training_frame の N+1 解消用）。
+    None なら従来通り SQL を発行する。
     """
     if horse_cache is not None:
         horse_feats = compute_horse_history_from_cache(
@@ -186,31 +198,46 @@ def _build_entry_row(
             distance=race.distance,
             course=race.course,
         )
-    jockey_feats = (
-        compute_jockey_stats(
-            session,
-            entry.jockey_id,
-            before_date=race_date,
-            course=race.course,
-            days=30,
-        )
-        if entry.jockey_id
-        else {
+    if entry.jockey_id:
+        if jockey_cache is not None:
+            jockey_feats = compute_jockey_stats_from_cache(
+                jockey_cache,
+                entry.jockey_id,
+                before_date=race_date,
+                course=race.course,
+                days=30,
+            )
+        else:
+            jockey_feats = compute_jockey_stats(
+                session,
+                entry.jockey_id,
+                before_date=race_date,
+                course=race.course,
+                days=30,
+            )
+    else:
+        jockey_feats = {
             "jockey_recent_win_rate": math.nan,
             "jockey_recent_place_rate": math.nan,
             "jockey_course_place_rate": math.nan,
         }
-    )
-    trainer_feats = (
-        compute_trainer_stats(
-            session,
-            entry.trainer_id,
-            before_date=race_date,
-            course=race.course,
-        )
-        if entry.trainer_id
-        else {"trainer_course_place_rate": math.nan}
-    )
+    if entry.trainer_id:
+        if trainer_cache is not None:
+            trainer_feats = compute_trainer_stats_from_cache(
+                trainer_cache,
+                entry.trainer_id,
+                before_date=race_date,
+                course=race.course,
+            )
+        else:
+            trainer_feats = compute_trainer_stats(
+                session,
+                entry.trainer_id,
+                before_date=race_date,
+                course=race.course,
+            )
+    else:
+        trainer_feats = {"trainer_course_place_rate": math.nan}
 
     race_feats = extract_race_features(race, entry, n_runners)
     odds_feats = extract_odds_features(entry)
@@ -245,6 +272,8 @@ def _build_race_rows(
     race: Race,
     entries: list[Entry],
     horse_cache: HorseHistoryCache | None = None,
+    jockey_cache: JockeyHistoryCache | None = None,
+    trainer_cache: TrainerHistoryCache | None = None,
 ) -> list[dict[str, object]]:
     """Build all entry rows for a single race, including within-race relative features.
 
@@ -256,7 +285,12 @@ def _build_race_rows(
     race_date = _parse_date(race.date)
 
     rows = [
-        _build_entry_row(session, race, entry, n_runners, race_date, horse_cache=horse_cache)
+        _build_entry_row(
+            session, race, entry, n_runners, race_date,
+            horse_cache=horse_cache,
+            jockey_cache=jockey_cache,
+            trainer_cache=trainer_cache,
+        )
         for entry in entries
     ]
 
@@ -394,19 +428,22 @@ def build_training_frame(
     n_total = len(races)
     import time as _time
 
-    # 全 horse の race history を 1 query で先読み → per-call の SQL を排除する
-    # （N+1 SQL の最大要因。同 race_id でも entry 単位で叩いていた）
-    log.info("Pre-loading horse history (single SQL pass)...")
+    # 全 horse / jockey / trainer の race history を 1 query ずつで先読みし、
+    # per-call SQL を完全に排除する (N+1 SQL の最大要因)。
+    log.info("Pre-loading horse / jockey / trainer histories (3 SQL passes)...")
     t_preload = _time.perf_counter()
     horse_cache = build_horse_history_cache(session)
+    jockey_cache = build_jockey_history_cache(session)
+    trainer_cache = build_trainer_history_cache(session)
     log.info(
-        "Pre-loaded horse history: %d rows for %d horses in %.1fs",
+        "Pre-loaded: horse=%d rows, jockey=%d rows, trainer=%d rows in %.1fs",
         len(horse_cache.df),
-        len(horse_cache.by_horse),
+        len(jockey_cache.df),
+        len(trainer_cache.df),
         _time.perf_counter() - t_preload,
     )
 
-    log.info("Building features for %d races (jockey/trainer/pedigree still per-call SQL)", n_total)
+    log.info("Building features for %d races (pedigree still per-call SQL)", n_total)
 
     rows: list[dict[str, object]] = []
     # 100 race ごとに進捗ログを出すのでユーザが進行状況を把握できる
@@ -418,7 +455,12 @@ def build_training_frame(
         entries = list(session.scalars(entry_stmt).all())
         if not entries:
             continue
-        rows.extend(_build_race_rows(session, race, entries, horse_cache=horse_cache))
+        rows.extend(_build_race_rows(
+            session, race, entries,
+            horse_cache=horse_cache,
+            jockey_cache=jockey_cache,
+            trainer_cache=trainer_cache,
+        ))
         if (i + 1) % progress_step == 0 or (i + 1) == n_total:
             elapsed = _time.perf_counter() - t0
             eta_sec = elapsed / (i + 1) * (n_total - i - 1)
