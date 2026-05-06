@@ -421,26 +421,62 @@ def test_tansho_to_pl_scores_raises_on_empty():
 
 
 def test_compute_implied_combo_odds_returns_all_bet_types():
-    """単勝オッズから 複勝 / 馬連 / ワイド / 馬単 / 三連複 / 三連単 すべてが返る。"""
-    import numpy as np
+    """単勝オッズから 複勝 / 馬連 / ワイド / 馬単 / 三連複 / 三連単 すべてが返る。
 
+    解析式 (use_analytical=True デフォルト) では combo 数が完全に閉形式と一致する。
+    """
     odds = {"1": 2.5, "2": 3.5, "3": 5.0, "4": 8.0, "5": 12.0, "6": 18.0, "7": 30.0, "8": 60.0}
-    rng = np.random.default_rng(0)
-    result = compute_implied_combo_odds_from_tansho(odds, n_samples=50_000, rng=rng)
+    result = compute_implied_combo_odds_from_tansho(odds)
 
     assert {"複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"} <= result.keys()
 
-    # 8 頭から組み合わせ:
-    #   複勝   = 8 (per horse), 馬連 = C(8,2) = 28, ワイド = C(8,2) = 28,
+    # 8 頭の純粋組み合わせ数 (解析式は MC と異なり量子化なし、全 combo を返す):
+    #   複勝   = 8, 馬連 = C(8,2) = 28, ワイド = C(8,2) = 28,
     #   馬単   = P(8,2) = 56, 三連複 = C(8,3) = 56, 三連単 = P(8,3) = 336
-    # ただし PL モンテカルロでサンプル 0 の三連単 combo は dict に入らないため
-    # 厳密 56/336 にはならない。下限のみ確認。
     assert len(result["複勝"]) == 8
     assert len(result["馬連"]) == 28
     assert len(result["ワイド"]) == 28
     assert len(result["馬単"]) == 56
-    assert len(result["三連複"]) <= 56
-    assert len(result["三連単"]) <= 336
+    assert len(result["三連複"]) == 56
+    assert len(result["三連単"]) == 336
+
+
+def test_analytical_eliminates_mc_quantization():
+    """三連単オッズが MC 量子化 (1/N, 2/N, 3/N の離散化) ではなく連続値になる。"""
+    import numpy as np
+
+    odds = {"1": 2.5, "2": 3.5, "3": 5.0, "4": 8.0, "5": 12.0, "6": 18.0, "7": 30.0, "8": 60.0}
+
+    # 解析式 (デフォルト)
+    analytical = compute_implied_combo_odds_from_tansho(odds)
+    a_vals = list(analytical["三連単"].values())
+    a_unique = len(set(round(v, 1) for v in a_vals))
+
+    # MC 10K: ユニーク値が大幅に少ない (量子化の証拠)
+    rng = np.random.default_rng(0)
+    mc = compute_implied_combo_odds_from_tansho(
+        odds, n_samples=10_000, rng=rng, use_analytical=False
+    )
+    m_vals = list(mc["三連単"].values())
+    m_unique = len(set(round(v, 1) for v in m_vals))
+
+    # 解析式は MC より遥かに多くのユニーク値を返す (≈ combo 数)
+    assert a_unique > m_unique * 2, (
+        f"analytical={a_unique} unique vals, mc={m_unique} — analytical should be much more diverse"
+    )
+    # 解析式は全 336 combo を返す (MC は count=0 で missing)
+    assert len(analytical["三連単"]) > len(mc["三連単"])
+
+
+def test_jra_minimum_payout_floor():
+    """est_odds は JRA 最低払戻 1.0 倍で floor される (4 頭で favorite 複勝)。"""
+    # 4 頭で 1 番人気が圧倒的だと、複勝の P(top-3) ≈ 1 になり
+    # raw est = 1/0.99 × 0.80 = 0.81 となる。1.0 倍で floor されること。
+    odds = {"1": 1.5, "2": 3.0, "3": 6.0, "4": 12.0}
+    result = compute_implied_combo_odds_from_tansho(odds)
+
+    fukusho_min = min(result["複勝"].values())
+    assert fukusho_min >= 1.0, f"fukusho_min={fukusho_min} < 1.0 (JRA min payout violated)"
 
 
 def test_compute_implied_combo_odds_fukusho_favorite_lower():
