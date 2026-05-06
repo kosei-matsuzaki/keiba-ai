@@ -107,7 +107,9 @@ def extract_jra_race_ids_with_kaisai_groups(
     """
     info = _extract_info_list(payload)
 
-    groups: dict[str, list[str]] = {}
+    # netkeiba の race_info_top API は同じ race_id を複数回 (賭式ごと等) 返すため、
+    # set で重複を排除してから list 化する。
+    groups_set: dict[str, set[str]] = {}
     for entry in info:
         race_id = entry.get("RaceId") if isinstance(entry, dict) else None
         if not isinstance(race_id, str) or not _RACE_ID_RE.match(race_id):
@@ -118,10 +120,8 @@ def extract_jra_race_ids_with_kaisai_groups(
         # kaisai_day_key = first 10 chars: YYYY MM DD NN
         # where NN = race_id[8:10] is the kaisai-day ordinal (01=1st racing day…)
         key = race_id[:10]
-        groups.setdefault(key, []).append(race_id)
+        groups_set.setdefault(key, set()).add(race_id)
 
-    for key in groups:
-        groups[key].sort()
-
+    groups: dict[str, list[str]] = {key: sorted(ids) for key, ids in groups_set.items()}
     jra_race_ids = sorted(rid for ids in groups.values() for rid in ids)
     return jra_race_ids, groups
