@@ -88,7 +88,7 @@ const mockPredictions: PredictionResponse = {
 const mockRecommendations = {
   race_id: '202406010101',
   bankroll_at_decision: 100_000,
-  odds_source: 'baseline' as const,
+  odds_source: 'unknown' as const,
   candidates: [
     {
       bet_type: '単勝',
@@ -415,11 +415,11 @@ describe('RaceDetail', () => {
 
   // ── Auto live_odds fetch ──────────────────────────────────────────────────
 
-  it('auto-fires fetchLiveOdds when odds_source is baseline', async () => {
-    // entries exist, recommendations return baseline
+  it('auto-fires fetchLiveOdds when odds_source is unknown', async () => {
+    // entries exist, recommendations return unknown (no live and no past odds)
     vi.mocked(fetchRecommendations).mockResolvedValue({
       ...mockRecommendations,
-      odds_source: 'baseline',
+      odds_source: 'unknown',
     });
     vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 
