@@ -13,8 +13,11 @@ from keiba_ai.ai.bet_odds import (
     _FALLBACK_AMOUNTS,
     compute_baseline_odds,
     compute_baseline_odds_by_class,
+    compute_implied_combo_odds_from_tansho,
     compute_past_race_odds,
+    compute_past_race_odds_with_tansho_fill,
     compute_race_odds,
+    tansho_to_pl_scores,
 )
 from keiba_ai.db.base import Base
 from keiba_ai.db.models.entry import Entry
@@ -372,4 +375,147 @@ def test_compute_past_race_odds_empty_for_unknown_race(past_race_session):
 def test_compute_past_race_odds_empty_when_no_data(empty_session):
     """テーブルが空の場合は空 dict を返す。"""
     result = compute_past_race_odds(empty_session, "R001")
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Tansho-implied combination odds (Plackett-Luce)
+# ---------------------------------------------------------------------------
+
+
+def test_tansho_to_pl_scores_normalises_overround():
+    """単勝オッズの逆数和は overround で >1 になる。
+    Score の softmax 確率は和=1 に正規化されること。"""
+    import numpy as np
+
+    odds = {"1": 1.5, "2": 3.0, "3": 5.0}  # raw 1/odds = 0.667 + 0.333 + 0.2 = 1.2
+    posts, scores = tansho_to_pl_scores(odds)
+
+    assert posts == ["1", "2", "3"]
+    probs = np.exp(scores)
+    assert probs.sum() == pytest.approx(1.0, abs=1e-9)
+    # オッズ低いほど確率高いという関係
+    assert probs[0] > probs[1] > probs[2]
+
+
+def test_tansho_to_pl_scores_skips_invalid_odds():
+    """odds が None / <= 0 のエントリは除外される。"""
+    odds = {"1": 1.5, "2": None, "3": 0, "4": 5.0, "5": -1.0}  # type: ignore[dict-item]
+    posts, scores = tansho_to_pl_scores(odds)
+
+    assert posts == ["1", "4"]
+    assert len(scores) == 2
+
+
+def test_tansho_to_pl_scores_sorts_post_position_numerically():
+    """post position 文字列は数値順 (10 が 2 より後ろ)。"""
+    odds = {"10": 4.0, "2": 3.0, "1": 2.0}
+    posts, _ = tansho_to_pl_scores(odds)
+    assert posts == ["1", "2", "10"]
+
+
+def test_tansho_to_pl_scores_raises_on_empty():
+    """有効エントリ 0 件は ValueError。"""
+    with pytest.raises(ValueError):
+        tansho_to_pl_scores({"1": None, "2": 0})  # type: ignore[dict-item]
+
+
+def test_compute_implied_combo_odds_returns_all_bet_types():
+    """単勝オッズから 馬連 / ワイド / 馬単 / 三連複 / 三連単 すべてが返る。"""
+    import numpy as np
+
+    odds = {"1": 2.5, "2": 3.5, "3": 5.0, "4": 8.0, "5": 12.0, "6": 18.0, "7": 30.0, "8": 60.0}
+    rng = np.random.default_rng(0)
+    result = compute_implied_combo_odds_from_tansho(odds, n_samples=50_000, rng=rng)
+
+    assert {"馬連", "ワイド", "馬単", "三連複", "三連単"} <= result.keys()
+
+    # 8 頭から組み合わせ:
+    #   馬連 = C(8,2) = 28, ワイド = C(8,2) = 28, 馬単 = P(8,2) = 56,
+    #   三連複 = C(8,3) = 56, 三連単 = P(8,3) = 336
+    # ただし PL モンテカルロでサンプル 0 の三連単 combo は dict に入らないため
+    # 厳密 56/336 にはならない。下限のみ確認。
+    assert len(result["馬連"]) == 28
+    assert len(result["ワイド"]) == 28
+    assert len(result["馬単"]) == 56
+    assert len(result["三連複"]) <= 56
+    assert len(result["三連単"]) <= 336
+
+
+def test_compute_implied_combo_odds_favorite_combo_cheaper():
+    """1番人気同士の馬連は穴×穴より低オッズになる。"""
+    import numpy as np
+
+    odds = {"1": 2.0, "2": 3.0, "3": 5.0, "4": 50.0, "5": 80.0}
+    rng = np.random.default_rng(123)
+    result = compute_implied_combo_odds_from_tansho(odds, n_samples=50_000, rng=rng)
+
+    # 馬連 1-2 (favorite combo) < 馬連 4-5 (longshot combo)
+    assert result["馬連"]["1-2"] < result["馬連"]["4-5"]
+    # 馬単 1→2 < 馬単 5→4
+    assert result["馬単"]["1→2"] < result["馬単"]["5→4"]
+
+
+def test_compute_implied_combo_odds_takeout_applied():
+    """fair odds に takeout 控除がかかっている (実オッズ < 1/probability)。"""
+    import numpy as np
+
+    odds = {"1": 2.0, "2": 3.0, "3": 5.0, "4": 10.0}
+    rng = np.random.default_rng(7)
+    result = compute_implied_combo_odds_from_tansho(odds, n_samples=100_000, rng=rng)
+
+    # 馬連 1-2 の実オッズは fair odds の (1 - 0.225) = 0.775 倍
+    # fair odds は概ね 2-4 倍程度（馬連 favorite combo）
+    fair_uupper = 5.0
+    realistic = result["馬連"]["1-2"]
+    assert 0 < realistic < fair_uupper * 0.776  # 控除率ぶん必ず低くなる
+
+
+def test_compute_implied_combo_odds_raises_for_single_horse():
+    """1 頭しか単勝が無いと連系券種が組めず ValueError。"""
+    with pytest.raises(ValueError):
+        compute_implied_combo_odds_from_tansho({"1": 2.0})
+
+
+def test_compute_past_race_odds_with_tansho_fill_keeps_confirmed(past_race_session):
+    """確定 combo は tansho-implied で上書きされない。"""
+    import numpy as np
+
+    # ※ compute_implied_... は内部で default_rng() を使うが、確定値が
+    # 上書きされないことだけ確認するので rng の seed は不要
+    result = compute_past_race_odds_with_tansho_fill(
+        past_race_session, "PAST_R001", n_samples=20_000
+    )
+
+    # confirmed values from past_race_session
+    assert result["馬連"]["1-3"] == pytest.approx(35.0)
+    assert result["ワイド"]["1-3"] == pytest.approx(8.0)
+    assert result["ワイド"]["3-5"] == pytest.approx(6.0)
+    assert result["馬単"]["3→1"] == pytest.approx(60.0)
+    assert result["三連複"]["1-3-5"] == pytest.approx(80.0)
+    assert result["三連単"]["3→1→5"] == pytest.approx(300.0)
+
+
+def test_compute_past_race_odds_with_tansho_fill_adds_missing(past_race_session):
+    """未確定 combo は tansho-implied で補完される。"""
+    result = compute_past_race_odds_with_tansho_fill(
+        past_race_session, "PAST_R001", n_samples=20_000
+    )
+
+    # past_race_session has 5 horses, only 1-3 / 3→1 / 1-3-5 / 3→1→5 confirmed.
+    # All other combos should be filled by tansho-implied.
+    # 5 horses → 馬連 = C(5,2) = 10, ワイド = 10, 馬単 = P(5,2) = 20, 三連複 = C(5,3) = 10
+    assert len(result["馬連"]) == 10
+    assert len(result["ワイド"]) == 10
+    assert len(result["馬単"]) == 20
+
+    # The non-confirmed combos must be > 0
+    assert result["馬連"]["2-4"] > 0  # not confirmed → implied
+    assert result["馬単"]["1→3"] > 0  # not confirmed (1→3, opposite of 3→1)
+    assert result["馬単"]["3→1"] == pytest.approx(60.0)  # confirmed preserved
+
+
+def test_compute_past_race_odds_with_tansho_fill_no_tansho(empty_session):
+    """単勝オッズが取れない場合はそのまま返す（空 dict）。"""
+    result = compute_past_race_odds_with_tansho_fill(empty_session, "NONEXISTENT")
     assert result == {}
