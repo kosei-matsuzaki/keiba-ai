@@ -138,7 +138,9 @@ def get_predictions(
 
     bundle = load_model_full(active_path)
     model = bundle.lambdarank
-    result_df = predict_race_with_shap(model, frame)
+    result_df = predict_race_with_shap(
+        model, frame, binary_model=bundle.binary, calibrator=bundle.calibrator
+    )
 
     # Resolve model_runs id for the active model
     active_run = session.scalars(

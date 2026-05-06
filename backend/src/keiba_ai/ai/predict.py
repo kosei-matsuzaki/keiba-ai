@@ -418,6 +418,8 @@ def predict_race_with_shap(
     model: lgb.Booster,
     frame: pd.DataFrame,
     top_n: int = 3,
+    binary_model: lgb.Booster | None = None,
+    calibrator: IsotonicCalibrator | None = None,
 ) -> pd.DataFrame:
     """Same as predict_race but adds a 'top_features' column (list[str]).
 
@@ -425,9 +427,11 @@ def predict_race_with_shap(
     horse. The top_n features by absolute SHAP value are returned per horse.
 
     Args:
-        model: Trained LightGBM Booster.
+        model: Trained LightGBM Booster (lambdarank).
         frame: Feature DataFrame for one race. Must contain FEATURE_COLUMNS.
         top_n: Number of top features to return per horse.
+        binary_model / calibrator: Optional. Forwarded to predict_race so the
+            returned win_prob comes from the calibrated path when available.
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob, top_features.
@@ -435,7 +439,7 @@ def predict_race_with_shap(
     """
     import shap
 
-    base = predict_race(model, frame)
+    base = predict_race(model, frame, binary_model=binary_model, calibrator=calibrator)
     if frame.empty:
         base["top_features"] = pd.Series(dtype=object)
         return base
