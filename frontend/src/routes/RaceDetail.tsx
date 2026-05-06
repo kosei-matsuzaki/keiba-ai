@@ -384,6 +384,18 @@ export function RaceDetail() {
     );
   }
 
+  // raceQuery が success であっても TanStack Query の型は data: RaceDetail | undefined。
+  // ここで明示的に narrowing し、以降は race を非 null として扱えるようにする。
+  if (!race) {
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <BackLink to={backLink} />
+        <PageHeader icon={Trophy} title="Race Detail" description={race_id} />
+        <RaceDetailSkeleton />
+      </div>
+    );
+  }
+
   const predictions = predQuery.data?.predictions ?? null;
 
   // オッズ更新ボタンは entries が存在する場合のみ表示する
