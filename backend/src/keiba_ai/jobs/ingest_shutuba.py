@@ -122,8 +122,17 @@ def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
             # name / race_class は COALESCE で既存値を保護
             "name": sa.func.coalesce(stmt.excluded.name, Race.name),
             "race_class": sa.func.coalesce(stmt.excluded.race_class, Race.race_class),
+            # date は shutuba HTML から取得できたときだけ上書き。
+            # PR #159 以前は date が "取込日" で誤登録される事故があったため、
+            # 後続の shutuba ingest で正しい HTML 由来 date が手に入ったら必ず
+            # 上書きする。HTML から date が取れない（excluded.date=""）場合は
+            # 既存値を保持する（ingest_range の確定 date を破壊しない）。
+            "date": sa.case(
+                (stmt.excluded.date != "", stmt.excluded.date),
+                else_=Race.date,
+            ),
             # 既存の確定済みデータ (payout / track_condition) は保持
-            # date / course / surface / distance は初回登録値を尊重し上書きしない
+            # course / surface / distance は初回登録値を尊重し上書きしない
         },
     )
     session.execute(stmt)

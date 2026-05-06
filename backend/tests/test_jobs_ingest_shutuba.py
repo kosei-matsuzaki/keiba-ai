@@ -563,6 +563,62 @@ async def test_html_date_not_overwritten_by_today(
 
 
 @pytest.mark.asyncio
+async def test_existing_wrong_date_is_corrected_by_html_date(
+    db_session, tmp_path, monkeypatch
+):
+    """既存 race の bad date (PR #159 以前の取込日誤登録) が、HTML の正しい
+    date で上書きされること（再 ingest による自動修正）。
+
+    シナリオ:
+      - DB に予め race row を date="2026-05-06" (取込日 = 誤値) で作る
+      - shutuba HTML は実際の date="2026-05-09" を持つ
+      - run_ingest_shutuba 実行後、DB の date が "2026-05-09" に上書きされる
+    """
+    import httpx
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    RACE_ID = "202605020501"
+    BAD_DATE = "2026-05-06"   # 既に DB に入っている誤値（PR #159 以前のバグ由来）
+    HTML_DATE = "2026-05-09"  # shutuba HTML が返す正しい日付
+
+    # 1. DB に bad row を植え込む
+    db_session.add(Race(race_id=RACE_ID, date=BAD_DATE, course="東京"))
+    db_session.commit()
+
+    # 2. shutuba parse が HTML_DATE を返すよう patch
+    from keiba_ai.scraper.parsers.shutuba import ParsedShutuba
+    import keiba_ai.jobs.ingest_shutuba as _shutuba_mod
+
+    original_parse = _shutuba_mod.parse_shutuba
+
+    def _patched_parse(html: str, race_id: str) -> ParsedShutuba:
+        result = original_parse(html, race_id)
+        result.date = HTML_DATE
+        return result
+
+    monkeypatch.setattr(_shutuba_mod, "parse_shutuba", _patched_parse)
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    rate = AsyncRateLimiter(settings)
+    robots = RobotsCache("TestAgent")
+    http = httpx.AsyncClient()
+    client = NetkeibaClient(rate, robots, http, settings)
+    client.fetch = _build_fake_fetch_no_calendar(SHUTUBA_HTML)  # type: ignore[method-assign]
+
+    # 3. 再 ingest（date_str は渡さず、HTML date を最優先させる）
+    await run_ingest_shutuba(None, client, db_session, race_ids=[RACE_ID])
+
+    row = db_session.execute(
+        select(Race).where(Race.race_id == RACE_ID)
+    ).scalar_one_or_none()
+    assert row is not None
+    assert row.date == HTML_DATE, (
+        f"既存の bad date {BAD_DATE!r} が HTML date {HTML_DATE!r} で上書きされていない: "
+        f"{row.date!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_idempotency_same_date_multiple_runs(
     db_session, mock_client, tmp_path, monkeypatch
 ):
