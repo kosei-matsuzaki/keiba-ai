@@ -332,10 +332,13 @@ export function RaceDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [race, race_id]);
 
-  // Auto-fetch live odds when entries are available and odds_source is baseline
+  // Auto-fetch live odds when entries are available and odds_source is not 'live'.
+  // 'unknown' (no live + no past data) と 'past' (確定オッズはあるが live は無い) の両方で
+  // live 取得を試みる — ただし past の場合は当日オッズが存在しない可能性が高いので、
+  // ヘッダ判定: !== 'live' で取得を試行（実 live odds が DB に書かれれば odds_source='live' に切替わる）
   useEffect(() => {
     if (!race || race.entries.length === 0) return;
-    if (!recQuery.data || recQuery.data.odds_source !== 'baseline') return;
+    if (!recQuery.data || recQuery.data.odds_source === 'live') return;
     if (autoOddsFiredRef.current === race_id) return;
     if (fetchOddsMutation.isPending || fetchOddsMutation.isPolling) return;
 
