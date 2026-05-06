@@ -413,7 +413,7 @@ async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse
                 continue
 
             # rate_limiter で過剰 fetch を抑制
-            await rate_limiter.wait()
+            await rate_limiter.acquire()
 
             try:
                 sresp = await http_client.get(shutuba_url)
