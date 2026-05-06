@@ -38,7 +38,12 @@ from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
 from keiba_ai.db.models.race import Race
 from keiba_ai.features.course import extract_race_features
-from keiba_ai.features.horse_history import compute_horse_history
+from keiba_ai.features.horse_history import (
+    HorseHistoryCache,
+    build_horse_history_cache,
+    compute_horse_history,
+    compute_horse_history_from_cache,
+)
 from keiba_ai.features.jockey import compute_jockey_stats
 from keiba_ai.features.odds import extract_odds_features
 from keiba_ai.features.pedigree import compute_pedigree_features
@@ -153,20 +158,34 @@ def _build_entry_row(
     entry: Entry,
     n_runners: int,
     race_date: date,
+    horse_cache: HorseHistoryCache | None = None,
 ) -> dict[str, object]:
     """Build a single feature row for one entry in one race.
 
     All historical lookups use race_date (strictly before) to prevent leakage.
     Relative features are absent here — _build_race_rows merges them in a
     second pass once the full field is known.
+
+    horse_cache: 渡された場合は per-call SQL を avoidし、preload 済みの
+    pandas DataFrame から horse history を計算する（build_training_frame の
+    N+1 解消用）。None なら従来通り compute_horse_history で SQL する。
     """
-    horse_feats = compute_horse_history(
-        session,
-        entry.horse_id,
-        before_date=race_date,
-        distance=race.distance,
-        course=race.course,
-    )
+    if horse_cache is not None:
+        horse_feats = compute_horse_history_from_cache(
+            horse_cache,
+            entry.horse_id,
+            before_date=race_date,
+            distance=race.distance,
+            course=race.course,
+        )
+    else:
+        horse_feats = compute_horse_history(
+            session,
+            entry.horse_id,
+            before_date=race_date,
+            distance=race.distance,
+            course=race.course,
+        )
     jockey_feats = (
         compute_jockey_stats(
             session,
@@ -225,6 +244,7 @@ def _build_race_rows(
     session: Session,
     race: Race,
     entries: list[Entry],
+    horse_cache: HorseHistoryCache | None = None,
 ) -> list[dict[str, object]]:
     """Build all entry rows for a single race, including within-race relative features.
 
@@ -235,7 +255,10 @@ def _build_race_rows(
     n_runners = race.n_runners or len(entries)
     race_date = _parse_date(race.date)
 
-    rows = [_build_entry_row(session, race, entry, n_runners, race_date) for entry in entries]
+    rows = [
+        _build_entry_row(session, race, entry, n_runners, race_date, horse_cache=horse_cache)
+        for entry in entries
+    ]
 
     nan = math.nan
     jockey_recent_win_rates = {
@@ -369,15 +392,25 @@ def build_training_frame(
         )
 
     n_total = len(races)
+    import time as _time
+
+    # 全 horse の race history を 1 query で先読み → per-call の SQL を排除する
+    # （N+1 SQL の最大要因。同 race_id でも entry 単位で叩いていた）
+    log.info("Pre-loading horse history (single SQL pass)...")
+    t_preload = _time.perf_counter()
+    horse_cache = build_horse_history_cache(session)
     log.info(
-        "Building features for %d races (cache miss; this is N+1 SQL heavy)",
-        n_total,
+        "Pre-loaded horse history: %d rows for %d horses in %.1fs",
+        len(horse_cache.df),
+        len(horse_cache.by_horse),
+        _time.perf_counter() - t_preload,
     )
+
+    log.info("Building features for %d races (jockey/trainer/pedigree still per-call SQL)", n_total)
 
     rows: list[dict[str, object]] = []
     # 100 race ごとに進捗ログを出すのでユーザが進行状況を把握できる
     progress_step = max(50, n_total // 50)
-    import time as _time
 
     t0 = _time.perf_counter()
     for i, race in enumerate(races):
@@ -385,7 +418,7 @@ def build_training_frame(
         entries = list(session.scalars(entry_stmt).all())
         if not entries:
             continue
-        rows.extend(_build_race_rows(session, race, entries))
+        rows.extend(_build_race_rows(session, race, entries, horse_cache=horse_cache))
         if (i + 1) % progress_step == 0 or (i + 1) == n_total:
             elapsed = _time.perf_counter() - t0
             eta_sec = elapsed / (i + 1) * (n_total - i - 1)
