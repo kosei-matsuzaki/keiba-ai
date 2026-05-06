@@ -125,6 +125,14 @@ export interface DiscoverTodayRaceIdsResponse {
   discovered_at: string;
 }
 
+export interface DiscoverThisWeekendRaceIdsResponse {
+  race_ids: string[];
+  saturday_date: string;   // YYYY-MM-DD
+  sunday_date: string;     // YYYY-MM-DD
+  total_kaisai_days_probed: number;
+  discovered_at: string;   // ISO 8601
+}
+
 export interface ScraperStatus {
   stopped: boolean;
   last_fetched_date: string | null;

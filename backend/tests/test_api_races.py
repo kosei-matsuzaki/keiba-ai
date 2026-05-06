@@ -277,6 +277,45 @@ def test_by_date_returns_matching_races(
     assert "OTHER001" not in race_ids
 
 
+# ── /races/this_weekend ───────────────────────────────────────────────────────
+
+
+def test_this_weekend_empty(api_client: TestClient) -> None:
+    """DB にレースがない場合は空リストで 200 を返す。"""
+    resp = api_client.get("/api/races/this_weekend")
+    assert resp.status_code == 200
+    assert resp.json()["races"] == []
+
+
+def test_this_weekend_returns_only_weekend_races(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """土・日のレースのみ返り、他日付のレースは除外される。"""
+    from datetime import timedelta
+
+    from keiba_ai.core.dates import this_weekend_dates
+    from keiba_ai.core.paths import db_path
+    from keiba_ai.db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    sat, sun = this_weekend_dates()
+    other_day = (sat - timedelta(days=1)).isoformat()  # 先週日 = 除外対象
+
+    with session_scope(engine) as session:
+        _insert_race(session, "SAT001", sat.isoformat())
+        _insert_race(session, "SUN001", sun.isoformat())
+        _insert_race(session, "OTHER001", other_day)
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/this_weekend")
+
+    assert resp.status_code == 200
+    ids = {r["race_id"] for r in resp.json()["races"]}
+    assert "SAT001" in ids
+    assert "SUN001" in ids
+    assert "OTHER001" not in ids
+
+
 def test_by_date_invalid_format_returns_422(api_client: TestClient) -> None:
     """Malformed date string is rejected with 422."""
     resp = api_client.get("/api/races/by_date?date=2024/06/01")

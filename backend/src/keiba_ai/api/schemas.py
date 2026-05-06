@@ -280,6 +280,18 @@ class DiscoverTodayRaceIdsResponse(BaseModel):
     discovered_at: str  # ISO 8601
 
 
+class DiscoverThisWeekendRaceIdsResponse(BaseModel):
+    """GET /api/scraper/discover_this_weekend_race_ids レスポンス。
+
+    今週末 (土・日) の JRA レースのみを返す。
+    """
+    race_ids: list[str]
+    saturday_date: str        # YYYY-MM-DD
+    sunday_date: str          # YYYY-MM-DD
+    total_kaisai_days_probed: int  # shutuba pre-fetch を試みた unique 開催日キー数
+    discovered_at: str        # ISO 8601
+
+
 # ── Job info schema ───────────────────────────────────────────────────────────
 
 class JobInfoSchema(BaseModel):

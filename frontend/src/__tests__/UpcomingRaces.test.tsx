@@ -4,18 +4,28 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { UpcomingRaces } from '../routes/UpcomingRaces';
-import type { JobAccepted, JobInfo, UpcomingRacesResponse } from '../types/api';
+import type {
+  DiscoverThisWeekendRaceIdsResponse,
+  JobAccepted,
+  JobInfo,
+  UpcomingRacesResponse,
+} from '../types/api';
 
 // Mock the api module so tests never hit the network
 vi.mock('../lib/api', () => ({
-  fetchUpcomingRaces: vi.fn(),
-  discoverTodayRaceIds: vi.fn(),
+  fetchThisWeekendRaces: vi.fn(),
+  discoverThisWeekendRaceIds: vi.fn(),
   runShutubaScraper: vi.fn(),
   fetchJob: vi.fn(),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
 }));
 
-import { fetchUpcomingRaces, discoverTodayRaceIds, runShutubaScraper, fetchJob } from '../lib/api';
+import {
+  fetchThisWeekendRaces,
+  discoverThisWeekendRaceIds,
+  runShutubaScraper,
+  fetchJob,
+} from '../lib/api';
 
 const mockRaces: UpcomingRacesResponse = {
   races: [
@@ -30,9 +40,9 @@ const mockRaces: UpcomingRacesResponse = {
       n_runners: 18,
     },
     {
-      race_id: '202406010102',
+      race_id: '202406020101',
       name: null,
-      date: '2024-06-01',
+      date: '2024-06-02',
       course: '中山',
       surface: 'ダ',
       distance: 1200,
@@ -40,6 +50,14 @@ const mockRaces: UpcomingRacesResponse = {
       n_runners: 12,
     },
   ],
+};
+
+const mockDiscoverResponse: DiscoverThisWeekendRaceIdsResponse = {
+  race_ids: ['202406010101', '202406020101'],
+  saturday_date: '2024-06-01',
+  sunday_date: '2024-06-02',
+  total_kaisai_days_probed: 4,
+  discovered_at: '2026-05-05T10:00:00Z',
 };
 
 const mockJobAccepted: JobAccepted = {
@@ -71,11 +89,8 @@ function renderUpcoming() {
 }
 
 beforeEach(() => {
-  vi.mocked(fetchUpcomingRaces).mockResolvedValue(mockRaces);
-  vi.mocked(discoverTodayRaceIds).mockResolvedValue({
-    race_ids: ['202406010101', '202406010102'],
-    discovered_at: '2026-05-05T10:00:00Z',
-  });
+  vi.mocked(fetchThisWeekendRaces).mockResolvedValue(mockRaces);
+  vi.mocked(discoverThisWeekendRaceIds).mockResolvedValue(mockDiscoverResponse);
   vi.mocked(runShutubaScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
@@ -94,7 +109,7 @@ describe('UpcomingRaces', () => {
   });
 
   it('shows error state when API fails', async () => {
-    vi.mocked(fetchUpcomingRaces).mockRejectedValue(new Error('network error'));
+    vi.mocked(fetchThisWeekendRaces).mockRejectedValue(new Error('network error'));
     renderUpcoming();
     await waitFor(() => {
       expect(screen.getByText('レース情報の取得に失敗しました')).toBeInTheDocument();
@@ -106,53 +121,61 @@ describe('UpcomingRaces', () => {
     await screen.findByRole('button', { name: '再取込' });
   });
 
+  it('shows today-weekend title', async () => {
+    renderUpcoming();
+    expect(await screen.findByText(/今週末のレース/)).toBeInTheDocument();
+  });
+
   // ── Auto bootstrap ────────────────────────────────────────────────────────
 
   it('shows bootstrap progress banner when races are 0 and discovery starts', async () => {
-    // Return empty races on first call so bootstrap fires
-    vi.mocked(fetchUpcomingRaces).mockResolvedValue({ races: [] });
-    // discoverTodayRaceIds is slow — keep promise pending to catch mid-flight UI
-    let resolveDisco!: (v: { race_ids: string[]; discovered_at: string }) => void;
-    vi.mocked(discoverTodayRaceIds).mockReturnValue(
-      new Promise((r) => { resolveDisco = r; })
+    vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
+    // Keep discovery pending to catch mid-flight UI
+    let resolveDisco!: (v: DiscoverThisWeekendRaceIdsResponse) => void;
+    vi.mocked(discoverThisWeekendRaceIds).mockReturnValue(
+      new Promise((r) => {
+        resolveDisco = r;
+      })
     );
 
     renderUpcoming();
 
-    // Progress banner should appear while discovering
     await waitFor(() => {
-      expect(screen.getByText(/本日の開催レースを確認中/)).toBeInTheDocument();
+      expect(screen.getByText(/今週末の JRA レースを確認中/)).toBeInTheDocument();
     });
 
     // Resolve to avoid dangling promises
-    resolveDisco({ race_ids: [], discovered_at: '' });
+    resolveDisco({ ...mockDiscoverResponse, race_ids: [] });
   });
 
-  it('shows 本日の JRA レースはありません when discover returns empty', async () => {
-    vi.mocked(fetchUpcomingRaces).mockResolvedValue({ races: [] });
-    vi.mocked(discoverTodayRaceIds).mockResolvedValue({ race_ids: [], discovered_at: '' });
+  it('shows 今週末の JRA レースはありません when discover returns empty', async () => {
+    vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
+    vi.mocked(discoverThisWeekendRaceIds).mockResolvedValue({
+      ...mockDiscoverResponse,
+      race_ids: [],
+    });
 
     renderUpcoming();
 
     await waitFor(() => {
-      expect(screen.getByText('本日の JRA レースはありません')).toBeInTheDocument();
+      expect(screen.getByText('今週末の JRA レースはありません')).toBeInTheDocument();
     });
   });
 
   it('fires runShutubaScraper with discovered race_ids when 0 races', async () => {
-    vi.mocked(fetchUpcomingRaces).mockResolvedValue({ races: [] });
+    vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
 
     renderUpcoming();
 
     await waitFor(() => {
       expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_ids: ['202406010101', '202406010102'] })
+        expect.objectContaining({ race_ids: mockDiscoverResponse.race_ids })
       );
     });
   });
 
   it('does not fire auto-bootstrap a second time after manual 再取込 click', async () => {
-    vi.mocked(fetchUpcomingRaces).mockResolvedValue({ races: [] });
+    vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
     const user = userEvent.setup();
 
     renderUpcoming();
