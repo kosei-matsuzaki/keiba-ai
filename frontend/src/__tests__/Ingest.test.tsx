@@ -12,6 +12,8 @@ vi.mock('../lib/api', () => ({
   stopScraper: vi.fn(),
   runShutubaScraper: vi.fn(),
   fetchLiveOdds: vi.fn(),
+  // Required by useRunShutuba / useFetchLiveOdds job polling
+  fetchJob: vi.fn(),
 }));
 
 import {
@@ -20,6 +22,7 @@ import {
   stopScraper,
   runShutubaScraper,
   fetchLiveOdds,
+  fetchJob,
 } from '../lib/api';
 
 const mockStatus: ScraperStatus = {
@@ -46,12 +49,22 @@ function renderIngest() {
   );
 }
 
+const mockJobCompleted = {
+  job_id: 'shutuba-001',
+  type: 'ingest_shutuba',
+  status: 'completed',
+  started_at: '2026-04-28T10:00:00',
+  finished_at: '2026-04-28T10:01:00',
+  error: null,
+};
+
 beforeEach(() => {
   vi.mocked(fetchScraperStatus).mockResolvedValue(mockStatus);
   vi.mocked(runScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(stopScraper).mockResolvedValue({ stopped: true });
   vi.mocked(runShutubaScraper).mockResolvedValue({ job_id: 'shutuba-001', status: 'running', started_at: '2026-04-28T10:00:00' });
   vi.mocked(fetchLiveOdds).mockResolvedValue({ job_id: 'odds-001', status: 'running', started_at: '2026-04-28T10:00:00' });
+  vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
 
 describe('Ingest', () => {

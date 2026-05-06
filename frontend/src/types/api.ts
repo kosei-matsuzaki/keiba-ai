@@ -119,6 +119,12 @@ export interface ModelMeta {
 
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
+export interface DiscoverTodayRaceIdsResponse {
+  race_ids: string[];
+  /** ISO 8601 timestamp of when the discovery was performed. */
+  discovered_at: string;
+}
+
 export interface ScraperStatus {
   stopped: boolean;
   last_fetched_date: string | null;

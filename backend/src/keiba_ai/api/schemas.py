@@ -272,6 +272,14 @@ class FetchLiveOddsRequest(BaseModel):
         return v
 
 
+# ── Discover today race IDs schema ───────────────────────────────────────────
+
+class DiscoverTodayRaceIdsResponse(BaseModel):
+    """GET /api/scraper/discover_today_race_ids レスポンス。"""
+    race_ids: list[str]
+    discovered_at: str  # ISO 8601
+
+
 # ── Job info schema ───────────────────────────────────────────────────────────
 
 class JobInfoSchema(BaseModel):

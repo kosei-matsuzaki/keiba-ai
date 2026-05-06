@@ -20,6 +20,7 @@ import type {
   BetRecordOut,
   BetSummary,
   BetTimeseries,
+  DiscoverTodayRaceIdsResponse,
   FetchLiveOddsRequest,
   HealthResponse,
   JobAccepted,
@@ -138,6 +139,15 @@ export function runShutubaScraper(body: ScraperRunShutubaRequest): Promise<JobAc
 
 export function fetchLiveOdds(body: FetchLiveOddsRequest): Promise<JobAccepted> {
   return getClient().then((c) => c.post('scraper/fetch_live_odds', { json: body }).json<JobAccepted>());
+}
+
+export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceIdsResponse> {
+  const searchParams: Record<string, string> = date ? { date } : {};
+  return getClient().then((c) =>
+    c
+      .get('scraper/discover_today_race_ids', Object.keys(searchParams).length ? { searchParams } : {})
+      .json<DiscoverTodayRaceIdsResponse>()
+  );
 }
 
 export function stopScraper(): Promise<{ stopped: boolean }> {

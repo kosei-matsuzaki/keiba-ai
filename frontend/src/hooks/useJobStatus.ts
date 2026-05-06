@@ -3,7 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchJob } from '@/lib/api';
 import type { JobInfo } from '@/types/api';
 
-const TERMINAL_STATUSES = new Set(['success', 'failed', 'cancelled']);
+// Backend JobInfo.status values: 'running' | 'completed' | 'failed'
+// Keep legacy 'success' / 'cancelled' for forward-compat with potential schema changes.
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'success', 'cancelled']);
 
 /**
  * Poll a single job by id every 2 seconds until it reaches a terminal state.
