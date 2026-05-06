@@ -317,6 +317,11 @@ def train(
         "valid_ndcg3": valid_ndcg3,
         "test_ndcg1": test_ndcg1,
         "test_ndcg3": test_ndcg3,
+        # UI/Dashboard が期待する flat な key (test 値を canonical 採用)。
+        # evaluate.py --persist が後から payback_win など他のメトリクスを
+        # merge する設計のため、ここでは ndcg のみで充分。
+        "ndcg1": test_ndcg1 if not pd.isna(test_ndcg1) else valid_ndcg1,
+        "ndcg3": test_ndcg3 if not pd.isna(test_ndcg3) else valid_ndcg3,
     }
     log.info("Lambdarank metrics: %s", metrics)
 
