@@ -9,7 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.bet_odds import compute_past_race_odds, compute_race_odds
+from keiba_ai.ai.bet_odds import (
+    compute_past_race_odds_with_tansho_fill,
+    compute_race_odds,
+)
 from keiba_ai.ai.bet_strategy import recommend_for_race
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations
 from keiba_ai.ai.registry import get_active, load_model
@@ -69,7 +72,9 @@ def _resolve_odds_source(
 
     today_str = datetime.date.today().isoformat()
     if race_row is not None and race_row.date < today_str:
-        past_odds = compute_past_race_odds(session, race_id)
+        # 確定オッズを優先しつつ、未確定 combo は単勝由来の Plackett-Luce 推定で埋める。
+        # 全体平均 (compute_baseline_odds) より精度の高いレース固有推定が得られる。
+        past_odds = compute_past_race_odds_with_tansho_fill(session, race_id)
         if past_odds:
             return past_odds, "past"
 
