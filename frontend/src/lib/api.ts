@@ -173,8 +173,14 @@ export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceId
 }
 
 export function discoverThisWeekendRaceIds(): Promise<DiscoverThisWeekendRaceIdsResponse> {
+  // Backend では unique 開催日キー (6-7 group) ごとに shutuba を 1 件 pre-fetch
+  // するため、rate_limiter (3-6 sec) 込みで合計 30-50 秒かかる。
+  // ky の default timeout (10s) では尽き果てて "Failed to fetch" になるため、
+  // この呼び出しでは 120 秒まで延長する。
   return getClient().then((c) =>
-    c.get('scraper/discover_this_weekend_race_ids').json<DiscoverThisWeekendRaceIdsResponse>()
+    c
+      .get('scraper/discover_this_weekend_race_ids', { timeout: 120_000 })
+      .json<DiscoverThisWeekendRaceIdsResponse>()
   );
 }
 
