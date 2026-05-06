@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from keiba_ai.ai.bet_odds import compute_race_odds_with_sources
 from keiba_ai.ai.bet_strategy import recommend_for_race
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations
-from keiba_ai.ai.registry import get_active, load_model
+from keiba_ai.ai.registry import get_active, load_model_full
 from keiba_ai.api.deps import build_inference_frame_or_404, get_session, get_settings_store
 from keiba_ai.core.logging import get_logger
 from keiba_ai.core.settings_store import SettingsStore
@@ -120,10 +120,14 @@ def get_recommendations(
 
     frame = build_inference_frame_or_404(session, race_id)
 
-    model = load_model(active_path)
+    bundle = load_model_full(active_path)
+    model = bundle.lambdarank
 
     # Step 3: win_prob / place_prob per horse
-    predictions = predict_race(model, frame)
+    # Phase 2: binary_model + calibrator が保存されていれば calibrated win_prob を使う
+    predictions = predict_race(
+        model, frame, binary_model=bundle.binary, calibrator=bundle.calibrator
+    )
 
     # Join post_position from frame so recommend_for_race can build top_pps.
     # predict_race returns horse_id-indexed rows without post_position.
@@ -145,6 +149,8 @@ def get_recommendations(
         top_k_combinations=top_k,
         race_odds=race_odds,
         race_odds_sources=race_odds_sources,
+        binary_model=bundle.binary,
+        calibrator=bundle.calibrator,
     )
 
     # Step 6: load settings and run recommendation logic

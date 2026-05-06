@@ -19,3 +19,15 @@ def assign_relevance(finish_position: int | None) -> int:
     if finish_position in (4, 5):
         return 1
     return 0
+
+
+def assign_is_winner(finish_position: int | None) -> int:
+    """Map finish_position to 0/1 binary "won the race" label.
+
+    Used by the binary-classifier head trained alongside lambdarank to produce
+    naturally-calibrated win probabilities.
+
+    Returns:
+        1 if finish_position == 1, else 0 (including None / DNF).
+    """
+    return 1 if finish_position == 1 else 0

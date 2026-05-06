@@ -5,6 +5,7 @@ top_k_cumulative_prob: simple approximation for place probability.
 plackett_luce_*: Plackett-Luce Monte Carlo probability estimators.
 compute_all_combination_probs: compute all combination probabilities in one pass.
 compute_analytical_combo_probs: closed-form (no MC) combination probabilities.
+IsotonicCalibrator: post-hoc calibrator for binary-classifier win probabilities.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 from itertools import combinations, permutations
 
 import numpy as np
+from sklearn.isotonic import IsotonicRegression
 
 
 def softmax_within_race(scores: np.ndarray) -> np.ndarray:
@@ -461,3 +463,76 @@ def compute_analytical_combo_probs(scores: np.ndarray) -> dict:
         "triple": triple_dict,
         "ordered_triple": ordered_triple,
     }
+
+
+# ---------------------------------------------------------------------------
+# Isotonic calibration for win-probability outputs
+# ---------------------------------------------------------------------------
+
+
+class IsotonicCalibrator:
+    """Post-hoc isotonic regression calibrator for binary-classifier win probs.
+
+    Wraps sklearn's IsotonicRegression and adds within-race re-normalisation
+    so calibrated probabilities sum to 1 per race (preserves the rank-1
+    softmax constraint).
+
+    Usage:
+        cal = IsotonicCalibrator()
+        cal.fit(raw_valid_probs, valid_is_winner)         # 1-D arrays
+        race_probs = cal.predict(race_raw_probs)          # one race at a time
+                                                          # (re-normalised)
+        bulk_probs = cal.predict(bulk_raw_probs)          # if normalise=False
+
+    Persisted via pickle (registry.save_model / load_model).
+    """
+
+    def __init__(self) -> None:
+        self.iso = IsotonicRegression(
+            out_of_bounds="clip",
+            y_min=0.0,
+            y_max=1.0,
+            increasing=True,
+        )
+        self.fitted = False
+
+    def fit(self, raw_probs: np.ndarray, outcomes: np.ndarray) -> None:
+        """Fit on (raw_prob, outcome) pairs.
+
+        Args:
+            raw_probs: 1-D array of raw probabilities from the binary classifier.
+            outcomes: 1-D array of 0/1 (is_winner) outcomes, same length.
+        """
+        raw = np.asarray(raw_probs, dtype=np.float64).ravel()
+        out = np.asarray(outcomes, dtype=np.float64).ravel()
+        if raw.shape != out.shape:
+            raise ValueError(
+                f"raw_probs shape {raw.shape} != outcomes shape {out.shape}"
+            )
+        self.iso.fit(raw, out)
+        self.fitted = True
+
+    def predict(
+        self, raw_probs: np.ndarray, normalise: bool = True
+    ) -> np.ndarray:
+        """Apply calibration. With normalise=True (default), the result is
+        re-scaled so it sums to 1 — only meaningful when raw_probs is one
+        race's worth of horses.
+
+        Args:
+            raw_probs: 1-D array of raw probabilities from the binary classifier.
+            normalise: If True, divide by sum so result is a proper distribution
+                over the race. Set False for bulk diagnostic / metric use.
+
+        Returns:
+            Calibrated probabilities (same shape as input).
+        """
+        if not self.fitted:
+            raise RuntimeError("IsotonicCalibrator must be fit() before predict()")
+        raw = np.asarray(raw_probs, dtype=np.float64).ravel()
+        calibrated = self.iso.predict(raw)
+        if normalise:
+            total = calibrated.sum()
+            if total > 0:
+                calibrated = calibrated / total
+        return calibrated

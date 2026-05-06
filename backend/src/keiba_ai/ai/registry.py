@@ -1,13 +1,16 @@
 """Model registry — save, list, load, and activate trained LightGBM models.
 
 Each model is stored under data/models/<YYYYMMDD-HHMMSS>/ with:
-  model.txt  — LightGBM Booster serialized text
-  meta.json  — params, ranges, metrics, feature columns
+  model.txt        — LightGBM lambdarank Booster (順位用、必須)
+  binary.txt       — LightGBM binary classifier (勝率用、Phase 2 で追加; optional)
+  calibrator.pkl   — IsotonicCalibrator (binary 出力の post-hoc 補正; optional)
+  meta.json        — params, ranges, metrics, feature columns
 """
 
 from __future__ import annotations
 
 import json
+import pickle
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +18,7 @@ from pathlib import Path
 import lightgbm as lgb
 from sqlalchemy.orm import Session
 
+from keiba_ai.ai.calibrate import IsotonicCalibrator
 from keiba_ai.core.paths import data_dir
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.features.builder import FEATURE_COLUMNS
@@ -45,11 +49,18 @@ def save_model(
     metrics: dict,
     notes: str | None = None,
     feature_columns: list[str] | None = None,
+    binary_model: lgb.Booster | None = None,
+    calibrator: IsotonicCalibrator | None = None,
 ) -> Path:
-    """Persist model and metadata; return the model directory path.
+    """Persist model + (optional) binary classifier + calibrator and metadata.
 
-    feature_columns: 学習で実際に使った特徴量列。None のときは LightGBM の
-    feature_name() を使う（lightgbm が学習時に設定済み）。
+    Args:
+        model: lambdarank Booster (順位用、必須)。
+        binary_model: 同じ feature で学習した is_winner 二項分類器 (任意)。
+        calibrator: binary_model 出力を post-hoc 補正する isotonic regression
+            (任意)。binary_model と calibrator は **両方揃って初めて意味がある**。
+        feature_columns: 学習で実際に使った特徴量列。None のときは LightGBM の
+            feature_name() を使う。
     """
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     model_dir = _models_dir() / ts
@@ -61,6 +72,15 @@ def save_model(
     if feature_columns is None:
         feature_columns = list(model.feature_name())
 
+    has_binary = binary_model is not None
+    has_calibrator = calibrator is not None
+
+    if has_binary:
+        binary_model.save_model(str(model_dir / "binary.txt"))
+    if has_calibrator:
+        with (model_dir / "calibrator.pkl").open("wb") as f:
+            pickle.dump(calibrator, f)
+
     meta = {
         "timestamp": ts,
         "params": params,
@@ -69,6 +89,8 @@ def save_model(
         "metrics": metrics,
         "feature_columns": feature_columns,
         "notes": notes,
+        "has_binary_model": has_binary,
+        "has_calibrator": has_calibrator,
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
@@ -99,9 +121,56 @@ def list_models() -> list[ModelMeta]:
 
 
 def load_model(path: Path) -> lgb.Booster:
-    """Load a LightGBM Booster from a model directory or model.txt file."""
+    """Load the lambdarank Booster (model.txt) from a model directory or path.
+
+    For backwards compatibility this only returns the lambdarank model.
+    Use load_model_full() to additionally retrieve the binary classifier and
+    calibrator when present (Phase 2 onward).
+    """
     model_txt = path / "model.txt" if path.is_dir() else path
     return lgb.Booster(model_file=str(model_txt))
+
+
+@dataclass
+class ModelBundle:
+    """All artifacts saved alongside a model directory.
+
+    lambdarank: 順位用 Booster (必須)
+    binary:     勝率用二項分類器 (Phase 2 以降のモデルで設定)
+    calibrator: binary 出力の post-hoc 補正 (binary とセット)
+    """
+
+    lambdarank: lgb.Booster
+    binary: lgb.Booster | None
+    calibrator: IsotonicCalibrator | None
+
+
+def load_model_full(path: Path) -> ModelBundle:
+    """Load lambdarank + (optional) binary classifier + calibrator.
+
+    旧モデル (model.txt のみ) でも安全にロード可能。
+    binary.txt / calibrator.pkl が無ければ None を返す。
+    """
+    if not path.is_dir():
+        # path が model.txt 直接指定なら lambdarank のみで返す
+        return ModelBundle(
+            lambdarank=lgb.Booster(model_file=str(path)),
+            binary=None,
+            calibrator=None,
+        )
+
+    lambdarank = lgb.Booster(model_file=str(path / "model.txt"))
+
+    binary_path = path / "binary.txt"
+    binary = lgb.Booster(model_file=str(binary_path)) if binary_path.exists() else None
+
+    calibrator_path = path / "calibrator.pkl"
+    calibrator = None
+    if calibrator_path.exists():
+        with calibrator_path.open("rb") as f:
+            calibrator = pickle.load(f)
+
+    return ModelBundle(lambdarank=lambdarank, binary=binary, calibrator=calibrator)
 
 
 def set_active(model_path: Path, session: Session) -> None:

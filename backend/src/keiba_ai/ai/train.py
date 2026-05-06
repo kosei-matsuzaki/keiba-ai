@@ -22,7 +22,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import ndcg_score
 
-from keiba_ai.ai.labels import assign_relevance
+from keiba_ai.ai.calibrate import IsotonicCalibrator
+from keiba_ai.ai.labels import assign_is_winner, assign_relevance
 from keiba_ai.ai.registry import save_model
 from keiba_ai.ai.splits import time_split
 from keiba_ai.core.paths import db_path
@@ -106,6 +107,123 @@ def _compute_ndcg(model: lgb.Booster, df: pd.DataFrame, at: int) -> float:
         ndcg_vals.append(float(ndcg_score(true_rel, pred_scores, k=at)))
 
     return float(np.mean(ndcg_vals)) if ndcg_vals else float("nan")
+
+
+def _train_binary_classifier_and_calibrator(
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    feature_cols: list[str],
+    base_params: dict,
+) -> tuple[lgb.Booster, IsotonicCalibrator, dict]:
+    """Train a binary classifier (objective=binary) on is_winner and a
+    post-hoc isotonic calibrator on the validation set.
+
+    The binary classifier outputs sigmoid-calibrated raw probabilities.
+    The isotonic regression then corrects any residual systematic bias by
+    learning monotonic mapping (raw_prob → empirical win rate) on valid set.
+
+    Returns:
+        (binary_model, calibrator, metrics)
+        metrics keys: binary_logloss, binary_brier, binary_calibrated_brier
+    """
+    binary_params = {
+        "objective": "binary",
+        "metric": ["binary_logloss"],
+        "learning_rate": base_params.get("learning_rate", 0.05),
+        "num_leaves": base_params.get("num_leaves", 63),
+        "min_data_in_leaf": base_params.get("min_data_in_leaf", 50),
+        "feature_fraction": base_params.get("feature_fraction", 0.9),
+        "bagging_fraction": base_params.get("bagging_fraction", 0.8),
+        "bagging_freq": base_params.get("bagging_freq", 5),
+        "verbose": -1,
+    }
+
+    # Build datasets with is_winner labels
+    train_y_bin = train_df["finish_position"].map(assign_is_winner).values.astype(np.float32)
+    train_X = train_df[feature_cols].copy()
+    for col in CATEGORICAL_FEATURES:
+        if col in train_X.columns:
+            train_X[col] = train_X[col].astype("category")
+
+    binary_train_data = lgb.Dataset(
+        train_X,
+        label=train_y_bin,
+        categorical_feature=[
+            c for c in CATEGORICAL_FEATURES if c in train_X.columns
+        ] or None,
+        free_raw_data=False,
+    )
+
+    binary_valid_sets = [binary_train_data]
+    binary_valid_names = ["train"]
+    binary_callbacks = [lgb.log_evaluation(period=50)]
+
+    if not valid_df.empty:
+        valid_y_bin = valid_df["finish_position"].map(assign_is_winner).values.astype(np.float32)
+        valid_X = valid_df[feature_cols].copy()
+        for col in CATEGORICAL_FEATURES:
+            if col in valid_X.columns:
+                valid_X[col] = valid_X[col].astype("category")
+        binary_valid_data = lgb.Dataset(
+            valid_X,
+            label=valid_y_bin,
+            categorical_feature=[
+                c for c in CATEGORICAL_FEATURES if c in valid_X.columns
+            ] or None,
+            reference=binary_train_data,
+            free_raw_data=False,
+        )
+        binary_valid_sets.append(binary_valid_data)
+        binary_valid_names.append("valid")
+        binary_callbacks.append(lgb.early_stopping(stopping_rounds=50, verbose=False))
+
+    log.info("Training binary classifier (is_winner head)…")
+    binary_model = lgb.train(
+        binary_params,
+        binary_train_data,
+        num_boost_round=300,
+        valid_sets=binary_valid_sets,
+        valid_names=binary_valid_names,
+        callbacks=binary_callbacks,
+    )
+
+    # Fit isotonic calibrator on the validation set if we have one,
+    # otherwise on training set (less ideal but still better than nothing).
+    calibrator = IsotonicCalibrator()
+    metrics: dict[str, float] = {}
+
+    if not valid_df.empty:
+        valid_X_cal = valid_df[feature_cols].copy()
+        for col in CATEGORICAL_FEATURES:
+            if col in valid_X_cal.columns:
+                valid_X_cal[col] = valid_X_cal[col].astype("category")
+        valid_raw = binary_model.predict(valid_X_cal)
+        valid_y = valid_df["finish_position"].map(assign_is_winner).values.astype(np.float32)
+        calibrator.fit(valid_raw, valid_y)
+
+        # Diagnostic metrics on valid (uncalibrated and calibrated)
+        valid_calibrated = calibrator.predict(valid_raw, normalise=False)
+        metrics["binary_brier"] = float(np.mean((valid_raw - valid_y) ** 2))
+        metrics["binary_calibrated_brier"] = float(
+            np.mean((valid_calibrated - valid_y) ** 2)
+        )
+    else:
+        # Fallback to training set
+        log.warning("Valid set empty — fitting calibrator on training set (overfit risk).")
+        train_raw = binary_model.predict(train_X)
+        calibrator.fit(train_raw, train_y_bin)
+        train_calibrated = calibrator.predict(train_raw, normalise=False)
+        metrics["binary_brier"] = float(np.mean((train_raw - train_y_bin) ** 2))
+        metrics["binary_calibrated_brier"] = float(
+            np.mean((train_calibrated - train_y_bin) ** 2)
+        )
+
+    log.info(
+        "Binary classifier metrics: brier=%.4f, calibrated_brier=%.4f",
+        metrics["binary_brier"],
+        metrics["binary_calibrated_brier"],
+    )
+    return binary_model, calibrator, metrics
 
 
 def train(
@@ -200,7 +318,17 @@ def train(
         "test_ndcg1": test_ndcg1,
         "test_ndcg3": test_ndcg3,
     }
-    log.info("Metrics: %s", metrics)
+    log.info("Lambdarank metrics: %s", metrics)
+
+    # ── Phase 2: binary classifier + isotonic calibrator ──────────────────────
+    # 既存の lambdarank score (順位用) に加えて、別 head として binary classifier
+    # を学習し isotonic で post-hoc 補正する。これにより推論時の win_prob は
+    # softmax(lambdarank scores) ではなく真の確率に近い値を返せるようになる。
+    binary_model, calibrator, binary_metrics = _train_binary_classifier_and_calibrator(
+        train_df, valid_df, feature_cols, params
+    )
+    metrics.update(binary_metrics)
+    log.info("All metrics: %s", metrics)
 
     # Determine date ranges
     train_range = (
@@ -217,6 +345,8 @@ def train(
         valid_range,
         metrics,
         feature_columns=feature_cols,
+        binary_model=binary_model,
+        calibrator=calibrator,
     )
     log.info("Model saved to %s", model_dir)
 

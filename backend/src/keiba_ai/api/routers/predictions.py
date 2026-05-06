@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.predict import predict_race, predict_race_with_combinations, predict_race_with_shap
-from keiba_ai.ai.registry import get_active, load_model
+from keiba_ai.ai.registry import get_active, load_model_full
 from keiba_ai.api.deps import build_inference_frame_or_404, get_session
 from keiba_ai.api.schemas import (
     BulkPredictionsResponse,
@@ -64,7 +64,8 @@ def get_bulk_predictions(
             predictions={rid: RacePredictionSummary(top_horses=[]) for rid in parsed_ids}
         )
 
-    model = load_model(active_path)
+    bundle = load_model_full(active_path)
+    model = bundle.lambdarank
 
     # horse_id → horse_name マップをキャッシュ（per-request）
     horse_name_cache: dict[str, str | None] = {}
@@ -89,7 +90,9 @@ def get_bulk_predictions(
             continue
 
         try:
-            pred_df = predict_race(model, frame)
+            pred_df = predict_race(
+                model, frame, binary_model=bundle.binary, calibrator=bundle.calibrator
+            )
         except Exception as exc:
             log.warning("Prediction failed for race %s: %s", race_id, exc)
             result[race_id] = RacePredictionSummary(top_horses=[])
@@ -133,7 +136,8 @@ def get_predictions(
 
     frame = build_inference_frame_or_404(session, race_id)
 
-    model = load_model(active_path)
+    bundle = load_model_full(active_path)
+    model = bundle.lambdarank
     result_df = predict_race_with_shap(model, frame)
 
     # Resolve model_runs id for the active model
@@ -160,6 +164,8 @@ def get_predictions(
             frame,
             session=session,
             top_k_combinations=top_k,
+            binary_model=bundle.binary,
+            calibrator=bundle.calibrator,
         )
         combinations_out = CombinationPredictions(
             tansho=combo_map.get("単勝", []),
