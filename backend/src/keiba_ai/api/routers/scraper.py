@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -267,6 +269,19 @@ _RACE_INFO_TOP_URL = (
 
 _SHUTUBA_URL = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
 
+# discover_this_weekend_race_ids の結果キャッシュ。
+# キー: (sat_str, sun_str)、値: (cached_at_monotonic, race_ids, total_probed)
+# JRA の週末スケジュールはほぼ静的なので 30 分キャッシュで十分。
+# 月曜の発走馬編成更新等は ?refresh=1 で手動 invalidate できる。
+_DISCOVER_CACHE: dict[tuple[str, str], tuple[float, list[str], int]] = {}
+_DISCOVER_CACHE_TTL_SEC = 30 * 60
+
+# discover の shutuba probe は max 13 件・1 ユーザ操作あたり 1 回しか走らないため、
+# 通常スクレイピング (3-6s 直列) より積極的な throttle で十分。
+# 同時 3 並列 + 1 件あたり 8s timeout で 13 probe ≈ 5 batch ≈ 40s に収まる。
+_DISCOVER_PROBE_CONCURRENCY = 3
+_DISCOVER_PROBE_TIMEOUT_SEC = 8.0
+
 
 @router.get("/scraper/discover_today_race_ids", response_model=DiscoverTodayRaceIdsResponse)
 async def discover_today_race_ids(
@@ -330,15 +345,27 @@ async def discover_today_race_ids(
     "/scraper/discover_this_weekend_race_ids",
     response_model=DiscoverThisWeekendRaceIdsResponse,
 )
-async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse:
+async def discover_this_weekend_race_ids(
+    refresh: bool = Query(
+        default=False,
+        description="True の場合は in-process キャッシュを無視して再取得する。",
+    ),
+) -> DiscoverThisWeekendRaceIdsResponse:
     """今週末 (土・日) の JRA 開催 race_id 一覧を netkeiba から自動発見する。
 
     手順:
       1. api_get_race_info_top.html を 1 回 fetch（kaisai_date 引数なし → 全 active kaisai）
       2. JRA 場コード (race_id[4:6] in '01'..'10') のみ残す
       3. unique 開催日キー (race_id[:10]) ごとに代表 race_id を選ぶ
-      4. 各代表の shutuba ページを fetch して date を抽出（rate_limiter 経由）
+      4. 各代表の shutuba ページを fetch して date を抽出（軽量 throttle）
       5. date が今週土 or 今週日に一致する開催日キーの race_id だけ返す
+
+    パフォーマンス:
+      - 結果は (sat_str, sun_str) キーで 30 分間 in-process キャッシュ
+      - shutuba probe は AsyncRateLimiter (直列 3-6s) ではなく semaphore で
+        並列 3 本まで・1 件 8s timeout で投げる
+        （13 probe × 1 ユーザ操作なので netkeiba 負荷は極小）
+      - 13 probe を最悪 5 batch ≈ 40s で完了する想定
 
     - 開催なし → race_ids=[] を返す（404 ではない）
     - netkeiba 通信エラー・パース失敗 → 502
@@ -347,9 +374,23 @@ async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse
     sat_str = this_sat.isoformat()
     sun_str = this_sun.isoformat()
 
+    # ── Cache hit check ──────────────────────────────────────────────────────
+    cache_key = (sat_str, sun_str)
+    if not refresh:
+        cached = _DISCOVER_CACHE.get(cache_key)
+        if cached is not None:
+            cached_at, cached_ids, cached_probed = cached
+            if time.monotonic() - cached_at < _DISCOVER_CACHE_TTL_SEC:
+                return DiscoverThisWeekendRaceIdsResponse(
+                    race_ids=cached_ids,
+                    saturday_date=sat_str,
+                    sunday_date=sun_str,
+                    total_kaisai_days_probed=cached_probed,
+                    discovered_at=datetime.now(UTC).isoformat(),
+                )
+
     settings = load_settings()
     robots_cache = RobotsCache(settings.user_agent)
-    rate_limiter = AsyncRateLimiter(settings)
 
     # ── Step 1: race_info_top を fetch ───────────────────────────────────────
     # kaisai_date を指定しないと全 active kaisai（複数週分）が返るため、
@@ -387,6 +428,8 @@ async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse
         ) from exc
 
     if not groups:
+        # キャッシュにも空結果を入れて、開催なし週に何度叩かれても即返答できるようにする
+        _DISCOVER_CACHE[cache_key] = (time.monotonic(), [], 0)
         discovered_at = datetime.now(UTC).isoformat()
         return DiscoverThisWeekendRaceIdsResponse(
             race_ids=[],
@@ -396,39 +439,47 @@ async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse
             discovered_at=discovered_at,
         )
 
-    # ── Step 2: 各 unique 開催日キーの代表 race_id で shutuba fetch ──────────
+    # ── Step 2: 各 unique 開催日キーの代表 race_id で shutuba を並列 fetch ────
     # 代表は各グループの先頭（最若番、= race_id が最小のもの）
-    weekend_keys: set[str] = set()
+    semaphore = asyncio.Semaphore(_DISCOVER_PROBE_CONCURRENCY)
 
-    async with httpx.AsyncClient(
-        headers={"User-Agent": settings.user_agent},
-        timeout=20.0,
-        follow_redirects=True,
-    ) as http_client:
-        for key, ids in groups.items():
-            rep_id = ids[0]
+    async def _probe_one(
+        client: httpx.AsyncClient, key: str, rep_id: str
+    ) -> tuple[str, str | None]:
+        """1 つの kaisai_day_key について shutuba を fetch して date を返す。
+
+        失敗時は date=None を返し、呼び出し側で skip させる。
+        """
+        async with semaphore:
             shutuba_url = _SHUTUBA_URL.format(race_id=rep_id)
-
             if not robots_cache.is_allowed(shutuba_url):
-                continue
-
-            # rate_limiter で過剰 fetch を抑制
-            await rate_limiter.acquire()
-
+                return key, None
             try:
-                sresp = await http_client.get(shutuba_url)
+                sresp = await client.get(shutuba_url)
                 sresp.raise_for_status()
                 # race.netkeiba.com は Content-Type に charset を付けないため
                 # httpx は UTF-8 と推定するが、実体は EUC-JP。明示しないと
                 # title 内の "YYYY年MM月DD日" が mojibake 化して正規表現にマッチしない。
                 sresp.encoding = "euc-jp"
-                race_date = extract_race_date_from_shutuba_html(sresp.text)
+                return key, extract_race_date_from_shutuba_html(sresp.text)
             except Exception:
-                # 1 つの shutuba 失敗で全体を abort しない
-                continue
+                return key, None
 
-            if race_date in (sat_str, sun_str):
-                weekend_keys.add(key)
+    weekend_keys: set[str] = set()
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": settings.user_agent},
+        timeout=_DISCOVER_PROBE_TIMEOUT_SEC,
+        follow_redirects=True,
+    ) as http_client:
+        results = await asyncio.gather(
+            *(_probe_one(http_client, key, ids[0]) for key, ids in groups.items()),
+            return_exceptions=False,
+        )
+
+    for key, race_date in results:
+        if race_date in (sat_str, sun_str):
+            weekend_keys.add(key)
 
     # ── Step 3: 今週末キーに属する race_id だけ抽出 ─────────────────────────
     this_weekend_ids = sorted(
@@ -437,6 +488,9 @@ async def discover_this_weekend_race_ids() -> DiscoverThisWeekendRaceIdsResponse
         if key in weekend_keys
         for rid in ids
     )
+
+    # 結果をキャッシュ（次回以降は probe をスキップして即返す）
+    _DISCOVER_CACHE[cache_key] = (time.monotonic(), this_weekend_ids, len(groups))
 
     discovered_at = datetime.now(UTC).isoformat()
     return DiscoverThisWeekendRaceIdsResponse(
