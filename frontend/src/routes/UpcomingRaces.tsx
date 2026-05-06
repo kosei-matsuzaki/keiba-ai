@@ -23,16 +23,18 @@ function RaceListSkeleton() {
 }
 
 /**
- * Determine whether today or tomorrow is likely a JRA kaisai day.
+ * netkeiba の `api_get_race_info_top.html` は曜日に関係なく
+ * 今後の active kaisai 分（24-156 件）の race_id を返す。
+ * したがって平日でも bootstrap を試みれば「今週末のレース」が
+ * 取得できる。
  *
- * JRA holds races on Saturdays and Sundays (JST). We also allow Monday (0)
- * since a Saturday/Sunday ingest may not complete until early Monday.
- * This keeps the auto-bootstrap from firing on non-race days.
+ * 過去には Sat/Sun/Mon のみ発火していたが、ユーザが平日に開いた
+ * 場合に「0 件」のまま放置される問題があったため曜日条件を撤廃。
+ * API 結果が 0 件なら bootstrap 内で「該当無し」の empty 状態に
+ * 遷移するので無駄打ちにはならない。
  */
 function isLikelyKaisaiDay(): boolean {
-  // Use local time as a pragmatic approximation of JST.
-  const day = new Date().getDay(); // 0=Sun, 1=Mon, 6=Sat
-  return day === 0 || day === 6 || day === 1;
+  return true;
 }
 
 type BootstrapState =
