@@ -35,6 +35,7 @@ EXPECTED_TABLES = {
     "model_runs",
     "bet_records",
     "live_odds",
+    "simulation_runs",
 }
 
 # races テーブルに含まれるべき列（0005 migration で name を追加）
@@ -56,6 +57,7 @@ EXPECTED_INDEXES = {
     "ix_live_odds_race_id",
     "ix_live_odds_race_id_bet_type",
     "uq_live_odds_race_id_bet_type_combo",
+    "ix_simulation_runs_created_at",
 }
 
 
@@ -183,6 +185,62 @@ class TestAlembicMigrations:
         command.downgrade(cfg, "0005")
         inspector = inspect(engine)
         assert "live_odds" not in inspector.get_table_names()
+
+    def test_migration_0007_up_down(self, tmp_db):
+        """0007 migration の up → down が冪等に動作する。"""
+        url, engine = tmp_db
+        cfg = _make_alembic_cfg(url)
+
+        # 0006 まで適用して simulation_runs テーブルが存在しないことを確認
+        command.upgrade(cfg, "0006")
+        inspector = inspect(engine)
+        assert "simulation_runs" not in inspector.get_table_names()
+
+        # 0007 を適用して simulation_runs テーブルが追加されることを確認
+        command.upgrade(cfg, "0007")
+        inspector = inspect(engine)
+        assert "simulation_runs" in inspector.get_table_names()
+        cols = {c["name"] for c in inspector.get_columns("simulation_runs")}
+        assert {
+            "id",
+            "created_at",
+            "budget",
+            "strategy",
+            "model_path",
+            "n_races",
+            "final_bankroll",
+            "summary_json",
+            "bankroll_timeseries_json",
+        }.issubset(cols)
+
+        # downgrade で simulation_runs テーブルが削除されることを確認
+        command.downgrade(cfg, "0006")
+        inspector = inspect(engine)
+        assert "simulation_runs" not in inspector.get_table_names()
+
+    def test_migration_0007_idempotent_with_pre_existing_table(self, tmp_db):
+        """0007 が「Base.metadata.create_all 由来で simulation_runs が既に存在する」
+        DB に対して落ちないことを確認する。
+
+        FastAPI lifespan の create_all (main.py:62) が新テーブルを先回りで作る
+        ケースが実環境に存在し、その状態で alembic upgrade head を叩くと
+        SQLite "table already exists" で失敗していた回帰テスト。
+        """
+        url, engine = tmp_db
+        cfg = _make_alembic_cfg(url)
+
+        # 0006 まで進めた上で、0007 が作るはずのテーブルを create_all 経由で
+        # 先に作っておく（実ユーザの DB 状態を再現）。
+        command.upgrade(cfg, "0006")
+        Base.metadata.tables["simulation_runs"].create(engine)
+
+        # 0007 が table-exists で落ちずに通ること（修正前はここで OperationalError）
+        command.upgrade(cfg, "0007")
+
+        inspector = inspect(engine)
+        assert "simulation_runs" in inspector.get_table_names()
+        idx_names = {ix["name"] for ix in inspector.get_indexes("simulation_runs")}
+        assert "ix_simulation_runs_created_at" in idx_names
 
     def test_autogen_produces_no_diff(self, tmp_db):
         """After upgrade head, autogen should find no schema differences."""
