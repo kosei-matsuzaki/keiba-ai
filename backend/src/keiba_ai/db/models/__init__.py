@@ -13,6 +13,7 @@ from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.db.models.payout import Payout
 from keiba_ai.db.models.race import Race
 from keiba_ai.db.models.scrape_log import ScrapeLog
+from keiba_ai.db.models.simulation_run import SimulationRun
 from keiba_ai.db.models.trainer import Trainer
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "Payout",
     "Race",
     "ScrapeLog",
+    "SimulationRun",
     "Trainer",
 ]

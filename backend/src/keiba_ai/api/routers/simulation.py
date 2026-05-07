@@ -5,6 +5,7 @@ Used by the Ledger 「シミュレーション」 tab.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
@@ -19,8 +20,15 @@ from keiba_ai.ai.simulation import (
     SimulationResult,
     simulate_active_model,
 )
+from keiba_ai.ai.simulation_persistence import (
+    delete_simulation_run,
+    get_simulation_run,
+    list_simulation_runs,
+    save_simulation_result,
+)
 from keiba_ai.api.deps import get_session
 from keiba_ai.core.logging import get_logger
+from keiba_ai.db.models.simulation_run import SimulationRun
 
 logger = get_logger(__name__)
 
@@ -55,6 +63,8 @@ class SimulationWindow(BaseModel):
 
 
 class SimulationResponse(BaseModel):
+    """シミュレーション完全結果。実行直後のレスポンスと、保存済み run 詳細の
+    両方で使う。run_id は実行直後のみセット (保存済み詳細は別レスポンス) 。"""
     window: SimulationWindow
     model_path: str
     strategy: str
@@ -68,9 +78,32 @@ class SimulationResponse(BaseModel):
     by_race_class: list[GroupStatsResponse]
     by_course: list[GroupStatsResponse]
     bankroll_timeseries: list[BankrollPointResponse]
+    # 実行直後にバックエンドが保存した row の id。再呼び出しで詳細を取得可能。
+    run_id: int | None = None
 
 
-def _result_to_response(r: SimulationResult) -> SimulationResponse:
+class SimulationRunSummary(BaseModel):
+    """保存済み実行の一覧表示用 (重い json は含めない)。"""
+    id: int
+    created_at: str
+    budget: int
+    strategy: str
+    window_start: str | None
+    window_end: str | None
+    n_races: int
+    n_settled_races: int
+    final_bankroll: int
+    peak_bankroll: int
+
+
+class SimulationRunListResponse(BaseModel):
+    runs: list[SimulationRunSummary]
+    total: int
+
+
+def _result_to_response(
+    r: SimulationResult, run_id: int | None = None
+) -> SimulationResponse:
     """Convert SimulationResult dataclass to pydantic response model."""
     d = r.as_dict()
     return SimulationResponse(
@@ -89,6 +122,49 @@ def _result_to_response(r: SimulationResult) -> SimulationResponse:
         bankroll_timeseries=[
             BankrollPointResponse(**p) for p in d["bankroll_timeseries"]
         ],
+        run_id=run_id,
+    )
+
+
+def _row_to_response(row: SimulationRun) -> SimulationResponse:
+    """保存済み SimulationRun row → SimulationResponse (json を decode)."""
+    return SimulationResponse(
+        window=SimulationWindow(start=row.window_start, end=row.window_end),
+        model_path=row.model_path,
+        strategy=row.strategy,
+        budget=row.budget,
+        n_races=row.n_races,
+        n_settled_races=row.n_settled_races,
+        final_bankroll=row.final_bankroll,
+        peak_bankroll=row.peak_bankroll,
+        summary=GroupStatsResponse(**json.loads(row.summary_json)),
+        by_bet_type=[
+            GroupStatsResponse(**g) for g in json.loads(row.by_bet_type_json)
+        ],
+        by_race_class=[
+            GroupStatsResponse(**g) for g in json.loads(row.by_race_class_json)
+        ],
+        by_course=[GroupStatsResponse(**g) for g in json.loads(row.by_course_json)],
+        bankroll_timeseries=[
+            BankrollPointResponse(**p)
+            for p in json.loads(row.bankroll_timeseries_json)
+        ],
+        run_id=row.id,
+    )
+
+
+def _row_to_summary(row: SimulationRun) -> SimulationRunSummary:
+    return SimulationRunSummary(
+        id=row.id,
+        created_at=row.created_at,
+        budget=row.budget,
+        strategy=row.strategy,
+        window_start=row.window_start,
+        window_end=row.window_end,
+        n_races=row.n_races,
+        n_settled_races=row.n_settled_races,
+        final_bankroll=row.final_bankroll,
+        peak_bankroll=row.peak_bankroll,
     )
 
 
@@ -178,4 +254,59 @@ def run_simulation(
         strategy=strategy,  # type: ignore[arg-type]
     )
 
-    return _result_to_response(result)
+    # 自動保存 (上限 50 件、超過したら古い順に削除)
+    saved = save_simulation_result(session, result)
+    logger.info("Simulation result saved as run id=%d", saved.id)
+
+    return _result_to_response(result, run_id=saved.id)
+
+
+# ---------------------------------------------------------------------------
+# Saved runs (list / detail / delete)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/simulation/runs",
+    response_model=SimulationRunListResponse,
+)
+def list_runs(
+    session: Annotated[Session, Depends(get_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> SimulationRunListResponse:
+    """保存済みシミュレーション実行の一覧を新しい順で返す (重い json は含まない)。"""
+    runs = list_simulation_runs(session, limit=limit)
+    return SimulationRunListResponse(
+        runs=[_row_to_summary(r) for r in runs],
+        total=len(runs),
+    )
+
+
+@router.get(
+    "/simulation/runs/{run_id}",
+    response_model=SimulationResponse,
+)
+def get_run(
+    run_id: int,
+    session: Annotated[Session, Depends(get_session)],
+) -> SimulationResponse:
+    """保存済みシミュレーション実行の詳細を返す (グラフ + 全テーブル含む)。"""
+    row = get_simulation_run(session, run_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"simulation run id={run_id} が見つかりません",
+        )
+    return _row_to_response(row)
+
+
+@router.delete("/simulation/runs/{run_id}")
+def delete_run(
+    run_id: int,
+    session: Annotated[Session, Depends(get_session)],
+) -> dict:
+    """保存済みシミュレーション実行を削除する。"""
+    if not delete_simulation_run(session, run_id):
+        raise HTTPException(
+            status_code=404, detail=f"simulation run id={run_id} が見つかりません",
+        )
+    return {"deleted": run_id}

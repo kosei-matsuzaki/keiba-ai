@@ -409,6 +409,28 @@ export interface SimulationResponse {
   by_course: SimulationGroupStats[];
   /** 日次の資産推移 (date 昇順)。 */
   bankroll_timeseries: BankrollPoint[];
+  /** バックエンドが自動保存した row の id。null なら未保存 (旧サーバ互換)。 */
+  run_id: number | null;
+}
+
+/** 保存済みシミュレーション実行の一覧表示用 (重い json は含まない)。 */
+export interface SimulationRunSummary {
+  id: number;
+  /** ISO 8601 UTC */
+  created_at: string;
+  budget: number;
+  strategy: SimulationStrategy;
+  window_start: string | null;
+  window_end: string | null;
+  n_races: number;
+  n_settled_races: number;
+  final_bankroll: number;
+  peak_bankroll: number;
+}
+
+export interface SimulationRunListResponse {
+  runs: SimulationRunSummary[];
+  total: number;
 }
 
 export interface SimulationRequest {
