@@ -32,15 +32,16 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      // base
-      'relative inline-flex items-center justify-center whitespace-nowrap px-4 py-2.5 text-sm font-medium ' +
+      // base — タブ幅は文字数によらず統一 (min-w-32 で短いラベルも一定幅を確保、
+      // 長いラベルは伸びる)。指示子 indicator は左右 inset を共通にする。
+      'relative inline-flex min-w-32 items-center justify-center whitespace-nowrap px-4 py-2.5 text-sm font-medium ' +
       'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ' +
       'disabled:pointer-events-none disabled:opacity-50',
       // hover (inactive)
       'hover:text-foreground',
       // active: foreground 色 + 下に indicator (擬似要素風だが border 1 本で表現)
       'data-[state=active]:text-primary',
-      'data-[state=active]:after:absolute data-[state=active]:after:bottom-[-1px] data-[state=active]:after:left-2 data-[state=active]:after:right-2 data-[state=active]:after:h-[2px] data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary',
+      'data-[state=active]:after:absolute data-[state=active]:after:bottom-[-1px] data-[state=active]:after:left-3 data-[state=active]:after:right-3 data-[state=active]:after:h-[2px] data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary',
       className
     )}
     {...props}
