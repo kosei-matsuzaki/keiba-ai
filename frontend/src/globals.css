@@ -10,23 +10,24 @@
 
 @layer base {
   :root {
-    /* Surfaces (deepest → brightest) */
-    --background:   230 51% 8%;    /* #0A0D1E  page backdrop */
-    --card:         232 36% 13%;   /* #15182C  panel surface */
-    --card-elevated: 232 38% 19%;  /* #1C2040  hover / overlay */
-    --popover:      232 36% 13%;
-    --popover-foreground: 229 39% 94%;
+    /* Surfaces (deepest → brightest) — saturation を抑えて navy/slate 寄り。
+       hue は 222 (青寄り、紫成分少なめ) で統一。primary だけ強い indigo を残す */
+    --background:   222 28% 8%;    /* deep navy backdrop */
+    --card:         222 20% 13%;   /* panel surface */
+    --card-elevated: 222 22% 19%;  /* hover / overlay */
+    --popover:      222 20% 13%;
+    --popover-foreground: 220 20% 94%;
 
     /* Foreground / text */
-    --foreground:        229 39% 94%; /* #E8EAF5 主テキスト */
-    --card-foreground:   229 39% 94%;
-    --muted-foreground:  228 14% 61%; /* #8A8FAB 補助テキスト */
-    --subtle-foreground: 228 12% 45%; /* helper / placeholder */
+    --foreground:        220 20% 94%; /* 主テキスト (cool white, 紫味弱め) */
+    --card-foreground:   220 20% 94%;
+    --muted-foreground:  220 10% 62%; /* 補助テキスト */
+    --subtle-foreground: 220 10% 45%; /* helper / placeholder */
 
     /* Borders / inputs */
-    --border:         233 31% 22%;   /* #252947 微妙な区切り */
-    --border-strong:  233 24% 32%;   /* #3B4063 強調 border */
-    --input:          233 31% 22%;
+    --border:         222 18% 22%;   /* 微妙な区切り */
+    --border-strong:  222 16% 32%;
+    --input:          222 18% 22%;
     --ring:           239 84% 67%;
 
     /* Primary accent (indigo) */
