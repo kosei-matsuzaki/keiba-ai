@@ -213,15 +213,18 @@ def simulate_active_model(
         session: SQLAlchemy session bound to the keiba DB.
         model_path: Path to a model directory (model.txt + binary.txt + calibrator.pkl).
         start / end: window date range (YYYY-MM-DD), inclusive. Both optional.
-        budget: bankroll (yen) used as the Kelly-stake base.
+        budget: 期間全体の累計投資の上限 (円)。各 race の Kelly stake は
+            `budget - 累計 invested` を bankroll として計算するため、後半 race は
+            stake が自然に縮み、予算尽きたら以降は実質 bet しない。
         strategy: preset key from STRATEGY_PRESETS.
-        max_stake_per_race_pct: per-race stake cap (default 5%).
+        max_stake_per_race_pct: per-race stake cap (default 5% of 残予算).
         enabled_bet_types: subset of DEFAULT_BET_TYPES to consider.
             None = all types.
         top_n_horses: top-N horses for box / formation candidates.
 
     Returns:
         SimulationResult with summary, by_bet_type, by_race_class, by_course.
+        result.summary.invested は budget を **超えない** (depleting bankroll).
     """
     preset = STRATEGY_PRESETS[strategy]
     types = enabled_bet_types or DEFAULT_BET_TYPES
@@ -255,6 +258,12 @@ def simulate_active_model(
     race_ids = list(frame["race_id"].unique())
     result.n_races = len(race_ids)
     log.info("Simulating %d races...", result.n_races)
+
+    # Depleting bankroll: 予算 budget を「累計投資の上限」として扱う。
+    # 各 race の Kelly 計算には budget - cumulative_invested を渡し、
+    # 残予算に応じて自然に stake が縮む。0 円になればそれ以降の race は
+    # cap が 0 → stake も 0 に丸まり実質賭けない。
+    cumulative_invested = 0
 
     n_settled = 0
     for race_id in race_ids:
@@ -299,12 +308,16 @@ def simulate_active_model(
                 if c.ev is not None and c.ev >= min_ev
             ]
 
+        # Depleting bankroll: 残予算ベースで Kelly stake を計算する。
+        # 0 円のときは recommend_for_race 内で cap=0 → 全 stake が 0 に丸まる。
+        current_bankroll = max(0, budget - cumulative_invested)
+
         # Recommend
         rec = recommend_for_race(
             predictions=preds,
             combinations_by_type=combos_by_type,
             race_id=race_id,
-            bankroll=budget,
+            bankroll=current_bankroll,
             kelly_fraction=preset["kelly_fraction"],
             max_stake_per_race_pct=max_stake_per_race_pct,
             top_n_horses=top_n_horses,
@@ -349,6 +362,10 @@ def simulate_active_model(
         )
 
         for s in settlements:
+            # 残予算 tracking (depleting bankroll). 0 円を超えて bet することは
+            # recommend_for_race 内の cap で防いでいるが、念のためここでも累計を更新する。
+            cumulative_invested += s["stake"]
+
             # global summary
             result.summary.n_bets += 1
             result.summary.invested += s["stake"]

@@ -61,6 +61,16 @@ function _isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+function _diffDays(start: string, end: string): number | null {
+  const s = new Date(start);
+  const e = new Date(end);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
+  return Math.round((e.getTime() - s.getTime()) / 86_400_000);
+}
+
+// バックエンドの MAX_WINDOW_DAYS と一致させる。
+const MAX_WINDOW_DAYS = 186;
+
 // ── Group breakdown table ─────────────────────────────────────────────────────
 
 interface GroupTableProps {
@@ -154,7 +164,16 @@ export function SimulationTab() {
     },
   });
 
+  const windowDays = _diffDays(start, end);
+  const windowTooLong = windowDays !== null && windowDays > MAX_WINDOW_DAYS;
+
   function handleRun() {
+    if (windowTooLong) {
+      toast.error(
+        `期間が長すぎます (${windowDays} 日)。${MAX_WINDOW_DAYS} 日以内で指定してください。`,
+      );
+      return;
+    }
     mutation.mutate();
   }
 
@@ -186,7 +205,7 @@ export function SimulationTab() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-budget">予算 (円)</Label>
+              <Label htmlFor="sim-budget">予算 / Budget (円)</Label>
               <Input
                 id="sim-budget"
                 type="number"
@@ -195,8 +214,21 @@ export function SimulationTab() {
                 value={budget}
                 onChange={(e) => setBudget(Math.max(1000, Number(e.target.value) || 0))}
               />
+              <p className="text-xs text-muted-foreground">
+                期間全体の累計投資の上限。各 race の Kelly stake は残予算ベース
+                (depleting bankroll) で計算するため、後半は自然に stake が縮み、
+                予算尽きたら以降は bet しません。
+              </p>
             </div>
           </div>
+
+          {windowTooLong && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              期間が長すぎます ({windowDays} 日)。{MAX_WINDOW_DAYS} 日以内
+              (約 6 か月) で指定してください。1 年規模だと逐次予測が数分かかり
+              HTTP timeout します。
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <Label>戦略</Label>
@@ -224,7 +256,7 @@ export function SimulationTab() {
           <div>
             <Button
               onClick={handleRun}
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || windowTooLong}
               className="gap-2"
             >
               {mutation.isPending ? (
