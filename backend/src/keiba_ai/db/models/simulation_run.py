@@ -17,7 +17,9 @@ class SimulationRun(Base):
     __tablename__ = "simulation_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    created_at: Mapped[str] = mapped_column(String, nullable=False)    # ISO 8601 UTC
+    # 履歴一覧 API は created_at DESC で並べ替えるため index を張る
+    # （migration 0007 で ix_simulation_runs_created_at として作成済み）
+    created_at: Mapped[str] = mapped_column(String, nullable=False, index=True)  # ISO 8601 UTC
 
     # Input parameters
     budget: Mapped[int] = mapped_column(Integer, nullable=False)
