@@ -31,6 +31,8 @@ from keiba_ai.api.routers import (
 )
 from keiba_ai.core.paths import db_path
 from keiba_ai.core.settings_store import SettingsStore
+import keiba_ai.db.models  # noqa: F401  Base.metadata に全モデルを登録
+from keiba_ai.db.base import Base
 from keiba_ai.db.session import make_engine
 
 _DEFAULT_ORIGINS = [
@@ -54,6 +56,10 @@ def _cors_origins() -> list[str]:
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     engine = make_engine(db_path())
+    # 既存 DB に未適用のテーブル (alembic を ユーザー手動で apply していない
+    # ケース) を idempotent に作成する。Tauri sidecar 起動時に
+    # simulation_runs などの新テーブルが無くても落ちないようにする。
+    Base.metadata.create_all(engine)
     app.state.engine = engine
     app.state.settings_store = SettingsStore()
     app.state.job_registry = JobRegistry()

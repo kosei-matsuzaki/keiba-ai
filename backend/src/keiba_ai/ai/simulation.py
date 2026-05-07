@@ -16,6 +16,7 @@ EV-threshold parameters:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -397,9 +398,11 @@ def simulate_active_model(
             rec.candidates, race_id, finish_to_pp, past_odds
         )
 
-        # Compounding wealth: race ごとに資産更新
+        # Compounding wealth: race ごとに資産更新。
+        # NaN / Inf ガード: odds が壊れた値だと payout が NaN になり得るので 0 に丸める。
         race_invested = sum(int(s["stake"]) for s in settlements)
-        race_payout = sum(float(s["payout"]) for s in settlements)
+        race_payout_raw = sum(float(s["payout"]) for s in settlements)
+        race_payout = race_payout_raw if math.isfinite(race_payout_raw) else 0.0
         current_bankroll = max(0, current_bankroll - race_invested + int(round(race_payout)))
         if current_bankroll > peak_bankroll:
             peak_bankroll = current_bankroll
@@ -422,10 +425,16 @@ def simulate_active_model(
             bucket["bankroll_at_end"] = current_bankroll
 
         for s in settlements:
+            # NaN を 0 として扱う (集計 / pydantic int 化で落ちないため)
+            s_payout = (
+                float(s["payout"])
+                if math.isfinite(float(s["payout"]))
+                else 0.0
+            )
             # global summary
             result.summary.n_bets += 1
             result.summary.invested += s["stake"]
-            result.summary.payout += s["payout"]
+            result.summary.payout += s_payout
             result.summary.hits += s["hit"]
             # by bet_type
             grp = bet_type_groups.setdefault(
@@ -433,7 +442,7 @@ def simulate_active_model(
             )
             grp.n_bets += 1
             grp.invested += s["stake"]
-            grp.payout += s["payout"]
+            grp.payout += s_payout
             grp.hits += s["hit"]
             # by race_class
             cls_grp = race_class_groups.setdefault(
@@ -441,7 +450,7 @@ def simulate_active_model(
             )
             cls_grp.n_bets += 1
             cls_grp.invested += s["stake"]
-            cls_grp.payout += s["payout"]
+            cls_grp.payout += s_payout
             cls_grp.hits += s["hit"]
             # by course
             crs_grp = course_groups.setdefault(
@@ -449,7 +458,7 @@ def simulate_active_model(
             )
             crs_grp.n_bets += 1
             crs_grp.invested += s["stake"]
-            crs_grp.payout += s["payout"]
+            crs_grp.payout += s_payout
             crs_grp.hits += s["hit"]
 
     result.n_settled_races = n_settled
