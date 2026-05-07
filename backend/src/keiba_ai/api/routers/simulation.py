@@ -88,9 +88,9 @@ def run_simulation(
         Query(
             ge=1000,
             le=100_000_000,
-            description="Kelly 計算用の元手 (円)。1 race ごとの stake 上限は "
-            "元手 × max_stake_per_race_pct (= 5%) で決まる。"
-            "累計支出のキャップではないため、race 数が増えると累計 invested は増える。",
+            description="期間全体の累計投資の上限 (円)。各 race の Kelly stake は "
+            "`budget - 累計 invested` を bankroll として計算する (depleting bankroll)。"
+            "後半 race は stake が自然に縮み、予算尽きたら以降は実質 bet しない。",
         ),
     ] = 100_000,
     strategy: Annotated[

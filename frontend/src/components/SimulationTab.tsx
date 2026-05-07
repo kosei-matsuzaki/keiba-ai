@@ -205,7 +205,7 @@ export function SimulationTab() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-budget">元手 / Bankroll (円)</Label>
+              <Label htmlFor="sim-budget">予算 / Budget (円)</Label>
               <Input
                 id="sim-budget"
                 type="number"
@@ -215,8 +215,9 @@ export function SimulationTab() {
                 onChange={(e) => setBudget(Math.max(1000, Number(e.target.value) || 0))}
               />
               <p className="text-xs text-muted-foreground">
-                Kelly 計算の基準額。1 race ごとの stake 上限 = 元手 × 5% 。
-                累計支出のキャップではなく、race 数が増えると累計 invested は増えます。
+                期間全体の累計投資の上限。各 race の Kelly stake は残予算ベース
+                (depleting bankroll) で計算するため、後半は自然に stake が縮み、
+                予算尽きたら以降は bet しません。
               </p>
             </div>
           </div>
@@ -283,7 +284,7 @@ export function SimulationTab() {
       ) : !result ? (
         <EmptyState
           message="シミュレーション未実行"
-          description="期間・元手・戦略を選んで「実行」ボタンを押してください。"
+          description="期間・予算・戦略を選んで「実行」ボタンを押してください。"
         />
       ) : (
         <>
