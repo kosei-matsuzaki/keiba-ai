@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/cn';
 import type { BetType, SettingsResponse, SettingsUpdate } from '@/types/api';
 
@@ -128,6 +129,11 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
 
   const { field: enabledBetTypesField } = useController({
     name: 'enabled_bet_types',
+    control,
+  });
+
+  const { field: scraperStoppedField } = useController({
+    name: 'scraper_stopped',
     control,
   });
 
@@ -351,10 +357,10 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                         onClick={() => toggleBetType(betType)}
                         aria-pressed={isSelected}
                         className={cn(
-                          'flex h-10 items-center justify-center rounded-md border text-sm font-medium transition-colors',
+                          'flex h-9 items-center justify-center rounded-full border text-sm font-medium transition-all active:scale-[0.97]',
                           isSelected
-                            ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
-                            : 'border-input bg-background text-foreground hover:bg-accent',
+                            ? 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
+                            : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
                         )}
                       >
                         {betType}
@@ -378,19 +384,18 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
             >
               <label
                 htmlFor="scraper_stopped"
-                className="flex cursor-pointer items-center justify-between rounded-md border bg-background px-4 py-3 text-sm transition-colors hover:bg-accent/30"
+                className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 text-sm transition-colors hover:bg-card-elevated/40"
               >
-                <div className="min-w-0 pr-4">
+                <div className="min-w-0">
                   <div className="font-medium">スクレイパーを停止する</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
                     KEIBA_SCRAPER_STOP=1 と同等。CLI 経由で実行中のジョブにも反映される
                   </div>
                 </div>
-                <input
+                <Switch
                   id="scraper_stopped"
-                  type="checkbox"
-                  className="h-4 w-4 shrink-0 rounded border-gray-300"
-                  {...register('scraper_stopped')}
+                  checked={scraperStoppedField.value}
+                  onCheckedChange={scraperStoppedField.onChange}
                 />
               </label>
             </SectionPanel>

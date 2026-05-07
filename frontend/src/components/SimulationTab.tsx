@@ -508,10 +508,10 @@ export function SimulationTab() {
                   key={p.key}
                   type="button"
                   onClick={() => setStrategy(p.key)}
-                  className={`flex flex-col items-start gap-1 rounded-md border px-4 py-2 text-left transition ${
+                  className={`flex flex-col items-start gap-1 rounded-lg border px-4 py-3 text-left transition-all active:scale-[0.99] ${
                     strategy === p.key
-                      ? 'border-primary bg-primary/10 ring-1 ring-primary'
-                      : 'border-border hover:bg-accent'
+                      ? 'border-primary bg-primary/15 text-foreground ring-1 ring-primary/40'
+                      : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:bg-card-elevated/40 hover:text-foreground'
                   }`}
                 >
                   <span className="text-sm font-medium">
