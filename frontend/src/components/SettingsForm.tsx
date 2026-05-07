@@ -119,8 +119,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
   return (
     <form onSubmit={handleSubmit(submit)} className="flex flex-col gap-6" noValidate>
       <div className="flex flex-col gap-6">
-        <SectionCard
-          title="スクレイパー"
+        <Section
           description="netkeiba へのアクセス頻度と User-Agent。レート制御を緩めると検出リスクが上がります。"
           hidden={!visible('scraper')}
         >
@@ -174,10 +173,9 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   />
                 </FieldRow>
               </div>
-        </SectionCard>
+        </Section>
 
-        <SectionCard
-          title="ベッティング期待値"
+        <Section
           description="evaluate.py で「賭ける / 賭けない」を判定する閾値と Kelly 資金配分。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。"
           hidden={!visible('betting')}
         >
@@ -255,10 +253,9 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   />
                 </FieldRow>
               </div>
-        </SectionCard>
+        </Section>
 
-        <SectionCard
-          title="買い方ターゲット"
+        <Section
           description="推奨買目と evaluate.py の賭け判定で対象とする馬券種。チェックを外した券種は賭け対象から除外される。"
           hidden={!visible('bet_types')}
         >
@@ -290,10 +287,9 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   </p>
                 )}
               </div>
-        </SectionCard>
+        </Section>
 
-        <SectionCard
-          title="運用"
+        <Section
           description="緊急停止フラグ。ON にすると進行中ジョブが ScraperStopped 例外で中断される。"
           hidden={!visible('ops')}
         >
@@ -313,7 +309,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
               onCheckedChange={scraperStoppedField.onChange}
             />
           </label>
-        </SectionCard>
+        </Section>
       </div>
 
       {/* Sticky footer */}
@@ -339,30 +335,24 @@ function countDirtyFields(dirty: object): number {
   return count;
 }
 
-// ── SectionCard: 各設定セクションを Card として並べる ────────────────────
+// ── Section: タブ配下のフラット section (Card なし、タイトルなし) ──────────
+// タブ名がそのままセクションのタイトルとして機能するので、カード/タイトルの
+// 重複を避けてフラットに並べる。description のみ muted で 1 行表示。
 
-interface SectionCardProps {
-  title: string;
+interface SectionProps {
+  /** 補足説明 (1 行 muted)。省略可能。 */
   description?: string;
   children: ReactNode;
   /** true のとき表示せず DOM には残す (form state を維持するため) */
   hidden?: boolean;
 }
 
-function SectionCard({ title, description, children, hidden = false }: SectionCardProps) {
+function Section({ description, children, hidden = false }: SectionProps) {
   return (
-    <div
-      className={cn(
-        'rounded-lg border border-border/60 bg-card p-6',
-        hidden && 'hidden',
+    <div className={cn('flex flex-col gap-5', hidden && 'hidden')}>
+      {description && (
+        <p className="text-sm text-muted-foreground">{description}</p>
       )}
-    >
-      <div className="mb-5">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {description && (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-        )}
-      </div>
       <div className="space-y-5">{children}</div>
     </div>
   );
