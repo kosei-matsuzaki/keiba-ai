@@ -2,10 +2,10 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { History } from 'lucide-react';
 
 import { useRacesByDate } from '@/hooks/useRacesByDate';
+import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Table,
@@ -136,16 +136,11 @@ export function PastRaces() {
         description="日付を選んで過去のレース一覧を確認"
       >
         <div className="flex items-center gap-2">
-          <Label htmlFor="past-date-input" className="shrink-0 text-sm">
-            日付
-          </Label>
-          <Input
-            id="past-date-input"
-            type="date"
+          <Label className="shrink-0 text-sm">日付</Label>
+          <DateYMDPicker
             value={selectedDate}
-            onChange={(e) => handleDateChange(e.target.value)}
-            aria-label="日付"
-            className="h-8 w-44"
+            onChange={handleDateChange}
+            ariaLabel="日付"
           />
         </div>
       </PageHeader>
