@@ -28,6 +28,7 @@ def get_job(
         started_at=info.started_at,
         finished_at=info.finished_at,
         error=info.error,
+        result=info.result,
     )
 
 
@@ -43,6 +44,7 @@ def list_jobs(
             started_at=info.started_at,
             finished_at=info.finished_at,
             error=info.error,
+            result=info.result,
         )
         for info in registry.list()
     ]

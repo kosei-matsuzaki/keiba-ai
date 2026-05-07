@@ -317,6 +317,26 @@ export function runSimulation(req: SimulationRequest): Promise<SimulationRespons
   );
 }
 
+/**
+ * バックグラウンド job として シミュレーションを開始する。
+ * 即 job_id を返し、UI は GET /api/jobs/{id} をポーリングして完了を待つ。
+ * 完了時 job.result.run_id に保存済みの run id が入るので、UI は
+ * getSimulationRun(run_id) で詳細を取得する。
+ */
+export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted> {
+  const searchParams: Record<string, string | number> = {
+    budget: req.budget,
+    strategy: req.strategy,
+  };
+  if (req.start) searchParams.start = req.start;
+  if (req.end) searchParams.end = req.end;
+  return getClient().then((c) =>
+    c
+      .post('simulation/start', { searchParams })
+      .json<JobAccepted>()
+  );
+}
+
 /** 保存済みシミュレーション実行の一覧を取得 (新しい順、最大 50 件)。 */
 export function listSimulationRuns(): Promise<SimulationRunListResponse> {
   return getClient().then((c) =>

@@ -322,6 +322,8 @@ class JobInfoSchema(BaseModel):
     started_at: str
     finished_at: str | None = None
     error: str | None = None
+    # 完了時の結果 payload (例: simulation の {"run_id": 42})
+    result: dict | None = None
 
 
 # ── Bet record schemas ────────────────────────────────────────────────────────

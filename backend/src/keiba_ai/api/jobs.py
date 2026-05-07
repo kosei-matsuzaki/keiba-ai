@@ -13,11 +13,14 @@ from typing import Any
 @dataclass
 class JobInfo:
     job_id: str
-    type: str  # "ingest" | "train"
+    type: str  # "ingest" | "train" | "simulation" など
     status: str  # "pending" | "running" | "completed" | "failed"
     started_at: str
     finished_at: str | None = None
     error: str | None = None
+    # coro_factory が dict を返した場合に格納される結果 payload。
+    # 例: simulation 完了時に {"run_id": 42} を入れて UI に渡す。
+    result: dict[str, Any] | None = None
 
 
 class JobRegistry:
@@ -31,7 +34,10 @@ class JobRegistry:
         job_type: str,
         coro_factory: Callable[[], Coroutine[Any, Any, Any]],
     ) -> JobInfo:
-        """Register and launch a background coroutine. Returns JobInfo immediately."""
+        """Register and launch a background coroutine. Returns JobInfo immediately.
+
+        coro_factory が dict (or None) を返すと、JobInfo.result に格納される。
+        """
         job_id = str(uuid.uuid4())
         started_at = datetime.now(UTC).isoformat()
         info = JobInfo(
@@ -50,7 +56,9 @@ class JobRegistry:
         coro_factory: Callable[[], Coroutine[Any, Any, Any]],
     ) -> None:
         try:
-            await coro_factory()
+            ret = await coro_factory()
+            if isinstance(ret, dict):
+                info.result = ret
             info.status = "completed"
         except Exception as exc:  # noqa: BLE001
             info.status = "failed"
