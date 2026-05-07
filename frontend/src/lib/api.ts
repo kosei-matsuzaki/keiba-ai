@@ -39,6 +39,8 @@ import type {
   ScraperStatus,
   SettingsResponse,
   SettingsUpdate,
+  SimulationRequest,
+  SimulationResponse,
   TrainRequest,
   UpcomingRacesResponse,
 } from '@/types/api';
@@ -288,6 +290,30 @@ export function fetchRecommendations(
 
 export function createBet(body: BetRecordIn): Promise<BetRecordOut> {
   return getClient().then((c) => c.post('bets', { json: body }).json<BetRecordOut>());
+}
+
+// ── Simulation ────────────────────────────────────────────────────────────────
+
+/**
+ * Run end-to-end backtest with the active model.
+ *
+ * Backend ~30-60 sec for ~800 races. Timeout extended to 180s here.
+ */
+export function runSimulation(req: SimulationRequest): Promise<SimulationResponse> {
+  const searchParams: Record<string, string | number> = {
+    budget: req.budget,
+    strategy: req.strategy,
+  };
+  if (req.start) searchParams.start = req.start;
+  if (req.end) searchParams.end = req.end;
+  return getClient().then((c) =>
+    c
+      .get('simulation/active_model', {
+        searchParams,
+        timeout: 180_000,
+      })
+      .json<SimulationResponse>()
+  );
 }
 
 // ── Error handling helpers ──────────────────────────────────────────────────
