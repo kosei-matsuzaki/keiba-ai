@@ -140,42 +140,40 @@ function RaceTable({ section, predictions, onRowClick }: RaceTableProps) {
       >
         {section.course}
       </h3>
-      <div className="overflow-hidden rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-16">R</TableHead>
-              <TableHead>レース名</TableHead>
-              <TableHead>クラス</TableHead>
-              <TableHead>馬場</TableHead>
-              <TableHead className="text-right">距離</TableHead>
-              <TableHead className="text-right">頭数</TableHead>
-              <TableHead>AI 予想</TableHead>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-16">R</TableHead>
+            <TableHead>レース名</TableHead>
+            <TableHead>クラス</TableHead>
+            <TableHead>馬場</TableHead>
+            <TableHead className="text-right">距離</TableHead>
+            <TableHead className="text-right">頭数</TableHead>
+            <TableHead>AI 予想</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {section.races.map((race) => (
+            <TableRow
+              key={race.race_id}
+              className="cursor-pointer"
+              onClick={() => onRowClick(race)}
+              role="button"
+              aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
+            >
+              <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
+              <TableCell>{race.name ?? '—'}</TableCell>
+              <TableCell>{race.race_class ?? '—'}</TableCell>
+              <TableCell>{race.surface}</TableCell>
+              <TableCell className="text-right">{race.distance} m</TableCell>
+              <TableCell className="text-right">{race.n_runners ?? '—'}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {formatTopHorses(predictions[race.race_id])}
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {section.races.map((race) => (
-              <TableRow
-                key={race.race_id}
-                className="cursor-pointer"
-                onClick={() => onRowClick(race)}
-                role="button"
-                aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
-              >
-                <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
-                <TableCell>{race.name ?? '—'}</TableCell>
-                <TableCell>{race.race_class ?? '—'}</TableCell>
-                <TableCell>{race.surface}</TableCell>
-                <TableCell className="text-right">{race.distance} m</TableCell>
-                <TableCell className="text-right">{race.n_runners ?? '—'}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatTopHorses(predictions[race.race_id])}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+          ))}
+        </TableBody>
+      </Table>
     </section>
   );
 }

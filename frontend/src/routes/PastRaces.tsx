@@ -64,46 +64,44 @@ interface RaceTableProps {
 function RaceTable({ section, onRowClick }: RaceTableProps) {
   return (
     <section aria-labelledby={`course-${section.course}`}>
-      <h2
+      <h3
         id={`course-${section.course}`}
-        className="mb-2 text-base font-semibold text-foreground"
+        className="mb-2 text-sm font-semibold text-muted-foreground"
       >
         {section.course}
-      </h2>
-      <div className="overflow-hidden rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-16">R</TableHead>
-              <TableHead>レース名</TableHead>
-              <TableHead>クラス</TableHead>
-              <TableHead>馬場</TableHead>
-              <TableHead className="text-right">距離</TableHead>
-              <TableHead className="text-right">頭数</TableHead>
-              <TableHead>複勝払戻</TableHead>
+      </h3>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-16">R</TableHead>
+            <TableHead>レース名</TableHead>
+            <TableHead>クラス</TableHead>
+            <TableHead>馬場</TableHead>
+            <TableHead className="text-right">距離</TableHead>
+            <TableHead className="text-right">頭数</TableHead>
+            <TableHead>複勝払戻</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {section.races.map((race) => (
+            <TableRow
+              key={race.race_id}
+              className="cursor-pointer"
+              onClick={() => onRowClick(race)}
+              role="button"
+              aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
+            >
+              <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
+              <TableCell>{race.name ?? '—'}</TableCell>
+              <TableCell>{race.race_class ?? '—'}</TableCell>
+              <TableCell>{race.surface}</TableCell>
+              <TableCell className="text-right">{race.distance} m</TableCell>
+              <TableCell className="text-right">{race.n_runners ?? '—'}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">—</TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {section.races.map((race) => (
-              <TableRow
-                key={race.race_id}
-                className="cursor-pointer hover:bg-accent/60"
-                onClick={() => onRowClick(race)}
-                role="button"
-                aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
-              >
-                <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
-                <TableCell>{race.name ?? '—'}</TableCell>
-                <TableCell>{race.race_class ?? '—'}</TableCell>
-                <TableCell>{race.surface}</TableCell>
-                <TableCell className="text-right">{race.distance} m</TableCell>
-                <TableCell className="text-right">{race.n_runners ?? '—'}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">—</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+          ))}
+        </TableBody>
+      </Table>
     </section>
   );
 }
