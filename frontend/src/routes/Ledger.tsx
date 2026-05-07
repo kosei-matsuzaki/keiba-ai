@@ -17,6 +17,7 @@ import { useBetBreakdown } from '@/hooks/useBetBreakdown';
 import { useBetList } from '@/hooks/useBetList';
 import { buildBetExportUrl, type BetFilterParams } from '@/lib/api';
 import { formatYen, formatPercent, formatDateTime } from '@/lib/formatters';
+import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { MetricCard } from '@/components/MetricCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -370,18 +371,16 @@ export function Ledger() {
         </div>
         {period === 'custom' && (
           <div className="flex items-center gap-2">
-            <input
-              type="date"
+            <DateYMDPicker
               value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              onChange={setCustomFrom}
+              ariaLabel="開始日"
             />
             <span className="text-muted-foreground">〜</span>
-            <input
-              type="date"
+            <DateYMDPicker
               value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              onChange={setCustomTo}
+              ariaLabel="終了日"
             />
           </div>
         )}

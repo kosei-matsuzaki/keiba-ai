@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
 import { MetricCard } from '@/components/MetricCard';
 import { runSimulation, formatErrorMessageSync } from '@/lib/api';
@@ -187,21 +188,19 @@ export function SimulationTab() {
         <CardContent className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-start">期間 開始日</Label>
-              <Input
-                id="sim-start"
-                type="date"
+              <Label>期間 開始日</Label>
+              <DateYMDPicker
                 value={start}
-                onChange={(e) => setStart(e.target.value)}
+                onChange={setStart}
+                ariaLabel="開始日"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-end">期間 終了日</Label>
-              <Input
-                id="sim-end"
-                type="date"
+              <Label>期間 終了日</Label>
+              <DateYMDPicker
                 value={end}
-                onChange={(e) => setEnd(e.target.value)}
+                onChange={setEnd}
+                ariaLabel="終了日"
               />
             </div>
             <div className="flex flex-col gap-1.5">

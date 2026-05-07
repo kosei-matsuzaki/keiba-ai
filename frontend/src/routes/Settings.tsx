@@ -33,7 +33,7 @@ export function Settings() {
       />
 
       {settingsQuery.isPending ? (
-        <Skeleton className="h-96 w-full max-w-3xl rounded-lg" />
+        <Skeleton className="h-96 w-full rounded-lg" />
       ) : settingsQuery.isError ? (
         <EmptyState
           message="設定の取得に失敗しました"
