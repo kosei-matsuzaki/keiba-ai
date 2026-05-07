@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Wallet } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -17,22 +19,6 @@ import { formatErrorMessageSync, isNotFoundError, isServiceUnavailableError } fr
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { useCreateBet } from '@/hooks/useCreateBet';
 import type { RecommendationCandidate, RecommendationsResponse, BetType } from '@/types/api';
-
-// ── Pattern badge variant mapping ─────────────────────────────────────────────
-
-const PATTERN_LABELS: Record<string, string> = {
-  nagashi: '流し',
-  box:     'ボックス',
-  formation: 'フォーメーション',
-};
-
-function PatternBadge({ pattern }: { pattern: string }) {
-  return (
-    <Badge variant="outline" className="text-xs">
-      {PATTERN_LABELS[pattern] ?? pattern}
-    </Badge>
-  );
-}
 
 // ── Odds source badge ─────────────────────────────────────────────────────────
 
@@ -77,35 +63,66 @@ function evClass(ev: number | null): string {
   return 'text-muted-foreground';
 }
 
-// ── BuyButton ─────────────────────────────────────────────────────────────────
+// ── StakeInputAndBuy ──────────────────────────────────────────────────────────
 
-interface BuyButtonProps {
+interface StakeInputAndBuyProps {
   candidate: RecommendationCandidate;
   raceId: string;
 }
 
-function BuyButton({ candidate, raceId }: BuyButtonProps) {
+/**
+ * 賭け金の入力フィールドと「買う」ボタンを横並びで表示する。
+ *
+ * - default は AI 推奨 stake (`candidate.stake`)
+ * - ユーザは 100 円単位で自由に変更可能 (例: 推奨 0 でも 100 円で勝負試したい等)
+ * - 0 円 / 空欄 / 100 円未満は「買う」を disable
+ * - 入力は 100 円刻みに自動 round (snap)
+ */
+function StakeInputAndBuy({ candidate, raceId }: StakeInputAndBuyProps) {
+  const [stake, setStake] = useState<number>(candidate.stake);
   const { mutate, isPending } = useCreateBet();
 
+  function handleStakeChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = Number(e.target.value);
+    if (Number.isNaN(raw) || raw < 0) {
+      setStake(0);
+      return;
+    }
+    // Snap to 100 円 単位
+    setStake(Math.floor(raw / 100) * 100);
+  }
+
   function handleBuy() {
+    if (stake < 100) return;
     mutate({
       race_id: raceId,
       bet_type: candidate.bet_type as BetType,
       combo: candidate.combo,
-      stake: candidate.stake,
+      stake,
       source: 'recommendation',
     });
   }
 
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={isPending || candidate.stake === 0}
-      onClick={handleBuy}
-    >
-      買う
-    </Button>
+    <div className="flex items-center justify-end gap-1">
+      <Input
+        type="number"
+        min={0}
+        step={100}
+        value={stake}
+        onChange={handleStakeChange}
+        className="h-8 w-24 text-right text-sm"
+        aria-label="賭け金 (円, 100 円単位)"
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={isPending || stake < 100}
+        onClick={handleBuy}
+      >
+        買う
+      </Button>
+    </div>
   );
 }
 
@@ -189,14 +206,11 @@ export function RecommendationsCard({
                 <TableRow>
                   <TableHead>券種</TableHead>
                   <TableHead>組合せ</TableHead>
-                  <TableHead>パターン</TableHead>
                   <TableHead className="text-right">確率</TableHead>
-                  <TableHead className="text-right">
-                    推定オッズ
-                  </TableHead>
+                  <TableHead className="text-right">推定オッズ</TableHead>
                   <TableHead className="text-right">EV</TableHead>
                   <TableHead className="text-right">推奨 stake</TableHead>
-                  <TableHead />
+                  <TableHead className="text-right">賭け金 / 購入</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -207,9 +221,6 @@ export function RecommendationsCard({
                     <TableRow key={`${c.bet_type}-${c.combo}-${idx}`} className={rowClass}>
                       <TableCell className="font-medium">{c.bet_type}</TableCell>
                       <TableCell className="font-mono text-xs">{c.combo}</TableCell>
-                      <TableCell>
-                        <PatternBadge pattern={c.pattern} />
-                      </TableCell>
                       <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
                       <TableCell className="text-right">
                         {c.est_odds === null ? (
@@ -228,15 +239,11 @@ export function RecommendationsCard({
                           formatRatio(c.ev)
                         )}
                       </TableCell>
-                      <TableCell className="text-right">
-                        {isZeroStake ? (
-                          <span className="text-muted-foreground">賭けない</span>
-                        ) : (
-                          formatYen(c.stake)
-                        )}
+                      <TableCell className="text-right text-muted-foreground">
+                        {isZeroStake ? '—' : formatYen(c.stake)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <BuyButton candidate={c} raceId={raceId} />
+                        <StakeInputAndBuy candidate={c} raceId={raceId} />
                       </TableCell>
                     </TableRow>
                   );
