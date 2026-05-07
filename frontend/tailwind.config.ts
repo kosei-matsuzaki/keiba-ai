@@ -23,8 +23,12 @@ export default {
         card: {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
+          elevated: 'hsl(var(--card-elevated))',
         },
-        border: 'hsl(var(--border))',
+        border: {
+          DEFAULT: 'hsl(var(--border))',
+          strong: 'hsl(var(--border-strong))',
+        },
         ring: 'hsl(var(--ring))',
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',

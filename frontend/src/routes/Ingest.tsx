@@ -30,7 +30,12 @@ import type { ScraperRunRequest } from '@/types/api';
 // Race Detail の「オッズ取得」ボタンに役割が移管されたため撤去済。
 // 元実装が必要な場合は git history の routes/Ingest.tsx 参照。
 
-export function Ingest() {
+interface IngestProps {
+  /** Settings route のタブ内に埋め込まれる場合 true。自前 PageHeader と外周 padding を抑制する。 */
+  embedded?: boolean;
+}
+
+export function Ingest({ embedded = false }: IngestProps = {}) {
   const statusQuery = useScraperStatus();
   const runMutation = useScraperRun();
   const stopMutation = useScraperStop();
@@ -66,38 +71,52 @@ export function Ingest() {
     });
   }
 
-  return (
-    <div className="flex flex-col gap-6 p-6">
-      <PageHeader
-        icon={Database}
-        title="Ingest"
-        description="netkeiba スクレイピングの実行と進捗確認"
-      >
-        <IngestRunDialog onSubmit={handleRun} isPending={runMutation.isPending} />
-        <Dialog open={stopDialogOpen} onOpenChange={setStopDialogOpen}>
-          <DialogTrigger asChild>
-            <Button variant="destructive" disabled={stopMutation.isPending}>
-              即時停止
+  const actions = (
+    <>
+      <IngestRunDialog onSubmit={handleRun} isPending={runMutation.isPending} />
+      <Dialog open={stopDialogOpen} onOpenChange={setStopDialogOpen}>
+        <DialogTrigger asChild>
+          <Button variant="destructive" disabled={stopMutation.isPending}>
+            即時停止
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>スクレイパー停止確認</DialogTitle>
+            <DialogDescription>
+              実行中のスクレイピングジョブを即時停止しますか？この操作は取り消せません。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStopDialogOpen(false)}>
+              キャンセル
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>スクレイパー停止確認</DialogTitle>
-              <DialogDescription>
-                実行中のスクレイピングジョブを即時停止しますか？この操作は取り消せません。
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setStopDialogOpen(false)}>
-                キャンセル
-              </Button>
-              <Button variant="destructive" onClick={handleStop}>
-                停止する
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </PageHeader>
+            <Button variant="destructive" onClick={handleStop}>
+              停止する
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+
+  return (
+    <div className={embedded ? 'flex flex-col gap-6' : 'flex flex-col gap-6 p-6'}>
+      {!embedded && (
+        <PageHeader
+          icon={Database}
+          title="Ingest"
+          description="netkeiba スクレイピングの実行と進捗確認"
+        >
+          {actions}
+        </PageHeader>
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">netkeiba スクレイピングの実行と進捗確認</p>
+          <div className="flex gap-2">{actions}</div>
+        </div>
+      )}
 
       {trackedJobId && (
         <JobProgressCard

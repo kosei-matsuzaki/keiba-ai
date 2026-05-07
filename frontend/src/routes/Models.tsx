@@ -8,9 +8,11 @@ import { ActiveModelCard } from '@/components/ActiveModelCard';
 import { ModelTable } from '@/components/ModelTable';
 import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { JobProgressCard } from '@/components/JobProgressCard';
+import { SimulationTab } from '@/components/SimulationTab';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { formatErrorMessage } from '@/lib/api';
 import { useTrainingStore } from '@/store/app';
@@ -55,48 +57,60 @@ export function Models() {
       <PageHeader
         icon={Brain}
         title="Models"
-        description="学習済みモデルの一覧と active 切り替え"
+        description="学習済みモデルの管理 / バックテストシミュレーション"
       >
         <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
       </PageHeader>
 
-      {/* Active model summary at the top of the page (no link to Models — already here) */}
-      {modelsQuery.isPending ? (
-        <Skeleton className="h-24 w-full rounded-lg" />
-      ) : modelsQuery.data ? (
-        <ActiveModelCard
-          model={modelsQuery.data.find((m) => m.is_active) ?? null}
-          linkToModels={false}
-        />
-      ) : null}
+      <Tabs defaultValue="list" className="flex flex-col gap-6">
+        <TabsList className="self-start">
+          <TabsTrigger value="list">モデル一覧</TabsTrigger>
+          <TabsTrigger value="simulation">シミュレーション</TabsTrigger>
+        </TabsList>
 
-      {trackedJobId && (
-        <JobProgressCard
-          jobId={trackedJobId}
-          title="train ジョブ進捗"
-          onDismiss={() => setTrackedJobId(null)}
-        />
-      )}
+        <TabsContent value="list" className="mt-0 flex flex-col gap-6">
+          {modelsQuery.isPending ? (
+            <Skeleton className="h-24 w-full rounded-lg" />
+          ) : modelsQuery.data ? (
+            <ActiveModelCard
+              model={modelsQuery.data.find((m) => m.is_active) ?? null}
+              linkToModels={false}
+            />
+          ) : null}
 
-      {modelsQuery.isPending ? (
-        <Skeleton className="h-64 w-full rounded-lg" />
-      ) : modelsQuery.isError ? (
-        <EmptyState
-          message="モデル情報の取得に失敗しました"
-          description="バックエンドが起動しているか確認してください。"
-        />
-      ) : modelsQuery.data.length === 0 ? (
-        <EmptyState
-          message="学習済みモデルはありません"
-          description="「再学習を実行」ボタンから最初のモデルを学習してください。"
-        />
-      ) : (
-        <ModelTable
-          models={modelsQuery.data}
-          onActivate={handleActivate}
-          activatingId={activatingId}
-        />
-      )}
+          {trackedJobId && (
+            <JobProgressCard
+              jobId={trackedJobId}
+              title="train ジョブ進捗"
+              onDismiss={() => setTrackedJobId(null)}
+            />
+          )}
+
+          {modelsQuery.isPending ? (
+            <Skeleton className="h-64 w-full rounded-lg" />
+          ) : modelsQuery.isError ? (
+            <EmptyState
+              message="モデル情報の取得に失敗しました"
+              description="バックエンドが起動しているか確認してください。"
+            />
+          ) : modelsQuery.data.length === 0 ? (
+            <EmptyState
+              message="学習済みモデルはありません"
+              description="「再学習を実行」ボタンから最初のモデルを学習してください。"
+            />
+          ) : (
+            <ModelTable
+              models={modelsQuery.data}
+              onActivate={handleActivate}
+              activatingId={activatingId}
+            />
+          )}
+        </TabsContent>
+
+        <TabsContent value="simulation" className="mt-0">
+          <SimulationTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

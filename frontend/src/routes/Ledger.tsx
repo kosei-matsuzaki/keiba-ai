@@ -21,7 +21,6 @@ import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { MetricCard } from '@/components/MetricCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
-import { SimulationTab } from '@/components/SimulationTab';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,7 +31,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -327,20 +325,9 @@ export function Ledger() {
       <PageHeader
         icon={Wallet}
         title="Ledger"
-        description="ベット記録の集計・損益推移・モデルシミュレーション"
+        description="ベット記録の集計・損益推移"
       />
 
-      <Tabs defaultValue="actual" className="flex flex-col gap-6">
-        <TabsList className="self-start">
-          <TabsTrigger value="actual">実績</TabsTrigger>
-          <TabsTrigger value="simulation">シミュレーション</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="simulation" className="mt-0">
-          <SimulationTab />
-        </TabsContent>
-
-        <TabsContent value="actual" className="mt-0 flex flex-col gap-6">
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={handleCsvDownload}>
           <Download className="h-4 w-4" />
@@ -501,8 +488,6 @@ export function Ledger() {
           </CardContent>
         )}
       </Card>
-        </TabsContent>
-      </Tabs>
     </div>
   );
 }

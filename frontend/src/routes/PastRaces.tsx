@@ -108,7 +108,12 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
   );
 }
 
-export function PastRaces() {
+interface PastRacesProps {
+  /** Race route のタブ内に埋め込まれる場合 true。自前の PageHeader と外周 padding を抑制する。 */
+  embedded?: boolean;
+}
+
+export function PastRaces({ embedded = false }: PastRacesProps = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -128,22 +133,34 @@ export function PastRaces() {
 
   const sections = data ? groupByCourse(data.races) : [];
 
+  const datePicker = (
+    <div className="flex items-center gap-2">
+      <Label className="shrink-0 text-sm">日付</Label>
+      <DateYMDPicker
+        value={selectedDate}
+        onChange={handleDateChange}
+        ariaLabel="日付"
+      />
+    </div>
+  );
+
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <PageHeader
-        icon={History}
-        title="Past Races"
-        description="日付を選んで過去のレース一覧を確認"
-      >
-        <div className="flex items-center gap-2">
-          <Label className="shrink-0 text-sm">日付</Label>
-          <DateYMDPicker
-            value={selectedDate}
-            onChange={handleDateChange}
-            ariaLabel="日付"
-          />
+    <div className={embedded ? 'flex flex-col gap-6' : 'flex flex-col gap-6 p-6'}>
+      {!embedded && (
+        <PageHeader
+          icon={History}
+          title="Past Races"
+          description="日付を選んで過去のレース一覧を確認"
+        >
+          {datePicker}
+        </PageHeader>
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">日付を選んで過去のレース一覧を確認</p>
+          {datePicker}
         </div>
-      </PageHeader>
+      )}
 
       {isPending ? (
         <TableSkeleton />
