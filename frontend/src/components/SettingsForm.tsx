@@ -215,7 +215,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                 <Input id="user_agent" {...register('user_agent')} />
               </FieldRow>
 
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-4">
                 <FieldRow
                   label="rate_min (秒)"
                   id="rate_min_seconds"
@@ -264,7 +264,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
               title="ベッティング期待値"
               description="evaluate.py で「賭ける / 賭けない」を判定する閾値と Kelly 資金配分。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。"
             >
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-4">
                 <FieldRow
                   label="単勝 EV 閾値"
                   id="win_ev_threshold"
@@ -293,7 +293,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                 </FieldRow>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-4">
                 <FieldRow
                   label="バンクロール (円)"
                   id="bankroll"

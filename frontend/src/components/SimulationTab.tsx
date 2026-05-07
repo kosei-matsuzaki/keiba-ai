@@ -437,7 +437,7 @@ export function SimulationTab() {
           <CardTitle className="text-base">シミュレーション設定</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>期間 開始日</Label>
               <DateYMDPicker
@@ -472,7 +472,7 @@ export function SimulationTab() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="sim-max-stake">1 race の投資額上限 (円)</Label>
               <Input

@@ -6,8 +6,12 @@ import {
   Brain,
   Settings,
   Wallet,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+import { useTheme } from '@/hooks/useTheme';
 import { cn } from '@/lib/cn';
 
 interface NavItem {
@@ -43,6 +47,7 @@ const navItems: NavItem[] = [
 
 export function Topbar() {
   const { pathname } = useLocation();
+  const [theme, , toggleTheme] = useTheme();
   return (
     <header
       aria-label="トップナビゲーション"
@@ -78,6 +83,21 @@ export function Topbar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Theme toggle */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggleTheme}
+        aria-label={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
+        title={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
+      >
+        {theme === 'dark' ? (
+          <Sun className="h-4 w-4" />
+        ) : (
+          <Moon className="h-4 w-4" />
+        )}
+      </Button>
     </header>
   );
 }

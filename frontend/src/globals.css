@@ -3,66 +3,60 @@
 @tailwind utilities;
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Design tokens — dark-first dashboard palette inspired by CamuQuotes.
-   配色: deep navy backdrop + indigo accent + saturated status pills.
-   single source of truth = ここの :root。.dark は html に常時付く前提。
+   Design tokens — CamuQuotes-inspired dashboard palette。
+   :root  = light (light gray backdrop + white cards + indigo accent)
+   .dark  = dark  (deep navy backdrop + slate cards + indigo accent)
+   shadcn 標準の class-based 切替に従う。html.dark / .light は ThemeProvider が制御。
    ───────────────────────────────────────────────────────────────────────────── */
 
 @layer base {
   :root {
-    /* Surfaces (deepest → brightest) — saturation を抑えて navy/slate 寄り。
-       hue は 222 (青寄り、紫成分少なめ) で統一。primary だけ強い indigo を残す */
-    --background:   222 28% 8%;    /* deep navy backdrop */
-    --card:         222 20% 13%;   /* panel surface */
-    --card-elevated: 222 22% 19%;  /* hover / overlay */
-    --popover:      222 20% 13%;
-    --popover-foreground: 220 20% 94%;
+    /* Surfaces (deepest → brightest) */
+    --background:    220 18% 96%;   /* light gray dashboard backdrop */
+    --card:          0 0% 100%;     /* pure white panel */
+    --card-elevated: 220 14% 93%;   /* subtle hover */
+    --popover:       0 0% 100%;
+    --popover-foreground: 222 28% 12%;
 
     /* Foreground / text */
-    --foreground:        220 20% 94%; /* 主テキスト (cool white, 紫味弱め) */
-    --card-foreground:   220 20% 94%;
-    --muted-foreground:  220 10% 62%; /* 補助テキスト */
-    --subtle-foreground: 220 10% 45%; /* helper / placeholder */
+    --foreground:        222 28% 12%; /* deep navy 主テキスト */
+    --card-foreground:   222 28% 12%;
+    --muted-foreground:  220 12% 42%; /* mid slate 補助テキスト */
+    --subtle-foreground: 220 10% 58%; /* helper / placeholder */
 
     /* Borders / inputs */
-    --border:         222 18% 22%;   /* 微妙な区切り */
-    --border-strong:  222 16% 32%;
-    --input:          222 18% 22%;
+    --border:         220 14% 88%;
+    --border-strong:  220 12% 76%;
+    --input:          220 14% 88%;
     --ring:           239 84% 67%;
 
     /* Primary accent (indigo) */
-    --primary:           239 84% 67%; /* #6366F1 */
+    --primary:           239 84% 67%; /* #6366F1 — light/dark で同じ */
     --primary-foreground: 0 0% 100%;
-    --primary-soft:      239 84% 67% / 0.15;
 
-    /* Secondary (= card-elevated) */
-    --secondary:           232 38% 19%;
-    --secondary-foreground: 229 39% 94%;
+    --secondary:           220 14% 93%;
+    --secondary-foreground: 222 28% 12%;
 
-    /* Muted (= card-elevated, わずかに暗め) */
-    --muted:           232 30% 16%;
-    /* muted-foreground は上で定義済み */
+    --muted:           220 14% 93%;
+    --accent:          220 14% 93%;
+    --accent-foreground: 222 28% 12%;
 
-    /* Accent (hover state) */
-    --accent:           232 38% 19%;
-    --accent-foreground: 229 39% 94%;
-
-    /* Status semantic colors (saturated, dark-suitable) */
-    --destructive:           0 91% 71%;   /* #F87171 rose */
+    /* Status semantic colors (light surface 用に saturation 強め) */
+    --destructive:           0 72% 51%;   /* deep rose */
     --destructive-foreground: 0 0% 100%;
-    --success:               158 64% 52%; /* #34D399 emerald */
-    --success-foreground:    158 70% 8%;
-    --warning:               43 96% 56%;  /* #FBBF24 amber */
-    --warning-foreground:    43 96% 8%;
-    --info:                  213 94% 68%; /* #60A5FA sky */
-    --info-foreground:       213 80% 8%;
+    --success:               158 64% 38%; /* deep emerald */
+    --success-foreground:    0 0% 100%;
+    --warning:               32 95% 44%;  /* deep amber */
+    --warning-foreground:    0 0% 100%;
+    --info:                  213 90% 50%; /* deep sky */
+    --info-foreground:       0 0% 100%;
 
-    /* Chart series (multi-series friendly on dark) */
-    --chart-1: 234 89% 74%; /* indigo light  #818CF8 */
-    --chart-2: 158 64% 52%; /* emerald       #34D399 */
-    --chart-3: 43 96% 56%;  /* amber         #FBBF24 */
-    --chart-4: 0 91% 71%;   /* rose          #F87171 */
-    --chart-5: 187 71% 55%; /* cyan          #4DD0E1 */
+    /* Chart series */
+    --chart-1: 239 84% 60%; /* indigo  */
+    --chart-2: 158 64% 42%; /* emerald */
+    --chart-3: 32 95% 50%;  /* amber   */
+    --chart-4: 0 72% 55%;   /* rose    */
+    --chart-5: 187 71% 42%; /* cyan    */
 
     --radius: 0.75rem;
 
@@ -72,13 +66,63 @@
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
       Consolas, "Liberation Mono", "Courier New", monospace;
   }
+
+  .dark {
+    /* Surfaces (deepest → brightest) — saturation 抑え目で navy/slate 寄り */
+    --background:    222 28% 8%;
+    --card:          222 20% 13%;
+    --card-elevated: 222 22% 19%;
+    --popover:       222 20% 13%;
+    --popover-foreground: 220 20% 94%;
+
+    --foreground:        220 20% 94%;
+    --card-foreground:   220 20% 94%;
+    --muted-foreground:  220 10% 62%;
+    --subtle-foreground: 220 10% 45%;
+
+    --border:         222 18% 22%;
+    --border-strong:  222 16% 32%;
+    --input:          222 18% 22%;
+    --ring:           239 84% 67%;
+
+    --primary:           239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary:           222 22% 19%;
+    --secondary-foreground: 220 20% 94%;
+
+    --muted:           222 22% 19%;
+    --accent:          222 22% 19%;
+    --accent-foreground: 220 20% 94%;
+
+    /* dark surface 上では saturation 抑制 */
+    --destructive:           0 91% 71%;
+    --destructive-foreground: 0 0% 100%;
+    --success:               158 64% 52%;
+    --success-foreground:    158 70% 8%;
+    --warning:               43 96% 56%;
+    --warning-foreground:    43 96% 8%;
+    --info:                  213 94% 68%;
+    --info-foreground:       213 80% 8%;
+
+    /* dark 向け chart は明るめに */
+    --chart-1: 234 89% 74%;
+    --chart-2: 158 64% 52%;
+    --chart-3: 43 96% 56%;
+    --chart-4: 0 91% 71%;
+    --chart-5: 187 71% 55%;
+  }
 }
 
 @layer base {
   * {
     @apply border-border;
   }
+  /* color-scheme は html.dark / 既定で切替 */
   html {
+    color-scheme: light;
+  }
+  html.dark {
     color-scheme: dark;
   }
   body {
@@ -86,7 +130,6 @@
     font-family: var(--font-sans);
     /* Inter で 'cv11' (open 4/9) と 'ss01' を有効化、数値は tnum で揃え列幅を固定 */
     font-feature-settings: 'cv11', 'ss01', 'tnum' 1;
-    /* dashboard ぽく若干 dense */
     font-size: 14px;
     line-height: 1.5;
   }
@@ -98,9 +141,8 @@
     font-family: var(--font-mono);
   }
 
-  /* KPI 大数字用 utility (Tailwind の theme で参照しなくて済むよう class でも提供) */
   .text-kpi {
-    font-size: 2rem;     /* 32px */
+    font-size: 2rem;
     line-height: 1.1;
     letter-spacing: -0.02em;
     font-weight: 600;
@@ -108,7 +150,7 @@
   }
 
   .text-label {
-    font-size: 0.6875rem; /* 11px */
+    font-size: 0.6875rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: hsl(var(--muted-foreground));
