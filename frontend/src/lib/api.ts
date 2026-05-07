@@ -41,6 +41,7 @@ import type {
   SettingsUpdate,
   SimulationRequest,
   SimulationResponse,
+  SimulationRunListResponse,
   TrainRequest,
   UpcomingRacesResponse,
 } from '@/types/api';
@@ -314,6 +315,27 @@ export function runSimulation(req: SimulationRequest): Promise<SimulationRespons
       })
       .json<SimulationResponse>()
   );
+}
+
+/** 保存済みシミュレーション実行の一覧を取得 (新しい順、最大 50 件)。 */
+export function listSimulationRuns(): Promise<SimulationRunListResponse> {
+  return getClient().then((c) =>
+    c.get('simulation/runs').json<SimulationRunListResponse>()
+  );
+}
+
+/** 保存済みシミュレーション実行の詳細を取得 (グラフ + テーブル含む)。 */
+export function getSimulationRun(runId: number): Promise<SimulationResponse> {
+  return getClient().then((c) =>
+    c.get(`simulation/runs/${runId}`).json<SimulationResponse>()
+  );
+}
+
+/** 保存済みシミュレーション実行を削除する。 */
+export function deleteSimulationRun(runId: number): Promise<void> {
+  return getClient().then(async (c) => {
+    await c.delete(`simulation/runs/${runId}`);
+  });
 }
 
 // ── Error handling helpers ──────────────────────────────────────────────────

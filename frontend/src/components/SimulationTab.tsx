@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { Play, Loader2 } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,12 +13,19 @@ import { BankrollChart } from '@/components/BankrollChart';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
 import { MetricCard } from '@/components/MetricCard';
-import { runSimulation, formatErrorMessageSync } from '@/lib/api';
+import {
+  deleteSimulationRun,
+  formatErrorMessageSync,
+  getSimulationRun,
+  listSimulationRuns,
+  runSimulation,
+} from '@/lib/api';
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
 import type {
   SimulationGroupStats,
   SimulationResponse,
+  SimulationRunSummary,
   SimulationStrategy,
 } from '@/types/api';
 
@@ -136,12 +143,171 @@ function GroupTable({ title, rows }: GroupTableProps) {
   );
 }
 
+// ── SavedRunsPanel: 保存済みシミュレーション一覧 ─────────────────────────────
+
+interface SavedRunsPanelProps {
+  /** 表示中の result の run_id (highlight 用)。 */
+  activeRunId: number | null;
+  /** click した run の詳細を読み込む (親で setResult)。 */
+  onLoad: (runId: number) => void;
+  /** 削除後に list を refetch するキック。 */
+  onDeleted: () => void;
+}
+
+function _formatRunTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  // YYYY-MM-DD HH:mm
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function SavedRunsPanel({ activeRunId, onLoad, onDeleted }: SavedRunsPanelProps) {
+  const queryClient = useQueryClient();
+  const listQuery = useQuery({
+    queryKey: ['simulation-runs'],
+    queryFn: listSimulationRuns,
+    staleTime: 0,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (runId: number) => deleteSimulationRun(runId),
+    onSuccess: () => {
+      toast.success('保存済み実行を削除しました');
+      queryClient.invalidateQueries({ queryKey: ['simulation-runs'] });
+      onDeleted();
+    },
+    onError: (err) => {
+      toast.error(`削除失敗: ${formatErrorMessageSync(err)}`);
+    },
+  });
+
+  function handleDelete(e: React.MouseEvent, runId: number) {
+    e.stopPropagation();
+    if (!window.confirm('この実行結果を削除しますか?')) return;
+    deleteMutation.mutate(runId);
+  }
+
+  const runs = listQuery.data?.runs ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Archive className="h-4 w-4" />
+          保存済みシミュレーション ({runs.length})
+        </CardTitle>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => listQuery.refetch()}
+          disabled={listQuery.isFetching}
+          className="gap-1.5"
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${listQuery.isFetching ? 'animate-spin' : ''}`}
+          />
+          更新
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {listQuery.isPending ? (
+          <p className="text-sm text-muted-foreground">読込中…</p>
+        ) : runs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            保存済みの実行はありません。シミュレーションを実行すると自動的にここに保存されます (上限 50 件)。
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>実行日時</TableHead>
+                  <TableHead>期間</TableHead>
+                  <TableHead>戦略</TableHead>
+                  <TableHead className="text-right">初期</TableHead>
+                  <TableHead className="text-right">最終</TableHead>
+                  <TableHead className="text-right">ピーク</TableHead>
+                  <TableHead className="text-right">races</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.map((r: SimulationRunSummary) => {
+                  const isActive = r.id === activeRunId;
+                  const profit = r.final_bankroll - r.budget;
+                  return (
+                    <TableRow
+                      key={r.id}
+                      className={`cursor-pointer ${
+                        isActive ? 'bg-primary/10' : ''
+                      }`}
+                      onClick={() => onLoad(r.id)}
+                    >
+                      <TableCell className="font-medium">
+                        {_formatRunTimestamp(r.created_at)}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {r.window_start ?? '-'} 〜 {r.window_end ?? '-'}
+                      </TableCell>
+                      <TableCell>{r.strategy}</TableCell>
+                      <TableCell className="text-right">
+                        {formatYen(r.budget)}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right ${
+                          profit > 0
+                            ? 'text-green-600 font-semibold'
+                            : profit < 0
+                            ? 'text-red-600'
+                            : ''
+                        }`}
+                      >
+                        {formatYen(r.final_bankroll)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatYen(r.peak_bankroll)}
+                      </TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">
+                        {r.n_settled_races} / {r.n_races}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => handleDelete(e, r.id)}
+                          disabled={deleteMutation.isPending}
+                          aria-label="削除"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
 // ── Main SimulationTab ────────────────────────────────────────────────────────
 
 export function SimulationTab() {
   const today = new Date();
   const defaultEnd = _isoDate(today);
   const defaultStart = _isoDate(_addMonths(today, -3));
+  const queryClient = useQueryClient();
 
   const [start, setStart] = useState(defaultStart);
   const [end, setEnd] = useState(defaultEnd);
@@ -159,10 +325,23 @@ export function SimulationTab() {
       }),
     onSuccess: (data) => {
       setResult(data);
-      toast.success(`シミュレーション完了 (${data.n_settled_races} race)`);
+      toast.success(`シミュレーション完了 (${data.n_settled_races} race) — 保存しました`);
+      // 保存済み一覧に新規 row を反映
+      queryClient.invalidateQueries({ queryKey: ['simulation-runs'] });
     },
     onError: (err) => {
       toast.error(`シミュレーション失敗: ${formatErrorMessageSync(err)}`);
+    },
+  });
+
+  const loadMutation = useMutation({
+    mutationFn: (runId: number) => getSimulationRun(runId),
+    onSuccess: (data) => {
+      setResult(data);
+      toast.success('保存済み実行をロードしました');
+    },
+    onError: (err) => {
+      toast.error(`ロード失敗: ${formatErrorMessageSync(err)}`);
     },
   });
 
@@ -275,16 +454,37 @@ export function SimulationTab() {
         </CardContent>
       </Card>
 
+      {/* Saved runs */}
+      <SavedRunsPanel
+        activeRunId={result?.run_id ?? null}
+        onLoad={(runId) => loadMutation.mutate(runId)}
+        onDeleted={() => {
+          // 表示中の run が消えたら result を空に
+          if (result?.run_id) {
+            // 簡易: 削除完了時点では active run id が残る可能性があるので
+            // user 確認のため残す方針 (削除されても result はそのまま)
+          }
+        }}
+      />
+
       {/* Result */}
-      {mutation.isPending ? (
+      {mutation.isPending || loadMutation.isPending ? (
         <EmptyState
-          message="シミュレーション実行中..."
-          description="アクティブモデルで全レースを predict + recommend + settle しています。完了まで 30 〜 60 秒。"
+          message={
+            mutation.isPending
+              ? 'シミュレーション実行中...'
+              : '保存済み実行をロード中...'
+          }
+          description={
+            mutation.isPending
+              ? 'アクティブモデルで全レースを predict + recommend + settle しています。完了まで 30 〜 60 秒。'
+              : ''
+          }
         />
       ) : !result ? (
         <EmptyState
           message="シミュレーション未実行"
-          description="期間・予算・戦略を選んで「実行」ボタンを押してください。"
+          description="期間・予算・戦略を選んで「実行」ボタンを押してください。または保存済みの実行をクリックしてロードできます。"
         />
       ) : (
         <>
