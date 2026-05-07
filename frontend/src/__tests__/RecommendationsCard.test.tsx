@@ -195,7 +195,7 @@ describe('RecommendationsCard', () => {
     expect(screen.getByText('このレースの推奨買目はありません。')).toBeInTheDocument();
   });
 
-  it('renders pattern badges correctly', () => {
+  it('does not render pattern column (removed in Q2 fix)', () => {
     wrap(
       <RecommendationsCard
         raceId="202406010101"
@@ -206,8 +206,9 @@ describe('RecommendationsCard', () => {
       />
     );
 
-    expect(screen.getByText('ボックス')).toBeInTheDocument();
-    expect(screen.getByText('流し')).toBeInTheDocument();
+    expect(screen.queryByText('ボックス')).not.toBeInTheDocument();
+    expect(screen.queryByText('流し')).not.toBeInTheDocument();
+    expect(screen.queryByText('パターン')).not.toBeInTheDocument();
   });
 
   it('renders buy buttons for each candidate', () => {
@@ -225,7 +226,7 @@ describe('RecommendationsCard', () => {
     expect(buyButtons).toHaveLength(mockData.candidates.length);
   });
 
-  it('calls createBet when buy button is clicked', async () => {
+  it('calls createBet when buy button is clicked (uses recommended stake by default)', async () => {
     const { createBet } = vi.mocked(
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       require('../lib/api')
@@ -253,6 +254,134 @@ describe('RecommendationsCard', () => {
         stake: 500,
         source: 'recommendation',
       });
+    });
+  });
+
+  it('uses manually-entered stake instead of recommended when buy clicked', async () => {
+    const { createBet } = vi.mocked(
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('../lib/api')
+    );
+    createBet.mockResolvedValue({ id: 2 });
+
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    // ユーザがあえて 1200 円に変更（推奨 500 だけど勝負試したい等）
+    const inputs = screen.getAllByLabelText('賭け金 (円, 100 円単位)');
+    fireEvent.change(inputs[0], { target: { value: '1200' } });
+
+    const buyButtons = screen.getAllByRole('button', { name: '買う' });
+    fireEvent.click(buyButtons[0]);
+
+    await waitFor(() => {
+      expect(createBet).toHaveBeenCalledWith({
+        race_id: '202406010101',
+        bet_type: '単勝',
+        combo: '1',
+        stake: 1200,
+        source: 'recommendation',
+      });
+    });
+  });
+
+  it('snaps non-100-unit input down to nearest 100 multiple', async () => {
+    const { createBet } = vi.mocked(
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('../lib/api')
+    );
+    createBet.mockResolvedValue({ id: 3 });
+
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    const inputs = screen.getAllByLabelText('賭け金 (円, 100 円単位)');
+    fireEvent.change(inputs[0], { target: { value: '750' } });
+
+    const buyButtons = screen.getAllByRole('button', { name: '買う' });
+    fireEvent.click(buyButtons[0]);
+
+    await waitFor(() => {
+      // 750 → snapped down to 700
+      expect(createBet).toHaveBeenCalledWith(
+        expect.objectContaining({ stake: 700 })
+      );
+    });
+  });
+
+  it('disables buy button when manually-entered stake is below 100', () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    const inputs = screen.getAllByLabelText('賭け金 (円, 100 円単位)');
+    // 50 → snaps to 0 → buy disabled
+    fireEvent.change(inputs[0], { target: { value: '50' } });
+
+    const buyButtons = screen.getAllByRole('button', { name: '買う' });
+    expect(buyButtons[0]).toBeDisabled();
+  });
+
+  it('zero-stake recommendation row still allows manual stake entry', async () => {
+    const { createBet } = vi.mocked(
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('../lib/api')
+    );
+    createBet.mockResolvedValue({ id: 4 });
+
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockDataWithZeroStake}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+
+    // mockDataWithZeroStake has [単勝 stake=500, 馬連 stake=0]
+    // We grab the 馬連 (zero-stake) row's input and override
+    const inputs = screen.getAllByLabelText('賭け金 (円, 100 円単位)');
+    expect(inputs.length).toBe(2);
+    // Find the input that defaults to 0
+    const zeroDefaultInput = inputs.find(
+      (i) => (i as HTMLInputElement).value === '0'
+    );
+    expect(zeroDefaultInput).toBeDefined();
+
+    fireEvent.change(zeroDefaultInput!, { target: { value: '300' } });
+
+    // Buy buttons are co-located; click the one in the same row as our input
+    const row = zeroDefaultInput!.closest('tr');
+    const buyBtn = row!.querySelector<HTMLButtonElement>('button');
+    expect(buyBtn).not.toBeNull();
+    expect(buyBtn).not.toBeDisabled();
+    fireEvent.click(buyBtn!);
+
+    await waitFor(() => {
+      expect(createBet).toHaveBeenCalledWith(
+        expect.objectContaining({ stake: 300, bet_type: '馬連' })
+      );
     });
   });
 
