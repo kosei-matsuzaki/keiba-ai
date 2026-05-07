@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { BankrollChart } from '@/components/BankrollChart';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
 import { MetricCard } from '@/components/MetricCard';
@@ -322,6 +323,19 @@ export function SimulationTab() {
               description="1.00 = 損益なし"
             />
           </div>
+
+          {/* Bankroll timeseries chart */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">資産推移</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <BankrollChart
+                points={result.bankroll_timeseries}
+                initialBudget={result.budget}
+              />
+            </CardContent>
+          </Card>
 
           {/* Bet stats KPI cards: bet 単位の統計 */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
