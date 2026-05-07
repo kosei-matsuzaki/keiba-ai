@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
 
@@ -15,10 +15,11 @@ import { EmptyState } from '@/components/EmptyState';
 import { MetricCard } from '@/components/MetricCard';
 import {
   deleteSimulationRun,
+  fetchJob,
   formatErrorMessageSync,
   getSimulationRun,
   listSimulationRuns,
-  runSimulation,
+  startSimulationJob,
 } from '@/lib/api';
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
@@ -77,8 +78,8 @@ function _diffDays(start: string, end: string): number | null {
   return Math.round((e.getTime() - s.getTime()) / 86_400_000);
 }
 
-// バックエンドの MAX_WINDOW_DAYS と一致させる。
-const MAX_WINDOW_DAYS = 186;
+// バックエンドの MAX_BG_WINDOW_DAYS と一致させる (background job で 1 年まで OK)。
+const MAX_WINDOW_DAYS = 366;
 
 // ── Group breakdown table ─────────────────────────────────────────────────────
 
@@ -315,24 +316,91 @@ export function SimulationTab() {
   const [strategy, setStrategy] = useState<SimulationStrategy>('balanced');
   const [result, setResult] = useState<SimulationResponse | null>(null);
 
-  const mutation = useMutation({
+  // ── Background job orchestration ────────────────────────────────────
+  // 走行中の job_id と経過秒数。job_id がセットされている間 GET /jobs/{id}
+  // をポーリングし、完了したら getSimulationRun(run_id) で結果を取得する。
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const startedAtRef = useRef<number | null>(null);
+
+  // 経過秒タイマー (job 走行中のみ)
+  useEffect(() => {
+    if (activeJobId === null) {
+      setElapsedSec(0);
+      startedAtRef.current = null;
+      return;
+    }
+    startedAtRef.current = Date.now();
+    setElapsedSec(0);
+    const id = window.setInterval(() => {
+      if (startedAtRef.current !== null) {
+        setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [activeJobId]);
+
+  // job ポーリング (2 秒間隔)
+  const jobQuery = useQuery({
+    queryKey: ['simulation-job', activeJobId],
+    queryFn: () => fetchJob(activeJobId!),
+    enabled: activeJobId !== null,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      // running の間だけ 2 秒間隔で polling、それ以外は止める
+      if (!data) return 2000;
+      const isDone = data.status !== 'running' && data.status !== 'pending';
+      return isDone ? false : 2000;
+    },
+    staleTime: 0,
+  });
+
+  // job 完了の監視: status が completed/failed になったら処理
+  useEffect(() => {
+    if (!activeJobId || !jobQuery.data) return;
+    const job = jobQuery.data;
+    if (job.status === 'running' || job.status === 'pending') return;
+
+    if (job.status === 'completed') {
+      const runId = job.result?.run_id as number | undefined;
+      if (typeof runId === 'number') {
+        getSimulationRun(runId).then((data) => {
+          setResult(data);
+          toast.success(`シミュレーション完了 (${data.n_settled_races} race) — 保存しました`);
+          queryClient.invalidateQueries({ queryKey: ['simulation-runs'] });
+        }).catch((err) => {
+          toast.error(`結果取得失敗: ${formatErrorMessageSync(err)}`);
+        });
+      } else {
+        toast.error('完了したが run_id が取得できませんでした');
+      }
+    } else if (job.status === 'failed') {
+      toast.error(`シミュレーション失敗: ${job.error ?? '不明なエラー'}`);
+    }
+    // どちらの場合も polling を止める
+    setActiveJobId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobQuery.data?.status, activeJobId]);
+
+  // 起動 mutation: job_id を返したら state にセットしてポーリング開始
+  const startMutation = useMutation({
     mutationFn: () =>
-      runSimulation({
+      startSimulationJob({
         start: start || undefined,
         end: end || undefined,
         budget,
         strategy,
       }),
     onSuccess: (data) => {
-      setResult(data);
-      toast.success(`シミュレーション完了 (${data.n_settled_races} race) — 保存しました`);
-      // 保存済み一覧に新規 row を反映
-      queryClient.invalidateQueries({ queryKey: ['simulation-runs'] });
+      setActiveJobId(data.job_id);
+      toast.success('シミュレーションをバックグラウンドで開始しました');
     },
     onError: (err) => {
-      toast.error(`シミュレーション失敗: ${formatErrorMessageSync(err)}`);
+      toast.error(`起動失敗: ${formatErrorMessageSync(err)}`);
     },
   });
+
+  const isRunning = activeJobId !== null || startMutation.isPending;
 
   const loadMutation = useMutation({
     mutationFn: (runId: number) => getSimulationRun(runId),
@@ -355,7 +423,7 @@ export function SimulationTab() {
       );
       return;
     }
-    mutation.mutate();
+    startMutation.mutate();
   }
 
   return (
@@ -404,8 +472,7 @@ export function SimulationTab() {
           {windowTooLong && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               期間が長すぎます ({windowDays} 日)。{MAX_WINDOW_DAYS} 日以内
-              (約 6 か月) で指定してください。1 年規模だと逐次予測が数分かかり
-              HTTP timeout します。
+              (約 1 年) で指定してください。
             </div>
           )}
 
@@ -435,13 +502,13 @@ export function SimulationTab() {
           <div>
             <Button
               onClick={handleRun}
-              disabled={mutation.isPending || windowTooLong}
+              disabled={isRunning || windowTooLong}
               className="gap-2"
             >
-              {mutation.isPending ? (
+              {isRunning ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  実行中...（30 〜 60 秒）
+                  実行中... ({elapsedSec} 秒)
                 </>
               ) : (
                 <>
@@ -468,16 +535,16 @@ export function SimulationTab() {
       />
 
       {/* Result */}
-      {mutation.isPending || loadMutation.isPending ? (
+      {isRunning || loadMutation.isPending ? (
         <EmptyState
           message={
-            mutation.isPending
-              ? 'シミュレーション実行中...'
+            isRunning
+              ? `シミュレーション実行中... (${elapsedSec} 秒経過)`
               : '保存済み実行をロード中...'
           }
           description={
-            mutation.isPending
-              ? 'アクティブモデルで全レースを predict + recommend + settle しています。完了まで 30 〜 60 秒。'
+            isRunning
+              ? 'アクティブモデルで全レースを predict + recommend + settle しています。完了まで window のサイズ次第で数十秒〜数分。タブを閉じてもバックエンドで継続実行されます。'
               : ''
           }
         />

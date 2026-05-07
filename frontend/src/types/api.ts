@@ -163,10 +163,12 @@ export interface JobAccepted {
 export interface JobInfo {
   job_id: string;
   type: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | string;
+  status: 'pending' | 'running' | 'completed' | 'success' | 'failed' | string;
   started_at: string;
   finished_at: string | null;
   error: string | null;
+  /** 完了時の結果 payload。simulation の場合 { run_id: number } が入る。 */
+  result?: Record<string, unknown> | null;
 }
 
 export interface ScraperRecentActivity {

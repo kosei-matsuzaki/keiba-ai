@@ -1,17 +1,23 @@
-"""GET /api/simulation/active_model — backtest using active model.
+"""シミュレーションエンドポイント。
 
-Used by the Ledger 「シミュレーション」 tab.
+- GET  /api/simulation/active_model      シンクロ実行 (3 分以内の小さい window 用、後方互換)
+- POST /api/simulation/start             バックグラウンドジョブで実行 (大きい window OK)
+- GET  /api/simulation/runs              保存済み実行 一覧
+- GET  /api/simulation/runs/{id}         保存済み実行 詳細
+- DELETE /api/simulation/runs/{id}       保存済み実行 削除
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.registry import get_active
@@ -26,9 +32,12 @@ from keiba_ai.ai.simulation_persistence import (
     list_simulation_runs,
     save_simulation_result,
 )
-from keiba_ai.api.deps import get_session
+from keiba_ai.api.deps import get_engine, get_job_registry, get_session
+from keiba_ai.api.jobs import JobRegistry
+from keiba_ai.api.schemas import JobAccepted
 from keiba_ai.core.logging import get_logger
 from keiba_ai.db.models.simulation_run import SimulationRun
+from keiba_ai.db.session import session_scope
 
 logger = get_logger(__name__)
 
@@ -168,6 +177,47 @@ def _row_to_summary(row: SimulationRun) -> SimulationRunSummary:
     )
 
 
+def _validate_request(
+    start: str | None,
+    end: str | None,
+    strategy: str,
+) -> None:
+    """戦略 / 期間の妥当性を確認。違反は HTTPException(400) を投げる。
+
+    sync run と async start で共通利用。
+    """
+    if strategy not in STRATEGY_PRESETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown strategy {strategy!r}. Choose from {list(STRATEGY_PRESETS)}.",
+        )
+
+    if start is not None and end is not None:
+        try:
+            d_start = date.fromisoformat(start)
+            d_end = date.fromisoformat(end)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start / end は YYYY-MM-DD 形式で指定してください: {exc}",
+            ) from exc
+        if d_end < d_start:
+            raise HTTPException(
+                status_code=400,
+                detail="end は start 以降の日付を指定してください。",
+            )
+        if (d_end - d_start).days > MAX_WINDOW_DAYS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"期間が長すぎます (max {MAX_WINDOW_DAYS} 日 ≒ 6 か月)。"
+                    " 1 年規模だと逐次 predict + settle が数分かかります。"
+                    " 6 か月以内で分割実行するか、それを超える window が必要なら"
+                    " バックグラウンドジョブ (POST /api/simulation/start) を使ってください。"
+                ),
+            )
+
+
 @router.get(
     "/simulation/active_model",
     response_model=SimulationResponse,
@@ -201,37 +251,7 @@ def run_simulation(
 
     所要時間: 800 race で ~30-60 秒。レスポンスはキャッシュされない。
     """
-    if strategy not in STRATEGY_PRESETS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"unknown strategy {strategy!r}. Choose from {list(STRATEGY_PRESETS)}.",
-        )
-
-    # 期間の上限 check (frontend HTTP timeout を未然防止)。
-    # 1 年だと数分かかり HTTP timeout に当たるため 6 か月で頭打ちにする。
-    if start is not None and end is not None:
-        try:
-            d_start = date.fromisoformat(start)
-            d_end = date.fromisoformat(end)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"start / end は YYYY-MM-DD 形式で指定してください: {exc}",
-            ) from exc
-        if d_end < d_start:
-            raise HTTPException(
-                status_code=400,
-                detail="end は start 以降の日付を指定してください。",
-            )
-        if (d_end - d_start).days > MAX_WINDOW_DAYS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"期間が長すぎます (max {MAX_WINDOW_DAYS} 日 ≒ 6 か月)。"
-                    " 1 年規模だと逐次 predict + settle が数分かかり HTTP timeout"
-                    " するので、現状は 6 か月までで分割実行してください。"
-                ),
-            )
+    _validate_request(start, end, strategy)
 
     active_path = get_active(session)
     if active_path is None:
@@ -310,3 +330,120 @@ def delete_run(
             status_code=404, detail=f"simulation run id={run_id} が見つかりません",
         )
     return {"deleted": run_id}
+
+
+# ---------------------------------------------------------------------------
+# Background job (long-running simulation)
+# ---------------------------------------------------------------------------
+
+
+# Background job 用は MAX_WINDOW_DAYS の cap を緩める (1 年まで)。HTTP timeout を
+# 気にしなくて良いので、もう少し長くても OK。
+MAX_BG_WINDOW_DAYS: int = 366
+
+
+def _validate_request_bg(
+    start: str | None,
+    end: str | None,
+    strategy: str,
+) -> None:
+    """background job 用 validation。期間 cap は MAX_BG_WINDOW_DAYS まで。"""
+    if strategy not in STRATEGY_PRESETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown strategy {strategy!r}. Choose from {list(STRATEGY_PRESETS)}.",
+        )
+    if start is not None and end is not None:
+        try:
+            d_start = date.fromisoformat(start)
+            d_end = date.fromisoformat(end)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start / end は YYYY-MM-DD 形式で指定してください: {exc}",
+            ) from exc
+        if d_end < d_start:
+            raise HTTPException(
+                status_code=400,
+                detail="end は start 以降の日付を指定してください。",
+            )
+        if (d_end - d_start).days > MAX_BG_WINDOW_DAYS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"期間が長すぎます (max {MAX_BG_WINDOW_DAYS} 日 ≒ 1 年)。"
+                ),
+            )
+
+
+@router.post(
+    "/simulation/start",
+    response_model=JobAccepted,
+)
+def start_simulation_job(
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    registry: Annotated[JobRegistry, Depends(get_job_registry)],
+    engine: Annotated[Engine, Depends(get_engine)],
+    start: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
+    end: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
+    budget: Annotated[
+        int,
+        Query(ge=1000, le=100_000_000, description="初期資産 (円)"),
+    ] = 100_000,
+    strategy: Annotated[
+        Literal["conservative", "balanced", "aggressive"],
+        Query(description="戦略プリセット"),
+    ] = "balanced",
+) -> JobAccepted:
+    """シミュレーションをバックグラウンド job として実行する。
+
+    HTTP timeout を気にせず長い window (最大 1 年) を扱える。
+    完了後 job.result.run_id に保存済み run の id が入るので、UI は
+    /api/simulation/runs/{run_id} で詳細を取得すれば良い。
+    """
+    _validate_request_bg(start, end, strategy)
+    active_path = get_active(session)
+    if active_path is None:
+        raise HTTPException(
+            status_code=503,
+            detail="アクティブなモデルがありません。",
+        )
+
+    logger.info(
+        "Simulation job submit: window=%s..%s, budget=%d, strategy=%s",
+        start, end, budget, strategy,
+    )
+
+    # asyncio.create_task の中で session を作るため、Engine だけを capture。
+    # request 由来の session を job loop 内で使うと scope が合わない。
+    captured_engine = engine
+    captured_path = Path(active_path)
+
+    def _run_simulation_blocking() -> int:
+        """Worker thread: open new session + run + save。Returns saved run id."""
+        with session_scope(captured_engine) as bg_session:
+            result = simulate_active_model(
+                session=bg_session,
+                model_path=captured_path,
+                start=start,
+                end=end,
+                budget=budget,
+                strategy=strategy,  # type: ignore[arg-type]
+            )
+            saved = save_simulation_result(bg_session, result)
+            saved_id = saved.id
+        return saved_id
+
+    async def _coro() -> dict:
+        # Heavy CPU/IO work は別スレッドで (event loop を block しない)
+        run_id = await asyncio.to_thread(_run_simulation_blocking)
+        logger.info("Simulation job completed: saved run_id=%d", run_id)
+        return {"run_id": run_id}
+
+    info = registry.start("simulation", _coro)
+    return JobAccepted(
+        job_id=info.job_id,
+        status=info.status,
+        started_at=info.started_at,
+    )
