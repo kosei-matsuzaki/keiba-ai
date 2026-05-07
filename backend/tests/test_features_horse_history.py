@@ -503,3 +503,273 @@ def test_class_features_cutoff_excludes_future(class_engine):
     assert cr["recent_avg_class_weight"] == pytest.approx(3.5)  # (5+2)/2
     assert cr["high_class_starts"] == 0
     assert cr["high_class_places"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase B: margin / finish_time / passing 由来 features
+# ---------------------------------------------------------------------------
+
+
+from keiba_ai.features.horse_history import (
+    parse_margin,
+    parse_passing,
+)
+
+
+def test_parse_margin_literals():
+    assert parse_margin("ハナ") == pytest.approx(0.05)
+    assert parse_margin("アタマ") == pytest.approx(0.10)
+    assert parse_margin("クビ") == pytest.approx(0.15)
+    assert parse_margin("同着") == 0.0
+    assert parse_margin("大") == pytest.approx(12.0)
+    assert parse_margin("大差") == pytest.approx(12.0)
+
+
+def test_parse_margin_fractions():
+    # 純粋分数
+    assert parse_margin("1/2") == pytest.approx(0.5)
+    assert parse_margin("3/4") == pytest.approx(0.75)
+    # 整数 + 分数
+    assert parse_margin("1.1/4") == pytest.approx(1.25)
+    assert parse_margin("1.1/2") == pytest.approx(1.5)
+    assert parse_margin("2.3/4") == pytest.approx(2.75)
+    assert parse_margin("3.1/2") == pytest.approx(3.5)
+
+
+def test_parse_margin_integers():
+    assert parse_margin("1") == 1.0
+    assert parse_margin("10") == 10.0
+
+
+def test_parse_margin_invalid():
+    assert parse_margin(None) is None
+    assert parse_margin("") is None
+    assert parse_margin("3+ハナ") is None  # 稀少 hybrid 表記
+    assert parse_margin("謎") is None
+
+
+def test_parse_passing_basic():
+    assert parse_passing("2-2") == [2, 2]
+    assert parse_passing("11-12-11-10") == [11, 12, 11, 10]
+    assert parse_passing("1-1-1-1") == [1, 1, 1, 1]
+
+
+def test_parse_passing_invalid():
+    assert parse_passing(None) is None
+    assert parse_passing("") is None
+    assert parse_passing("abc") is None
+
+
+@pytest.fixture()
+def phase_b_engine():
+    """Horse with rich margin / finish_time / passing data over 5 races.
+
+    R1 (30d ago): 1着 / margin=None (winner) / time=80.0 / 1200m / passing=2-2
+    R2 (20d ago): 2着 / margin=クビ / time=85.0 / 1400m / passing=3-3
+    R3 (15d ago): 5着 / margin=2 / time=120.0 / 1800m / passing=8-7-6-5
+    R4 (10d ago): 1着 / margin=同着 / time=100.0 / 1600m / passing=1-1
+    R5 (5d ago):  3着 / margin=1/2 / time=95.0 / 1600m / passing=4-3-2
+    """
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+
+    base = date(2024, 6, 15)
+    races = [
+        # (race_id, days_ago, finish, margin, time, distance, passing)
+        ("PB1", 30, 1, None,    80.0,  1200, "2-2"),
+        ("PB2", 20, 2, "クビ",  85.0,  1400, "3-3"),
+        ("PB3", 15, 5, "2",     120.0, 1800, "8-7-6-5"),
+        ("PB4", 10, 1, "同着",  100.0, 1600, "1-1"),
+        ("PB5", 5,  3, "1/2",   95.0,  1600, "4-3-2"),
+    ]
+    with Session(engine) as session:
+        session.add(Horse(horse_id="HB", name=None))
+        for rid, days, _f, _m, _t, dist, _p in races:
+            session.add(Race(
+                race_id=rid,
+                date=(base - timedelta(days=days)).isoformat(),
+                course="東京",
+                surface="芝",
+                distance=dist,
+                n_runners=10,
+            ))
+        session.flush()
+        for rid, _days, finish, margin, ftime, _dist, passing in races:
+            session.add(Entry(
+                race_id=rid,
+                horse_id="HB",
+                post_position=1,
+                finish_position=finish,
+                finish_time=ftime,
+                margin=margin,
+                passing=passing,
+            ))
+        session.commit()
+    yield engine
+    engine.dispose()
+
+
+def test_phase_b_recent_avg_margin(phase_b_engine):
+    """勝ち馬 (R1=None, R4=同着) は 0 馬身として扱う。"""
+    with Session(phase_b_engine) as session:
+        result = compute_horse_history(session, "HB", before_date=date(2024, 6, 15))
+    # R1=0 (winner), R2=0.15 (クビ), R3=2.0, R4=0 (同着→0), R5=0.5
+    expected = (0.0 + 0.15 + 2.0 + 0.0 + 0.5) / 5
+    assert result["recent_avg_margin"] == pytest.approx(expected)
+
+
+def test_phase_b_recent_avg_finish_time_norm(phase_b_engine):
+    """finish_time / distance の平均。"""
+    with Session(phase_b_engine) as session:
+        result = compute_horse_history(session, "HB", before_date=date(2024, 6, 15))
+    expected = (
+        80.0 / 1200 + 85.0 / 1400 + 120.0 / 1800 + 100.0 / 1600 + 95.0 / 1600
+    ) / 5
+    assert result["recent_avg_finish_time_norm"] == pytest.approx(expected)
+
+
+def test_phase_b_recent_best_margin_in_top3(phase_b_engine):
+    """top-3 のうち最小着差: R1(0)/R2(0.15)/R4(0)/R5(0.5) → min=0"""
+    with Session(phase_b_engine) as session:
+        result = compute_horse_history(session, "HB", before_date=date(2024, 6, 15))
+    assert result["recent_best_margin_in_top3"] == pytest.approx(0.0)
+
+
+def test_phase_b_recent_avg_position_change(phase_b_engine):
+    """passing 末尾と finish_position の差の平均 (正なら追い込み)。
+
+    R1: last=2, finish=1 → +1
+    R2: last=3, finish=2 → +1
+    R3: last=5, finish=5 → 0
+    R4: last=1, finish=1 → 0
+    R5: last=2, finish=3 → -1
+    avg = (1+1+0+0-1)/5 = 0.2
+    """
+    with Session(phase_b_engine) as session:
+        result = compute_horse_history(session, "HB", before_date=date(2024, 6, 15))
+    assert result["recent_avg_position_change"] == pytest.approx(0.2)
+
+
+def test_phase_b_recent_passing_volatility(phase_b_engine):
+    """各 race の通過順位 std の平均 (population std)。
+
+    R1: [2,2] std=0
+    R2: [3,3] std=0
+    R3: [8,7,6,5] std≈1.118
+    R4: [1,1] std=0
+    R5: [4,3,2] std≈0.816
+    """
+    import statistics as _stats
+
+    with Session(phase_b_engine) as session:
+        result = compute_horse_history(session, "HB", before_date=date(2024, 6, 15))
+    expected = (
+        _stats.pstdev([2, 2])
+        + _stats.pstdev([3, 3])
+        + _stats.pstdev([8, 7, 6, 5])
+        + _stats.pstdev([1, 1])
+        + _stats.pstdev([4, 3, 2])
+    ) / 5
+    assert result["recent_passing_volatility"] == pytest.approx(expected)
+
+
+def test_phase_b_cache_parity(phase_b_engine):
+    """SQL 版と cache 版が完全一致 (Phase B fields 含む)。"""
+    base = date(2024, 6, 15)
+    with Session(phase_b_engine) as session:
+        cache = build_horse_history_cache(session)
+        sql_r = compute_horse_history(session, "HB", before_date=base)
+        cache_r = compute_horse_history_from_cache(cache, "HB", before_date=base)
+    for k in sql_r:
+        sv, cv = sql_r[k], cache_r[k]
+        if isinstance(sv, float) and math.isnan(sv):
+            assert isinstance(cv, float) and math.isnan(cv), f"{k}: {sv!r} vs {cv!r}"
+        else:
+            assert sv == pytest.approx(cv), f"{k}: {sv!r} vs {cv!r}"
+
+
+def test_phase_b_features_nan_for_unknown_horse(phase_b_engine):
+    """履歴 0 の馬は Phase B fields も NaN を返す。"""
+    with Session(phase_b_engine) as session:
+        result = compute_horse_history(
+            session, "UNKNOWN", before_date=date(2024, 6, 15)
+        )
+    assert math.isnan(result["recent_avg_margin"])
+    assert math.isnan(result["recent_avg_finish_time_norm"])
+    assert math.isnan(result["recent_best_margin_in_top3"])
+    assert math.isnan(result["recent_avg_position_change"])
+    assert math.isnan(result["recent_passing_volatility"])
+
+
+def test_phase_b_no_top3_returns_nan():
+    """top-3 履歴が無いとき recent_best_margin_in_top3 は NaN。"""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    base = date(2024, 6, 15)
+    with Session(engine) as session:
+        session.add(Horse(horse_id="HX", name=None))
+        # finish=10 の race を 1 件だけ
+        session.add(Race(
+            race_id="RX1",
+            date=(base - timedelta(days=10)).isoformat(),
+            course="東京", surface="芝", distance=1600, n_runners=18,
+        ))
+        session.flush()
+        session.add(Entry(
+            race_id="RX1", horse_id="HX", post_position=1,
+            finish_position=10, margin="5", finish_time=98.0, passing="15-12-10",
+        ))
+        session.commit()
+        result = compute_horse_history(session, "HX", before_date=base)
+    assert result["recent_best_margin_in_top3"] is not None
+    assert math.isnan(result["recent_best_margin_in_top3"])
+    # 他の Phase B feature はちゃんと値が入る
+    assert result["recent_avg_margin"] == pytest.approx(5.0)
+    engine.dispose()
+
+
+def test_phase_b_partial_missing_data():
+    """一部 race で margin/passing/finish_time が None のとき、
+    その race だけスキップして残りで計算する。"""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    base = date(2024, 6, 15)
+    with Session(engine) as session:
+        session.add(Horse(horse_id="HM", name=None))
+        races = [
+            # (race_id, days, finish, margin, time, passing)
+            ("RM1", 30, 3, "クビ", 95.0, "5-4-3"),    # 全部 OK
+            ("RM2", 20, 7, None,   None, None),       # 全 None (winner じゃない)
+            ("RM3", 10, 1, None,   90.0, "1-1"),      # winner: margin=None → 0
+        ]
+        for rid, d, _f, _m, _t, _p in races:
+            session.add(Race(
+                race_id=rid,
+                date=(base - timedelta(days=d)).isoformat(),
+                course="東京", surface="芝", distance=1600, n_runners=10,
+            ))
+        session.flush()
+        for rid, _d, f, m, t, p in races:
+            session.add(Entry(
+                race_id=rid, horse_id="HM", post_position=1,
+                finish_position=f, margin=m, finish_time=t, passing=p,
+            ))
+        session.commit()
+        sql_r = compute_horse_history(session, "HM", before_date=base)
+        cache = build_horse_history_cache(session)
+        cache_r = compute_horse_history_from_cache(cache, "HM", before_date=base)
+
+    # margin: RM1=0.15, RM2=None (skipped), RM3=0 (winner) → avg=(0.15+0)/2=0.075
+    assert sql_r["recent_avg_margin"] == pytest.approx(0.075)
+    # finish_time_norm: RM1=95/1600, RM2=skipped, RM3=90/1600 → avg
+    assert sql_r["recent_avg_finish_time_norm"] == pytest.approx(
+        (95.0 / 1600 + 90.0 / 1600) / 2
+    )
+    # parity
+    for k in sql_r:
+        sv, cv = sql_r[k], cache_r[k]
+        if isinstance(sv, float) and math.isnan(sv):
+            assert isinstance(cv, float) and math.isnan(cv), f"{k}: {sv!r} vs {cv!r}"
+        else:
+            assert sv == pytest.approx(cv), f"{k}: {sv!r} vs {cv!r}"
+    engine.dispose()
