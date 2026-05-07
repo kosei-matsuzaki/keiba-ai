@@ -282,14 +282,16 @@ def assign_stakes(
     max_stake_per_race_pct: float,
     round_to: int = 100,
     keep_zero_stake: bool = False,
+    max_stake_per_race_yen: int | None = None,
 ) -> list[BetCandidate]:
     """Assign Kelly stakes to candidates and apply per-race cap.
 
     Processing steps:
     1. ev <= 1.0  → stake = 0 (excluded from output unless keep_zero_stake=True).
     2. Apply kelly_stake to each remaining candidate.
-    3. If the total stake exceeds bankroll * max_stake_per_race_pct, scale all
-       stakes down proportionally (floor to round_to after scaling).
+    3. If the total stake exceeds the per-race cap (lower of bankroll * pct
+       or max_stake_per_race_yen), scale all stakes down proportionally
+       (floor to round_to after scaling).
     4. Remove candidates with stake == 0 from the returned list (unless
        keep_zero_stake=True, in which case all candidates are returned with
        their computed stake, including zeros).
@@ -304,6 +306,9 @@ def assign_stakes(
         keep_zero_stake: When True, candidates with stake=0 (due to ev<=1.0 or
             Kelly returning 0 or cap-scaling to 0) are included in the output.
             Defaults to False for backward compatibility.
+        max_stake_per_race_yen: 1 race の累計 stake の **絶対上限** (円)。
+            compounding wealth で bankroll が膨らんでも 1 race の bet が
+            無制限にインフレしないようにする。None で disable。
 
     Returns:
         New list of BetCandidate (copies) with updated stake values.
@@ -311,7 +316,11 @@ def assign_stakes(
         When keep_zero_stake=True, all input candidates are returned with
         their computed stake (0 for ineligible / below-EV candidates).
     """
-    cap = bankroll * max_stake_per_race_pct
+    pct_cap = bankroll * max_stake_per_race_pct
+    if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
+        cap = min(pct_cap, float(max_stake_per_race_yen))
+    else:
+        cap = pct_cap
 
     # Step 1 + 2: compute raw Kelly stakes
     # ev is None or ev <= 1.0 candidates get stake=0 and are tracked separately
@@ -367,6 +376,7 @@ def recommend_for_race(
     max_stake_per_race_pct: float,
     top_n_horses: int = 3,
     enabled_bet_types: list[str] | None = None,
+    max_stake_per_race_yen: int | None = None,
 ) -> RecommendationResult:
     """Generate a bet recommendation for one race.
 
@@ -488,6 +498,7 @@ def recommend_for_race(
     final_candidates = assign_stakes(
         deduped, bankroll, kelly_fraction, max_stake_per_race_pct,
         keep_zero_stake=True,
+        max_stake_per_race_yen=max_stake_per_race_yen,
     )
 
     return RecommendationResult(

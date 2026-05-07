@@ -314,6 +314,8 @@ export function SimulationTab() {
   const [end, setEnd] = useState(defaultEnd);
   const [budget, setBudget] = useState(100_000);
   const [strategy, setStrategy] = useState<SimulationStrategy>('balanced');
+  // 1 race 絶対上限 (円)。0 で無効。default 5000 円 (= 100k 元手の 5%)。
+  const [maxStakePerRaceYen, setMaxStakePerRaceYen] = useState(5_000);
   const [result, setResult] = useState<SimulationResponse | null>(null);
 
   // ── Background job orchestration ────────────────────────────────────
@@ -390,6 +392,7 @@ export function SimulationTab() {
         end: end || undefined,
         budget,
         strategy,
+        max_stake_per_race_yen: maxStakePerRaceYen,
       }),
     onSuccess: (data) => {
       setActiveJobId(data.job_id);
@@ -465,6 +468,27 @@ export function SimulationTab() {
                 初期資産 (Kelly 戦略の元手)。回収分は次レースの bet 余力に加算され、
                 自信のあるレース (高 EV) ほど Kelly が大きく賭けます。
                 資産が尽きたら以降は実質 bet しません (破産)。
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sim-max-stake">1 race の投資額上限 (円)</Label>
+              <Input
+                id="sim-max-stake"
+                type="number"
+                min={0}
+                step={500}
+                value={maxStakePerRaceYen}
+                onChange={(e) =>
+                  setMaxStakePerRaceYen(Math.max(0, Number(e.target.value) || 0))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                1 race の累計 stake の絶対上限。compounding wealth で資産が
+                増えても、各 race の bet 額がインフレせずこの値で頭打ちになります。
+                <strong>0 で無効</strong> (元手の 5% cap のみ)。
               </p>
             </div>
           </div>

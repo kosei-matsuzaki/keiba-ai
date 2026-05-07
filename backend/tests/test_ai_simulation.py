@@ -336,6 +336,61 @@ def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
     assert result.final_bankroll == 0
 
 
+def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
+    """max_stake_per_race_yen を渡すと、bankroll が増えても 1 race の累計
+    stake はその絶対上限を超えない (compounding wealth でのインフレ抑制)。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import keiba_ai.ai.simulation as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=3)
+
+    seen_bankrolls: list[int] = []
+    seen_max_yen: list[int | None] = []
+
+    # recommend_for_race を stub。max_stake_per_race_yen が渡ってくることを観測。
+    def _fake(*, bankroll, max_stake_per_race_yen=None, **_kw):
+        seen_bankrolls.append(bankroll)
+        seen_max_yen.append(max_stake_per_race_yen)
+        # cap = min(bankroll * 0.05, max_stake_per_race_yen) を再現
+        pct_cap = bankroll * 0.05
+        cap = (
+            min(pct_cap, max_stake_per_race_yen)
+            if max_stake_per_race_yen
+            else pct_cap
+        )
+        stake = int(cap) // 100 * 100
+        if stake == 0:
+            return SimpleNamespace(candidates=[])
+        cand = SimpleNamespace(bet_type="単勝", combo="1", stake=stake)
+        return SimpleNamespace(candidates=[cand])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _fake)
+
+    with Session(engine) as session:
+        result = sim_mod.simulate_active_model(
+            session=session,
+            model_path=Path("/tmp/dummy"),
+            start=None, end=None,
+            budget=1_000_000,
+            strategy="balanced",
+            max_stake_per_race_yen=2_000,  # 1 race max 2,000 円
+        )
+
+    # 全ての race で max_stake_per_race_yen が下流に届いている
+    assert all(v == 2_000 for v in seen_max_yen)
+    # 各 race の stake が 2000 円を超えない (recommend_for_race 内でも capping)
+    # bankroll は 1_000_000 → 1_000_000 * 0.05 = 50000 が pct cap だが
+    # max_stake_per_race_yen=2000 が優先される。
+    # 1 race ごとの invested は 2000 で頭打ち。
+    # winning combo "1" odds=4.0 → payout=8000、profit=+6000/race
+    # bankroll: 1000000 → 1006000 → 1012000 → 1018000
+    assert seen_bankrolls == [1_000_000, 1_006_000, 1_012_000]
+    assert result.final_bankroll == 1_018_000
+
+
 def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
     """bankroll_timeseries は日次集約 (同日複数 race の場合も 1 ポイント)。"""
     from pathlib import Path

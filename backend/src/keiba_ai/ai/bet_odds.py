@@ -112,9 +112,25 @@ def compute_race_odds(
     for row in rows:
         if row.bet_type not in result:
             result[row.bet_type] = {}
-        result[row.bet_type][row.combo] = row.odds
+        # live_odds 側も将来的にスペース入りで来た場合に備えて正規化しておく
+        result[row.bet_type][_normalize_combo(row.combo)] = row.odds
 
     return result
+
+
+def _normalize_combo(combo: str) -> str:
+    """payouts テーブルの combo 文字列を predict 側と同じ表記に正規化する。
+
+    netkeiba HTML から来た combo は ``10 - 14`` / ``14 → 10`` のように
+    区切り文字の前後に **半角/全角空白** が入っていることがある一方、
+    predict_race_with_combinations は空白なし (``10-14`` / ``14→10``) を生成する。
+    そのままだと _settle_candidates の dict ルックアップで全部 miss して
+    連系 (馬連/ワイド/馬単/三連複/三連単) の payback_rate が常に 0% になる。
+
+    全種類に共通で「すべての whitespace を除去」する正規化を適用すれば足りる。
+    """
+    # str.translate より小規模 string では join + split が読みやすい
+    return "".join(combo.split())
 
 
 def compute_past_race_odds(
@@ -210,7 +226,9 @@ def compute_past_race_odds(
             continue
         if row.bet_type not in result:
             result[row.bet_type] = {}
-        result[row.bet_type][row.combo] = row.amount / 100.0
+        # 連系の combo は payouts テーブルだと "10 - 14" のように空白が入って
+        # いるが、predict 側は "10-14" を生成するので空白を除去して合わせる。
+        result[row.bet_type][_normalize_combo(row.combo)] = row.amount / 100.0
 
     return result
 

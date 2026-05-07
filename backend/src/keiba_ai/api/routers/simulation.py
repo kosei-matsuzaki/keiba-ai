@@ -240,6 +240,16 @@ def run_simulation(
         Literal["conservative", "balanced", "aggressive"],
         Query(description="戦略プリセット"),
     ] = "balanced",
+    max_stake_per_race_yen: Annotated[
+        int | None,
+        Query(
+            ge=0,
+            le=10_000_000,
+            description="1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効 "
+            "(% cap のみ)。compounding wealth で bankroll が増えても各 race の "
+            "投資額をこの値で頭打ちにできる。",
+        ),
+    ] = None,
 ) -> SimulationResponse:
     """Run end-to-end backtest with active model on the given window.
 
@@ -272,6 +282,7 @@ def run_simulation(
         end=end,
         budget=budget,
         strategy=strategy,  # type: ignore[arg-type]
+        max_stake_per_race_yen=max_stake_per_race_yen,
     )
 
     # 自動保存 (上限 50 件、超過したら古い順に削除)
@@ -394,6 +405,13 @@ async def start_simulation_job(
         Literal["conservative", "balanced", "aggressive"],
         Query(description="戦略プリセット"),
     ] = "balanced",
+    max_stake_per_race_yen: Annotated[
+        int | None,
+        Query(
+            ge=0, le=10_000_000,
+            description="1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効。",
+        ),
+    ] = None,
 ) -> JobAccepted:
     """シミュレーションをバックグラウンド job として実行する。
 
@@ -432,6 +450,7 @@ async def start_simulation_job(
                 end=end,
                 budget=budget,
                 strategy=strategy,  # type: ignore[arg-type]
+                max_stake_per_race_yen=max_stake_per_race_yen,
             )
             saved = save_simulation_result(bg_session, result)
             saved_id = saved.id

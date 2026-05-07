@@ -239,6 +239,7 @@ def simulate_active_model(
     max_stake_per_race_pct: float = 0.05,
     enabled_bet_types: list[str] | None = None,
     top_n_horses: int = 3,
+    max_stake_per_race_yen: int | None = None,
 ) -> SimulationResult:
     """Run end-to-end backtest using active model + recommendations.
 
@@ -255,6 +256,9 @@ def simulate_active_model(
         enabled_bet_types: subset of DEFAULT_BET_TYPES to consider.
             None = all types.
         top_n_horses: top-N horses for box / formation candidates.
+        max_stake_per_race_yen: 1 race の累計 stake の絶対上限 (円)。
+            compounding wealth で bankroll が膨らんでも 1 race の bet 額が
+            無限にインフレしないようにする。None で無効 (pct cap のみ)。
 
     Returns:
         SimulationResult with summary, by_bet_type, by_race_class, by_course,
@@ -359,6 +363,7 @@ def simulate_active_model(
             max_stake_per_race_pct=max_stake_per_race_pct,
             top_n_horses=top_n_horses,
             enabled_bet_types=types,
+            max_stake_per_race_yen=max_stake_per_race_yen,
         )
 
         # Determine finish_position map (only finished races settle)
