@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 def make_engine(db_path: Path) -> Engine:
-    """Create a SQLite engine with FK enforcement and WAL journal mode."""
+    """Create a SQLite engine with FK enforcement, WAL, and 30s busy_timeout.
+
+    busy_timeout: 並行する書き込みジョブ (例: 長時間 ingest 中の simulation_runs
+    INSERT) で 「database is locked」 になりがちなので、待機を 5 → 30 秒に
+    伸ばして安定させる。
+    """
     url = f"sqlite:///{db_path}"
     engine = create_engine(url, echo=False, future=True)
 
@@ -22,6 +27,7 @@ def make_engine(db_path: Path) -> Engine:
     def _set_pragmas(dbapi_conn, _connection_record):
         dbapi_conn.execute("PRAGMA foreign_keys=ON")
         dbapi_conn.execute("PRAGMA journal_mode=WAL")
+        dbapi_conn.execute("PRAGMA busy_timeout=30000")
 
     return engine
 

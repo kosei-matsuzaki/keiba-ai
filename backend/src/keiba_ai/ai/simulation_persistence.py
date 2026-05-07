@@ -6,15 +6,25 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import desc, func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.simulation import SimulationResult
 from keiba_ai.db.models.simulation_run import SimulationRun
 
+log = logging.getLogger(__name__)
+
 MAX_SAVED_RUNS: int = 50
+
+# `database is locked` 用の retry パラメータ。busy_timeout=30s と合わせて、
+# 並行する 重い ingest job の影響を吸収する。
+_SAVE_MAX_RETRIES: int = 5
+_SAVE_RETRY_BASE_SLEEP: float = 1.0  # exponential backoff: 1, 2, 4, 8, 16
 
 
 def save_simulation_result(
@@ -23,12 +33,13 @@ def save_simulation_result(
     """SimulationResult を simulation_runs テーブルに保存する。
 
     保存後、件数が MAX_SAVED_RUNS (= 50) を超える場合は created_at 古い順に削除する。
+    `database is locked` のときは exponential backoff で retry (最大 5 回)。
     Returns: 新規作成された SimulationRun (id 付き)。
     """
     d = result.as_dict()
     now = datetime.now(timezone.utc).isoformat()
 
-    run = SimulationRun(
+    payload = dict(
         created_at=now,
         budget=d["budget"],
         strategy=d["strategy"],
@@ -47,13 +58,31 @@ def save_simulation_result(
             d["bankroll_timeseries"], ensure_ascii=False
         ),
     )
-    session.add(run)
-    session.flush()  # id を確定
 
-    _prune_old_runs(session)
-
-    session.commit()
-    return run
+    last_exc: Exception | None = None
+    for attempt in range(1, _SAVE_MAX_RETRIES + 1):
+        try:
+            run = SimulationRun(**payload)
+            session.add(run)
+            session.flush()  # id を確定
+            _prune_old_runs(session)
+            session.commit()
+            return run
+        except OperationalError as exc:
+            # database is locked 系のみ retry。それ以外は即 raise。
+            if "database is locked" not in str(exc):
+                raise
+            last_exc = exc
+            session.rollback()
+            sleep_sec = _SAVE_RETRY_BASE_SLEEP * (2 ** (attempt - 1))
+            log.warning(
+                "save_simulation_result: db locked (attempt %d/%d), retry after %.1fs",
+                attempt, _SAVE_MAX_RETRIES, sleep_sec,
+            )
+            time.sleep(sleep_sec)
+    # fall through: 全 retry 失敗
+    assert last_exc is not None
+    raise last_exc
 
 
 def _prune_old_runs(session: Session) -> int:
