@@ -40,6 +40,15 @@ class GroupStatsResponse(BaseModel):
     hit_rate: float
 
 
+class BankrollPointResponse(BaseModel):
+    """日次の資産推移ポイント (グラフ表示用)。"""
+    date: str          # YYYY-MM-DD
+    bankroll: int      # その日の最終 race 後の残高
+    invested: int      # その日の累計 stake
+    payout: int        # その日の累計 payout (整数化)
+    n_bets: int
+
+
 class SimulationWindow(BaseModel):
     start: str | None
     end: str | None
@@ -52,10 +61,13 @@ class SimulationResponse(BaseModel):
     budget: int
     n_races: int
     n_settled_races: int
+    final_bankroll: int
+    peak_bankroll: int
     summary: GroupStatsResponse
     by_bet_type: list[GroupStatsResponse]
     by_race_class: list[GroupStatsResponse]
     by_course: list[GroupStatsResponse]
+    bankroll_timeseries: list[BankrollPointResponse]
 
 
 def _result_to_response(r: SimulationResult) -> SimulationResponse:
@@ -68,10 +80,15 @@ def _result_to_response(r: SimulationResult) -> SimulationResponse:
         budget=d["budget"],
         n_races=d["n_races"],
         n_settled_races=d["n_settled_races"],
+        final_bankroll=d["final_bankroll"],
+        peak_bankroll=d["peak_bankroll"],
         summary=GroupStatsResponse(**d["summary"]),
         by_bet_type=[GroupStatsResponse(**g) for g in d["by_bet_type"]],
         by_race_class=[GroupStatsResponse(**g) for g in d["by_race_class"]],
         by_course=[GroupStatsResponse(**g) for g in d["by_course"]],
+        bankroll_timeseries=[
+            BankrollPointResponse(**p) for p in d["bankroll_timeseries"]
+        ],
     )
 
 
@@ -88,9 +105,9 @@ def run_simulation(
         Query(
             ge=1000,
             le=100_000_000,
-            description="期間全体の累計投資の上限 (円)。各 race の Kelly stake は "
-            "`budget - 累計 invested` を bankroll として計算する (depleting bankroll)。"
-            "後半 race は stake が自然に縮み、予算尽きたら以降は実質 bet しない。",
+            description="初期資産 (円)。各 race ごとに残資産 (= budget + 累計 profit) を "
+            "bankroll として Kelly stake を計算する (compounding wealth)。"
+            "payout は次 race の bet 余力に加算される。資産尽きたら以降は実質 bet しない。",
         ),
     ] = 100_000,
     strategy: Annotated[

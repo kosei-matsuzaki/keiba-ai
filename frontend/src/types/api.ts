@@ -380,19 +380,35 @@ export interface SimulationGroupStats {
   hit_rate: number;
 }
 
+/** 日次の資産推移ポイント (グラフ表示用)。 */
+export interface BankrollPoint {
+  date: string;       // YYYY-MM-DD
+  bankroll: number;   // その日の最終 race 後の残高
+  invested: number;   // その日の累計 stake
+  payout: number;     // その日の累計 payout (整数化)
+  n_bets: number;
+}
+
 export interface SimulationResponse {
   window: { start: string | null; end: string | null };
   model_path: string;
   strategy: SimulationStrategy;
+  /** 初期資産 (compounding wealth)。各 race ごとに残資産から Kelly stake を計算する。 */
   budget: number;
   /** 期間内の総 race 数 (stake=0 の race も含む) */
   n_races: number;
   /** finish_position が確定して settle できた race 数 */
   n_settled_races: number;
+  /** 期間終了時の残高 (= budget + 累計 profit、ただし途中で 0 になれば 0)。 */
+  final_bankroll: number;
+  /** 期間中の最高残高。 */
+  peak_bankroll: number;
   summary: SimulationGroupStats;
   by_bet_type: SimulationGroupStats[];
   by_race_class: SimulationGroupStats[];
   by_course: SimulationGroupStats[];
+  /** 日次の資産推移 (date 昇順)。 */
+  bankroll_timeseries: BankrollPoint[];
 }
 
 export interface SimulationRequest {

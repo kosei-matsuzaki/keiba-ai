@@ -144,112 +144,16 @@ def test_settle_handles_missing_winner():
 
 
 # ---------------------------------------------------------------------------
-# Depleting bankroll (Option D)
+# Compounding wealth (Option D-revised: payout 加算ありの 真の Kelly)
 # ---------------------------------------------------------------------------
 
 
-def test_depleting_bankroll_passes_remaining_to_recommender(monkeypatch):
-    """recommend_for_race に渡される bankroll は (budget - 累計 invested) になる。
+def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4):
+    """compounding wealth テスト用の synthetic DB + stub セット。
 
-    重い model load + predict をスキップするため、simulate_active_model 内の
-    依存関数を stub する。stake / payout は固定値を返し、bankroll の depletion
-    が次の race に伝搬することだけを確認する。
+    各 race の finish_position[i] = i (1-index)、つまり post 1 が常に 1 着。
     """
     from datetime import date, timedelta
-    from pathlib import Path
-    from types import SimpleNamespace
-    from unittest.mock import MagicMock
-
-    import pandas as pd
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-
-    import keiba_ai.ai.simulation as sim_mod
-    from keiba_ai.db.base import Base
-    from keiba_ai.db.models.entry import Entry
-    from keiba_ai.db.models.horse import Horse
-    from keiba_ai.db.models.race import Race
-
-    # ── Synthetic DB: 3 race × 4 horses ────────────────────────────────
-    engine = create_engine("sqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    base = date(2024, 6, 15)
-    with Session(engine) as session:
-        for hi in range(1, 5):
-            session.add(Horse(horse_id=f"H{hi}", name=f"H{hi}"))
-        for ri in range(1, 4):
-            session.add(Race(
-                race_id=f"R{ri}",
-                date=(base - timedelta(days=ri)).isoformat(),
-                course="東京", surface="芝", distance=1600, n_runners=4,
-            ))
-        session.flush()
-        for ri in range(1, 4):
-            for hi in range(1, 5):
-                session.add(Entry(
-                    race_id=f"R{ri}", horse_id=f"H{hi}", post_position=hi,
-                    finish_position=hi, odds_win=2.0, popularity=hi,
-                ))
-        session.commit()
-
-    # ── Stub heavy ML calls ────────────────────────────────────────────
-    fake_bundle = SimpleNamespace(lambdarank=None, binary=None, calibrator=None)
-    monkeypatch.setattr(sim_mod, "load_model_full", lambda _p: fake_bundle)
-
-    def _fake_predict_race(_m, frame, **_kw):
-        return pd.DataFrame({
-            "horse_id": frame["horse_id"].values,
-            "score": [1.0] * len(frame),
-            "win_prob": [0.25] * len(frame),
-            "place_prob": [0.5] * len(frame),
-        })
-    monkeypatch.setattr(sim_mod, "predict_race", _fake_predict_race)
-
-    monkeypatch.setattr(sim_mod, "predict_race_with_combinations", lambda *a, **kw: {})
-    monkeypatch.setattr(sim_mod, "compute_race_odds_with_sources", lambda *a, **kw: ({}, {}))
-    monkeypatch.setattr(sim_mod, "compute_past_race_odds", lambda *a, **kw: {"単勝": {"1": 4.0}})
-
-    # ── Stub recommend_for_race: 各 race で bankroll の 50% を 1 candidate に張る ──
-    bankrolls_seen: list[int] = []
-
-    def _fake_recommend(*, predictions, combinations_by_type, race_id,
-                       bankroll, kelly_fraction, **_kw):
-        bankrolls_seen.append(bankroll)
-        # 各 race で bankroll × 0.5 を 単勝 candidate として返す。0 円なら 0 stake。
-        stake = int(bankroll * 0.5) // 100 * 100  # round to 100
-        cand = SimpleNamespace(bet_type="単勝", combo="2", stake=stake)
-        return SimpleNamespace(candidates=[cand])
-    monkeypatch.setattr(sim_mod, "recommend_for_race", _fake_recommend)
-
-    # ── Run ────────────────────────────────────────────────────────────
-    with Session(engine) as session:
-        result = sim_mod.simulate_active_model(
-            session=session,
-            model_path=Path("/tmp/dummy"),
-            start=None, end=None,
-            budget=10_000,
-            strategy="balanced",
-        )
-
-    # ── Assert ─────────────────────────────────────────────────────────
-    # race 1: bankroll=10000 → stake=5000 (combo "2" miss → no payout)
-    # race 2: bankroll=10000-5000=5000 → stake=2500
-    # race 3: bankroll=5000-2500=2500 → stake=1200 (rounded)
-    # 累計 invested = 5000 + 2500 + 1200 = 8700 ≤ 10000 ✓
-    assert len(bankrolls_seen) == 3
-    assert bankrolls_seen[0] == 10_000
-    assert bankrolls_seen[1] == 10_000 - bankrolls_seen[0] // 2 // 100 * 100
-    assert result.summary.invested <= 10_000, (
-        f"累計 invested {result.summary.invested} が予算 10000 を超えた"
-    )
-    # bankroll が単調減少
-    assert bankrolls_seen[0] >= bankrolls_seen[1] >= bankrolls_seen[2]
-
-
-def test_depleting_bankroll_zero_at_exhaustion(monkeypatch):
-    """予算を使い切った後の race は bankroll=0 で呼ばれる。"""
-    from datetime import date, timedelta
-    from pathlib import Path
     from types import SimpleNamespace
 
     import pandas as pd
@@ -266,17 +170,18 @@ def test_depleting_bankroll_zero_at_exhaustion(monkeypatch):
     Base.metadata.create_all(engine)
     base = date(2024, 6, 15)
     with Session(engine) as session:
-        for hi in range(1, 4):
+        for hi in range(1, n_horses + 1):
             session.add(Horse(horse_id=f"H{hi}", name=f"H{hi}"))
-        for ri in range(1, 4):
+        for ri in range(1, n_races + 1):
+            # 後ろの race ほど新しい日付に (timedelta 逆順で OK)
             session.add(Race(
                 race_id=f"R{ri}",
-                date=(base - timedelta(days=ri)).isoformat(),
-                course="東京", surface="芝", distance=1600, n_runners=3,
+                date=(base + timedelta(days=ri)).isoformat(),
+                course="東京", surface="芝", distance=1600, n_runners=n_horses,
             ))
         session.flush()
-        for ri in range(1, 4):
-            for hi in range(1, 4):
+        for ri in range(1, n_races + 1):
+            for hi in range(1, n_horses + 1):
                 session.add(Entry(
                     race_id=f"R{ri}", horse_id=f"H{hi}", post_position=hi,
                     finish_position=hi, odds_win=2.0, popularity=hi,
@@ -287,29 +192,184 @@ def test_depleting_bankroll_zero_at_exhaustion(monkeypatch):
     monkeypatch.setattr(sim_mod, "load_model_full", lambda _p: fake_bundle)
     monkeypatch.setattr(sim_mod, "predict_race", lambda _m, f, **_kw: pd.DataFrame({
         "horse_id": f["horse_id"].values, "score": [1.0] * len(f),
-        "win_prob": [0.33] * len(f), "place_prob": [0.5] * len(f),
+        "win_prob": [1.0 / n_horses] * len(f), "place_prob": [0.5] * len(f),
     }))
     monkeypatch.setattr(sim_mod, "predict_race_with_combinations", lambda *a, **kw: {})
     monkeypatch.setattr(sim_mod, "compute_race_odds_with_sources", lambda *a, **kw: ({}, {}))
+    # combo "1" (post 1 = winner) のみ単勝 4.0 倍が確定
     monkeypatch.setattr(sim_mod, "compute_past_race_odds", lambda *a, **kw: {"単勝": {"1": 4.0}})
+
+    return engine
+
+
+def test_compounding_initial_bankroll_equals_budget(monkeypatch):
+    """1 race 目の recommend_for_race に渡される bankroll は budget と一致する。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import keiba_ai.ai.simulation as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=1)
 
     bankrolls_seen: list[int] = []
 
-    def _greedy_recommend(*, bankroll, **_kw):
+    def _fake(*, bankroll, **_kw):
         bankrolls_seen.append(bankroll)
-        # 各 race で bankroll の **全額** を一気に賭ける
-        stake = bankroll // 100 * 100
-        cand = SimpleNamespace(bet_type="単勝", combo="2", stake=stake)
-        return SimpleNamespace(candidates=[cand])
-    monkeypatch.setattr(sim_mod, "recommend_for_race", _greedy_recommend)
+        return SimpleNamespace(candidates=[])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _fake)
 
     with Session(engine) as session:
-        sim_mod.simulate_active_model(
+        result = sim_mod.simulate_active_model(
+            session=session, model_path=Path("/tmp/dummy"),
+            start=None, end=None, budget=10_000, strategy="balanced",
+        )
+
+    assert bankrolls_seen[0] == 10_000
+    assert result.final_bankroll == 10_000  # bet なしなので変動なし
+    assert result.peak_bankroll == 10_000
+
+
+def test_compounding_bankroll_grows_with_payouts(monkeypatch):
+    """winning bet の payout が次 race の bankroll に加算される (compounding)。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import keiba_ai.ai.simulation as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=3)
+
+    bankrolls_seen: list[int] = []
+
+    # 各 race で 100 円を winning combo "1" に賭ける → odds 4.0 で payout 400
+    def _winning_recommend(*, bankroll, **_kw):
+        bankrolls_seen.append(bankroll)
+        if bankroll < 100:
+            return SimpleNamespace(candidates=[])
+        cand = SimpleNamespace(bet_type="単勝", combo="1", stake=100)
+        return SimpleNamespace(candidates=[cand])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _winning_recommend)
+
+    with Session(engine) as session:
+        result = sim_mod.simulate_active_model(
+            session=session, model_path=Path("/tmp/dummy"),
+            start=None, end=None, budget=10_000, strategy="balanced",
+        )
+
+    # race 毎: stake=100, payout=400, profit=+300
+    # bankroll 推移: 10000 → 10300 → 10600 → 10900
+    assert bankrolls_seen == [10_000, 10_300, 10_600]
+    assert result.final_bankroll == 10_900
+    assert result.peak_bankroll == 10_900
+
+
+def test_compounding_bankroll_shrinks_on_loss(monkeypatch):
+    """losing bet の場合は bankroll が stake 分減る。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import keiba_ai.ai.simulation as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=3)
+
+    bankrolls_seen: list[int] = []
+
+    # 各 race で combo "2" (= 2 着、winner ではない) に 100 円賭け → payout 0
+    def _losing_recommend(*, bankroll, **_kw):
+        bankrolls_seen.append(bankroll)
+        if bankroll < 100:
+            return SimpleNamespace(candidates=[])
+        cand = SimpleNamespace(bet_type="単勝", combo="2", stake=100)
+        return SimpleNamespace(candidates=[cand])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _losing_recommend)
+
+    with Session(engine) as session:
+        result = sim_mod.simulate_active_model(
+            session=session, model_path=Path("/tmp/dummy"),
+            start=None, end=None, budget=10_000, strategy="balanced",
+        )
+
+    # bankroll 推移: 10000 → 9900 → 9800 → 9700 (3 連敗)
+    assert bankrolls_seen == [10_000, 9_900, 9_800]
+    assert result.final_bankroll == 9_700
+    assert result.peak_bankroll == 10_000  # 初期値が peak
+
+
+def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
+    """bankroll が 0 を下回ると以降は実質 bet しない (破産)。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import keiba_ai.ai.simulation as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=3)
+
+    bankrolls_seen: list[int] = []
+
+    def _greedy_losing(*, bankroll, **_kw):
+        bankrolls_seen.append(bankroll)
+        # bankroll の全額を負け combo に賭ける
+        stake = bankroll // 100 * 100
+        if stake == 0:
+            return SimpleNamespace(candidates=[])
+        cand = SimpleNamespace(bet_type="単勝", combo="2", stake=stake)
+        return SimpleNamespace(candidates=[cand])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _greedy_losing)
+
+    with Session(engine) as session:
+        result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
             start=None, end=None, budget=5_000, strategy="balanced",
         )
 
-    # 1st race で 5000 全額消化 → 2nd / 3rd は bankroll=0
+    # 1st で全額消化 → bankroll=0, 以降 bet なし
     assert bankrolls_seen[0] == 5_000
     assert bankrolls_seen[1] == 0
     assert bankrolls_seen[2] == 0
+    assert result.final_bankroll == 0
+
+
+def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
+    """bankroll_timeseries は日次集約 (同日複数 race の場合も 1 ポイント)。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import keiba_ai.ai.simulation as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=3)
+
+    def _const_winning(*, bankroll, **_kw):
+        if bankroll < 100:
+            return SimpleNamespace(candidates=[])
+        cand = SimpleNamespace(bet_type="単勝", combo="1", stake=100)
+        return SimpleNamespace(candidates=[cand])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _const_winning)
+
+    with Session(engine) as session:
+        result = sim_mod.simulate_active_model(
+            session=session, model_path=Path("/tmp/dummy"),
+            start=None, end=None, budget=10_000, strategy="balanced",
+        )
+
+    # _compounding_setup は race 毎に異なる日付を使うので 3 ポイント
+    assert len(result.bankroll_timeseries) == 3
+    # date 昇順
+    dates = [p.date for p in result.bankroll_timeseries]
+    assert dates == sorted(dates)
+    # 各日の bankroll は単調増加 (winning ばかり)
+    bankrolls = [p.bankroll for p in result.bankroll_timeseries]
+    assert bankrolls == [10_300, 10_600, 10_900]
+    # 各日 1 bet, stake=100, payout=400
+    for p in result.bankroll_timeseries:
+        assert p.n_bets == 1
+        assert p.invested == 100
+        assert p.payout == 400
