@@ -55,13 +55,17 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
+export type SettingsSection = 'scraper' | 'betting' | 'bet_types' | 'ops';
+
 interface SettingsFormProps {
   defaults: SettingsResponse;
   onSubmit: (values: SettingsUpdate) => void;
   isPending: boolean;
+  /** 表示するセクション。指定されなければ全セクションを縦並びで表示する。 */
+  activeSection?: SettingsSection;
 }
 
-export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProps) {
+export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: SettingsFormProps) {
   const {
     register,
     handleSubmit,
@@ -108,12 +112,17 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
   // dirty 件数をフッターに表示
   const dirtyCount = countDirtyFields(dirtyFields);
 
+  // activeSection 指定時はそれ以外を hidden に。指定なし (undefined) なら全表示。
+  const visible = (key: SettingsSection): boolean =>
+    activeSection === undefined || activeSection === key;
+
   return (
     <form onSubmit={handleSubmit(submit)} className="flex flex-col gap-6" noValidate>
       <div className="flex flex-col gap-6">
         <SectionCard
           title="スクレイパー"
           description="netkeiba へのアクセス頻度と User-Agent。レート制御を緩めると検出リスクが上がります。"
+          hidden={!visible('scraper')}
         >
               <FieldRow
                 label="User-Agent"
@@ -170,6 +179,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
         <SectionCard
           title="ベッティング期待値"
           description="evaluate.py で「賭ける / 賭けない」を判定する閾値と Kelly 資金配分。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。"
+          hidden={!visible('betting')}
         >
               <div className="flex flex-col gap-4">
                 <FieldRow
@@ -250,6 +260,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
         <SectionCard
           title="買い方ターゲット"
           description="推奨買目と evaluate.py の賭け判定で対象とする馬券種。チェックを外した券種は賭け対象から除外される。"
+          hidden={!visible('bet_types')}
         >
               <div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
@@ -284,6 +295,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
         <SectionCard
           title="運用"
           description="緊急停止フラグ。ON にすると進行中ジョブが ScraperStopped 例外で中断される。"
+          hidden={!visible('ops')}
         >
           <label
             htmlFor="scraper_stopped"
@@ -333,11 +345,18 @@ interface SectionCardProps {
   title: string;
   description?: string;
   children: ReactNode;
+  /** true のとき表示せず DOM には残す (form state を維持するため) */
+  hidden?: boolean;
 }
 
-function SectionCard({ title, description, children }: SectionCardProps) {
+function SectionCard({ title, description, children, hidden = false }: SectionCardProps) {
   return (
-    <div className="rounded-lg border border-border/60 bg-card p-6">
+    <div
+      className={cn(
+        'rounded-lg border border-border/60 bg-card p-6',
+        hidden && 'hidden',
+      )}
+    >
       <div className="mb-5">
         <h2 className="text-lg font-semibold">{title}</h2>
         {description && (
