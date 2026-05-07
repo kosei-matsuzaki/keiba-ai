@@ -27,6 +27,7 @@ from keiba_ai.api.routers import (
     recommendations,
     scraper,
     settings,
+    simulation,
 )
 from keiba_ai.core.paths import db_path
 from keiba_ai.core.settings_store import SettingsStore
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     application.include_router(jobs.router, prefix="/api")
     application.include_router(settings.router, prefix="/api")
     application.include_router(recommendations.router, prefix="/api")
+    application.include_router(simulation.router, prefix="/api")
     application.include_router(internal.router, prefix="/api")
 
     return application

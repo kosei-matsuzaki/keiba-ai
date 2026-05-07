@@ -362,3 +362,42 @@ export interface BetBreakdown {
   group_by: string;
   rows: BetBreakdownRow[];
 }
+
+// ── Simulation (Ledger 「シミュレーション」 タブ) ─────────────────────────────
+
+/** 戦略プリセット (= kelly_fraction + min_ev のラッパー) */
+export type SimulationStrategy = 'conservative' | 'balanced' | 'aggressive';
+
+export interface SimulationGroupStats {
+  /** 表示用ラベル: bet_type / race_class / course のいずれか */
+  label: string;
+  n_bets: number;
+  invested: number;
+  payout: number;
+  /** payout / invested。0..∞ */
+  payback_rate: number;
+  /** hits / n_bets。0..1 */
+  hit_rate: number;
+}
+
+export interface SimulationResponse {
+  window: { start: string | null; end: string | null };
+  model_path: string;
+  strategy: SimulationStrategy;
+  budget: number;
+  /** 期間内の総 race 数 (stake=0 の race も含む) */
+  n_races: number;
+  /** finish_position が確定して settle できた race 数 */
+  n_settled_races: number;
+  summary: SimulationGroupStats;
+  by_bet_type: SimulationGroupStats[];
+  by_race_class: SimulationGroupStats[];
+  by_course: SimulationGroupStats[];
+}
+
+export interface SimulationRequest {
+  start?: string;          // YYYY-MM-DD
+  end?: string;            // YYYY-MM-DD
+  budget: number;
+  strategy: SimulationStrategy;
+}
