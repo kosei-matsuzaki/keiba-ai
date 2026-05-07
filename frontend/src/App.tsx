@@ -1,11 +1,11 @@
 import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 
-import { Sidebar } from '@/components/Sidebar';
+import { Topbar } from '@/components/Topbar';
 import { fetchHealth } from '@/lib/api';
 
 /**
- * AppShell: Sidebar (left) + scrollable main area (right).
+ * AppShell: Topbar (top) + scrollable main area (below).
  * The Outlet renders the current route's component.
  */
 export function App() {
@@ -21,8 +21,8 @@ export function App() {
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar />
+    <div className="flex h-screen flex-col overflow-hidden">
+      <Topbar />
       <main aria-label="メインコンテンツ" className="flex-1 overflow-y-auto">
         <Outlet />
       </main>

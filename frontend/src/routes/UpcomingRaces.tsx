@@ -166,7 +166,12 @@ type BootstrapState =
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export function UpcomingRaces() {
+interface UpcomingRacesProps {
+  /** Race route のタブ内に埋め込まれる場合 true。自前の PageHeader と外周 padding を抑制する。 */
+  embedded?: boolean;
+}
+
+export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
   const navigate = useNavigate();
   const { data, isPending, isError, refetch } = useThisWeekendRaces();
 
@@ -271,24 +276,38 @@ export function UpcomingRaces() {
 
   const sections = data ? groupByCourse(data.races) : [];
 
+  const refetchButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={isBootstrapping}
+      onClick={handleManualRefetch}
+      aria-label="再取込"
+    >
+      <RefreshCw className="mr-1.5 h-4 w-4" />
+      再取込
+    </Button>
+  );
+
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <PageHeader
-        icon={CalendarClock}
-        title="今週末のレース（JRA）"
-        description="今週土・日に予定されている JRA レース一覧"
-      >
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isBootstrapping}
-          onClick={handleManualRefetch}
-          aria-label="再取込"
+    <div className={embedded ? 'flex flex-col gap-6' : 'flex flex-col gap-6 p-6'}>
+      {!embedded && (
+        <PageHeader
+          icon={CalendarClock}
+          title="今週末のレース（JRA）"
+          description="今週土・日に予定されている JRA レース一覧"
         >
-          <RefreshCw className="mr-1.5 h-4 w-4" />
-          再取込
-        </Button>
-      </PageHeader>
+          {refetchButton}
+        </PageHeader>
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            今週土・日に予定されている JRA レース一覧
+          </p>
+          {refetchButton}
+        </div>
+      )}
 
       {/* Bootstrap progress banner */}
       {isBootstrapping && (

@@ -2,70 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Design tokens — dark-first dashboard palette inspired by CamuQuotes.
+   配色: deep navy backdrop + indigo accent + saturated status pills.
+   single source of truth = ここの :root。.dark は html に常時付く前提。
+   ───────────────────────────────────────────────────────────────────────────── */
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    /* Semantic status tokens — emerald / amber / sky aligned with shadcn slate base */
-    --success: 142.1 76.2% 36.3%;
-    --success-foreground: 138 76% 97%;
-    --warning: 32.1 94.6% 43.7%;
-    --warning-foreground: 48 96% 89%;
-    --info: 198.6 88.7% 48.4%;
-    --info-foreground: 204 100% 97.1%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
-    /* Typography stack — Inter / JetBrains Mono via Google Fonts (index.html),
-       fallback to system fonts when offline or before web font loads. */
+    /* Surfaces (deepest → brightest) */
+    --background:   230 51% 8%;    /* #0A0D1E  page backdrop */
+    --card:         232 36% 13%;   /* #15182C  panel surface */
+    --card-elevated: 232 38% 19%;  /* #1C2040  hover / overlay */
+    --popover:      232 36% 13%;
+    --popover-foreground: 229 39% 94%;
+
+    /* Foreground / text */
+    --foreground:        229 39% 94%; /* #E8EAF5 主テキスト */
+    --card-foreground:   229 39% 94%;
+    --muted-foreground:  228 14% 61%; /* #8A8FAB 補助テキスト */
+    --subtle-foreground: 228 12% 45%; /* helper / placeholder */
+
+    /* Borders / inputs */
+    --border:         233 31% 22%;   /* #252947 微妙な区切り */
+    --border-strong:  233 24% 32%;   /* #3B4063 強調 border */
+    --input:          233 31% 22%;
+    --ring:           239 84% 67%;
+
+    /* Primary accent (indigo) */
+    --primary:           239 84% 67%; /* #6366F1 */
+    --primary-foreground: 0 0% 100%;
+    --primary-soft:      239 84% 67% / 0.15;
+
+    /* Secondary (= card-elevated) */
+    --secondary:           232 38% 19%;
+    --secondary-foreground: 229 39% 94%;
+
+    /* Muted (= card-elevated, わずかに暗め) */
+    --muted:           232 30% 16%;
+    /* muted-foreground は上で定義済み */
+
+    /* Accent (hover state) */
+    --accent:           232 38% 19%;
+    --accent-foreground: 229 39% 94%;
+
+    /* Status semantic colors (saturated, dark-suitable) */
+    --destructive:           0 91% 71%;   /* #F87171 rose */
+    --destructive-foreground: 0 0% 100%;
+    --success:               158 64% 52%; /* #34D399 emerald */
+    --success-foreground:    158 70% 8%;
+    --warning:               43 96% 56%;  /* #FBBF24 amber */
+    --warning-foreground:    43 96% 8%;
+    --info:                  213 94% 68%; /* #60A5FA sky */
+    --info-foreground:       213 80% 8%;
+
+    /* Chart series (multi-series friendly on dark) */
+    --chart-1: 234 89% 74%; /* indigo light  #818CF8 */
+    --chart-2: 158 64% 52%; /* emerald       #34D399 */
+    --chart-3: 43 96% 56%;  /* amber         #FBBF24 */
+    --chart-4: 0 91% 71%;   /* rose          #F87171 */
+    --chart-5: 187 71% 55%; /* cyan          #4DD0E1 */
+
+    --radius: 0.75rem;
+
+    /* Typography */
     --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
       "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
       Consolas, "Liberation Mono", "Courier New", monospace;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    /* Semantic tokens (dark) — saturation slightly reduced for dark surfaces */
-    --success: 142.1 70.6% 45.3%;
-    --success-foreground: 138 76% 97%;
-    --warning: 32.1 94.6% 53.7%;
-    --warning-foreground: 20.5 90.2% 12%;
-    --info: 198.6 88.7% 58.4%;
-    --info-foreground: 204 80% 16%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
   }
 }
 
@@ -73,11 +77,17 @@
   * {
     @apply border-border;
   }
+  html {
+    color-scheme: dark;
+  }
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
     /* Inter で 'cv11' (open 4/9) と 'ss01' を有効化、数値は tnum で揃え列幅を固定 */
     font-feature-settings: 'cv11', 'ss01', 'tnum' 1;
+    /* dashboard ぽく若干 dense */
+    font-size: 14px;
+    line-height: 1.5;
   }
   code,
   kbd,
@@ -85,5 +95,22 @@
   samp,
   .font-mono {
     font-family: var(--font-mono);
+  }
+
+  /* KPI 大数字用 utility (Tailwind の theme で参照しなくて済むよう class でも提供) */
+  .text-kpi {
+    font-size: 2rem;     /* 32px */
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
+  }
+
+  .text-label {
+    font-size: 0.6875rem; /* 11px */
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: hsl(var(--muted-foreground));
+    font-weight: 500;
   }
 }
