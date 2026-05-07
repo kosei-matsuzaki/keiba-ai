@@ -107,6 +107,10 @@ FEATURE_COLUMNS: list[str] = [
     "recent_finish_1",
     "recent_finish_2",
     "recent_finish_3",
+    # Race-level (Q4): クラス重み付きの履歴指標
+    "recent_avg_class_weight",
+    "high_class_starts",
+    "high_class_places",
     # Within-race relative features (PR-C)
     "horse_weight_pct",
     "odds_win_rank",

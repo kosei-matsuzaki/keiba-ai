@@ -381,3 +381,125 @@ def test_cache_single_sql_query(rich_engine):
         )
     finally:
         event.remove(rich_engine, "before_cursor_execute", _capture)
+
+
+# ---------------------------------------------------------------------------
+# Q4: race-level features
+# ---------------------------------------------------------------------------
+
+
+from keiba_ai.features.horse_history import (
+    is_high_class,
+    race_class_weight,
+)
+
+
+@pytest.fixture()
+def class_engine():
+    """Horse with mixed-class history: G1 win, G3 place, OP runs, 1勝 race."""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+
+    base = date(2024, 6, 15)
+    races = [
+        # (race_id, days_ago, race_class, finish_position)
+        ("RC1", 30, "1勝クラス", 5),
+        ("RC2", 20, "OP", 3),
+        ("RC3", 15, "G1", 1),
+        ("RC4", 10, "G3", 2),
+        ("RC5", 5,  "OP", 8),
+    ]
+    with Session(engine) as session:
+        session.add(Horse(horse_id="H1", name=None))
+        for rid, days, rc, _pos in races:
+            session.add(Race(
+                race_id=rid,
+                date=(base - timedelta(days=days)).isoformat(),
+                course="東京",
+                surface="芝",
+                distance=1600,
+                n_runners=10,
+                race_class=rc,
+            ))
+        session.flush()
+        for rid, _days, _rc, pos in races:
+            session.add(Entry(
+                race_id=rid,
+                horse_id="H1",
+                post_position=1,
+                finish_position=pos,
+            ))
+        session.commit()
+    yield engine
+    engine.dispose()
+
+
+def test_race_class_weight_lookup():
+    assert race_class_weight("G1") == 8
+    assert race_class_weight("GI") == 8
+    assert race_class_weight("G3") == 6
+    assert race_class_weight("Listed") == 5
+    assert race_class_weight("OP") == 5
+    assert race_class_weight("3勝クラス") == 4
+    assert race_class_weight("未勝利") == 1
+    assert race_class_weight("新馬") == 1
+    assert race_class_weight(None) == 1
+    assert race_class_weight("謎クラス") == 1
+
+
+def test_is_high_class():
+    assert is_high_class("G1") is True
+    assert is_high_class("GIII") is True
+    assert is_high_class("Listed") is False
+    assert is_high_class("OP") is False
+    assert is_high_class("1勝クラス") is False
+    assert is_high_class(None) is False
+
+
+def test_horse_history_includes_class_features_sql(class_engine):
+    """SQL 版で recent_avg_class_weight / high_class_* が正しい。"""
+    with Session(class_engine) as session:
+        result = compute_horse_history(
+            session, horse_id="H1", before_date=date(2024, 6, 15)
+        )
+    # last 5: RC5(OP=5), RC4(G3=6), RC3(G1=8), RC2(OP=5), RC1(1勝=2) → mean=5.2
+    assert result["recent_avg_class_weight"] == pytest.approx(5.2)
+    assert result["high_class_starts"] == 2  # G1 + G3
+    assert result["high_class_places"] == 2  # G1 1着 + G3 2着
+
+
+def test_horse_history_class_features_cache_parity(class_engine):
+    """SQL 版と cache 版の出力が完全一致 (Q4 fields 含む)。"""
+    base = date(2024, 6, 15)
+    with Session(class_engine) as session:
+        cache = build_horse_history_cache(session)
+        sql_r = compute_horse_history(session, "H1", before_date=base)
+        cache_r = compute_horse_history_from_cache(cache, "H1", before_date=base)
+    for k in sql_r:
+        sv, cv = sql_r[k], cache_r[k]
+        if isinstance(sv, float) and math.isnan(sv):
+            assert isinstance(cv, float) and math.isnan(cv), f"{k}: {sv} vs {cv}"
+        else:
+            assert sv == cv, f"{k}: {sv} vs {cv}"
+
+
+def test_class_features_zero_for_unknown_horse(class_engine):
+    with Session(class_engine) as session:
+        result = compute_horse_history(
+            session, horse_id="UNKNOWN", before_date=date(2024, 6, 15)
+        )
+    assert math.isnan(result["recent_avg_class_weight"])
+    assert result["high_class_starts"] == 0
+    assert result["high_class_places"] == 0
+
+
+def test_class_features_cutoff_excludes_future(class_engine):
+    """before_date で過去だけに絞る → G1/G3 は除外される。"""
+    with Session(class_engine) as session:
+        cache = build_horse_history_cache(session)
+        cutoff = date(2024, 5, 28)  # RC1, RC2 のみ該当
+        cr = compute_horse_history_from_cache(cache, "H1", before_date=cutoff)
+    assert cr["recent_n_starts"] == 2
+    assert cr["recent_avg_class_weight"] == pytest.approx(3.5)  # (5+2)/2
+    assert cr["high_class_starts"] == 0
+    assert cr["high_class_places"] == 0

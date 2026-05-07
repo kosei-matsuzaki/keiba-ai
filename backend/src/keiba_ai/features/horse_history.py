@@ -28,6 +28,48 @@ from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.race import Race
 
 
+# ---------------------------------------------------------------------------
+# Race class weight — レース格を 1-8 の整数 weight にマップする
+# ---------------------------------------------------------------------------
+# 強いレースほど重い weight。重み付き average に使う。
+# G1 が最も重く、新馬 / 未勝利が最も軽い。
+
+_RACE_CLASS_WEIGHTS: dict[str, int] = {
+    "G1": 8,
+    "GI": 8,
+    "G2": 7,
+    "GII": 7,
+    "G3": 6,
+    "GIII": 6,
+    "Listed": 5,
+    "L": 5,
+    "OP": 5,
+    "オープン": 5,
+    "3勝クラス": 4,
+    "2勝クラス": 3,
+    "1勝クラス": 2,
+    "未勝利": 1,
+    "新馬": 1,
+}
+
+# G1 / G2 / G3 (グレード戦) を判定する set。high_class_* 特徴量で使う。
+_HIGH_CLASS_SET: frozenset[str] = frozenset(
+    ["G1", "GI", "G2", "GII", "G3", "GIII"]
+)
+
+
+def race_class_weight(race_class: str | None) -> int:
+    """race_class 文字列 → 1-8 の整数 weight。Unknown は 1 に丸める。"""
+    if race_class is None:
+        return 1
+    return _RACE_CLASS_WEIGHTS.get(race_class, 1)
+
+
+def is_high_class(race_class: str | None) -> bool:
+    """G1 / G2 / G3 のいずれかなら True。Listed や OP は False。"""
+    return race_class in _HIGH_CLASS_SET if race_class is not None else False
+
+
 def compute_horse_history(
     session: Session,
     horse_id: str,
@@ -45,12 +87,20 @@ def compute_horse_history(
         recent_avg_finish, recent_n_starts, starts_same_distance,
         starts_same_course, wins_same_course, horse_course_place_rate,
         recent_avg_agari_3f, days_since_last_race,
-        recent_finish_1, recent_finish_2, recent_finish_3.
+        recent_finish_1, recent_finish_2, recent_finish_3,
+        recent_avg_class_weight, high_class_starts, high_class_places.
 
     horse_course_place_rate is the share of finishes <= 3 at the given course
     (NaN when course is None or starts_same_course == 0). It is consumed by
     builder.py to compute `course_place_rate_vs_field` and is not itself part
     of FEATURE_COLUMNS.
+
+    Race-level (Q4) keys:
+      recent_avg_class_weight  — 直近 n_recent 戦の race_class を 1-8 weight
+                                 に変換した平均値。出走経験のレベル指標。
+                                 履歴 0 件のとき NaN。
+      high_class_starts        — G1/G2/G3 のいずれかへの出走回数 (生涯, 過去 only)。
+      high_class_places        — G1/G2/G3 で finish_position ≤ 3 だった回数。
     """
     before_str = before_date.isoformat()
 
@@ -78,6 +128,9 @@ def compute_horse_history(
             "recent_finish_1": nan,
             "recent_finish_2": nan,
             "recent_finish_3": nan,
+            "recent_avg_class_weight": nan,
+            "high_class_starts": 0,
+            "high_class_places": 0,
         }
 
     recent_rows = rows[:n_recent]
@@ -145,6 +198,24 @@ def compute_horse_history(
             return float(pos) if pos is not None else nan
         return nan
 
+    # Q4: race-level features
+    # recent_avg_class_weight = mean over last n_recent of class weight (1-8)
+    recent_class_weights = [race_class_weight(r.Race.race_class) for r in recent_rows]
+    recent_avg_class_weight = (
+        sum(recent_class_weights) / len(recent_class_weights)
+        if recent_class_weights
+        else nan
+    )
+
+    high_class_starts = sum(1 for r in rows if is_high_class(r.Race.race_class))
+    high_class_places = sum(
+        1
+        for r in rows
+        if is_high_class(r.Race.race_class)
+        and r.Entry.finish_position is not None
+        and r.Entry.finish_position <= 3
+    )
+
     return {
         "recent_avg_finish": recent_avg_finish,
         "recent_n_starts": len(rows),
@@ -157,6 +228,9 @@ def compute_horse_history(
         "recent_finish_1": _nth_finish(1),
         "recent_finish_2": _nth_finish(2),
         "recent_finish_3": _nth_finish(3),
+        "recent_avg_class_weight": recent_avg_class_weight,
+        "high_class_starts": high_class_starts,
+        "high_class_places": high_class_places,
     }
 
 
@@ -189,6 +263,8 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
 
     Returns a HorseHistoryCache pre-grouped by horse_id with each group
     sorted descending by date (for fast recent-N head() calls).
+
+    Q4: race_class も同時取得し、recent_avg_class_weight などの計算で使う。
     """
     query = (
         select(
@@ -196,6 +272,7 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
             Race.date,
             Race.distance,
             Race.course,
+            Race.race_class,
             Entry.finish_position,
             Entry.agari_3f,
         )
@@ -204,8 +281,14 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
     rows = session.execute(query).all()
     df = pd.DataFrame(
         rows,
-        columns=["horse_id", "date", "distance", "course", "finish_position", "agari_3f"],
+        columns=[
+            "horse_id", "date", "distance", "course", "race_class",
+            "finish_position", "agari_3f",
+        ],
     )
+    # Pre-compute class_weight column once (vectorised) so per-pair lookup
+    # is just a column read.
+    df["class_weight"] = df["race_class"].map(_RACE_CLASS_WEIGHTS).fillna(1).astype(int)
 
     # Sort by date desc so head(n_recent) gives the n most recent races.
     # Stable sort keeps insertion order across ties (rare but harmless).
@@ -244,6 +327,9 @@ def compute_horse_history_from_cache(
             "recent_finish_1": nan,
             "recent_finish_2": nan,
             "recent_finish_3": nan,
+            "recent_avg_class_weight": nan,
+            "high_class_starts": 0,
+            "high_class_places": 0,
         }
 
     before_str = before_date.isoformat()
@@ -262,6 +348,9 @@ def compute_horse_history_from_cache(
             "recent_finish_1": nan,
             "recent_finish_2": nan,
             "recent_finish_3": nan,
+            "recent_avg_class_weight": nan,
+            "high_class_starts": 0,
+            "high_class_places": 0,
         }
 
     # h is already sorted by date desc within the group — head(n_recent) gives
@@ -318,6 +407,26 @@ def compute_horse_history_from_cache(
             return float(pos) if pd.notna(pos) else nan
         return nan
 
+    # Q4: race-level features
+    if "class_weight" in recent.columns and not recent.empty:
+        recent_avg_class_weight = float(recent["class_weight"].mean())
+    else:
+        recent_avg_class_weight = nan
+
+    if "race_class" in h.columns:
+        high_class_mask = h["race_class"].isin(_HIGH_CLASS_SET)
+        high_class_starts = int(high_class_mask.sum())
+        high_class_places = int(
+            (
+                high_class_mask
+                & (h["finish_position"] >= 1)
+                & (h["finish_position"] <= 3)
+            ).sum()
+        )
+    else:
+        high_class_starts = 0
+        high_class_places = 0
+
     return {
         "recent_avg_finish": recent_avg_finish,
         "recent_n_starts": int(len(h)),
@@ -330,4 +439,7 @@ def compute_horse_history_from_cache(
         "recent_finish_1": _nth_finish(1),
         "recent_finish_2": _nth_finish(2),
         "recent_finish_3": _nth_finish(3),
+        "recent_avg_class_weight": recent_avg_class_weight,
+        "high_class_starts": high_class_starts,
+        "high_class_places": high_class_places,
     }
