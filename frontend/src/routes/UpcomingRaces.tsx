@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { discoverThisWeekendRaceIds, formatErrorMessage } from '@/lib/api';
+import { PastRaces } from '@/routes/PastRaces';
 import { toast } from '@/components/ui/toast';
 import type { RaceSummary, RacePredictionSummary } from '@/types/api';
 
@@ -386,6 +387,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
                 </TabsTrigger>
               );
             })}
+            <TabsTrigger value="past">Past</TabsTrigger>
           </TabsList>
           {daySections.map((day) => (
             <TabsContent
@@ -403,6 +405,9 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
               ))}
             </TabsContent>
           ))}
+          <TabsContent value="past" className="mt-0">
+            <PastRaces embedded />
+          </TabsContent>
         </Tabs>
       )}
     </div>
