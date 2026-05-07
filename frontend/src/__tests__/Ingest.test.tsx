@@ -125,89 +125,21 @@ describe('Ingest', () => {
     });
   });
 
-  // ── 出馬表取込カード ────────────────────────────────────────────────────────
+  // ── 出馬表取込 / 当日連系オッズ カードは撤去済 ────────────────────────────
+  // 出馬表取込は Upcoming Races の auto-bootstrap + 再取込ボタン (PR #182) に、
+  // 当日連系オッズは Race Detail の「オッズ取得」ボタンに役割が移管された。
 
-  it('renders 出馬表取込 card', async () => {
+  it('does not render 出馬表取込 card (removed)', async () => {
     renderIngest();
-    expect(await screen.findByText('出馬表取込（race_id 指定）')).toBeInTheDocument();
+    await screen.findByText('Ingest');
+    expect(screen.queryByText('出馬表取込（race_id 指定）')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '取込開始' })).not.toBeInTheDocument();
   });
 
-  it('shows validation error when race_ids input is empty on submit', async () => {
-    const user = userEvent.setup();
+  it('does not render 当日連系オッズ取得 card (removed)', async () => {
     renderIngest();
-    await screen.findByText('出馬表取込（race_id 指定）');
-    const btn = screen.getByRole('button', { name: '取込開始' });
-    await user.click(btn);
-    expect(await screen.findByText('race_id を 1 件以上入力してください')).toBeInTheDocument();
-    expect(vi.mocked(runShutubaScraper)).not.toHaveBeenCalled();
-  });
-
-  it('shows validation error when race_id is not 12 digits', async () => {
-    const user = userEvent.setup();
-    renderIngest();
-    await screen.findByText('出馬表取込（race_id 指定）');
-    await user.type(screen.getByLabelText('race_ids（カンマ区切り）'), 'short');
-    await user.click(screen.getByRole('button', { name: '取込開始' }));
-    expect(await screen.findByText(/12 桁の数字でない ID があります/)).toBeInTheDocument();
-    expect(vi.mocked(runShutubaScraper)).not.toHaveBeenCalled();
-  });
-
-  it('calls runShutubaScraper with valid race_ids', async () => {
-    const user = userEvent.setup();
-    renderIngest();
-    await screen.findByText('出馬表取込（race_id 指定）');
-    await user.type(screen.getByLabelText('race_ids（カンマ区切り）'), '202506050911,202506050912');
-    await user.click(screen.getByRole('button', { name: '取込開始' }));
-    await waitFor(() => {
-      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_ids: ['202506050911', '202506050912'] })
-      );
-    });
-  });
-
-  // ── 当日連系オッズ取得カード ─────────────────────────────────────────────────
-
-  it('renders 当日連系オッズ取得 card', async () => {
-    renderIngest();
-    expect(await screen.findByText('当日連系オッズ取得')).toBeInTheDocument();
-  });
-
-  it('shows validation error when race_id is empty on odds submit', async () => {
-    const user = userEvent.setup();
-    renderIngest();
-    await screen.findByText('当日連系オッズ取得');
-    await user.click(screen.getByRole('button', { name: 'オッズ取得' }));
-    expect(await screen.findByText('12 桁の数字を入力してください')).toBeInTheDocument();
-    expect(vi.mocked(fetchLiveOdds)).not.toHaveBeenCalled();
-  });
-
-  it('calls fetchLiveOdds with valid race_id', async () => {
-    const user = userEvent.setup();
-    renderIngest();
-    await screen.findByText('当日連系オッズ取得');
-    await user.type(screen.getByLabelText('race_id（12 桁）'), '202506050911');
-    await user.click(screen.getByRole('button', { name: 'オッズ取得' }));
-    await waitFor(() => {
-      expect(vi.mocked(fetchLiveOdds)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_id: '202506050911' })
-      );
-    });
-  });
-
-  it('shows validation error when no odds types selected', async () => {
-    const user = userEvent.setup();
-    renderIngest();
-    await screen.findByText('当日連系オッズ取得');
-    // Uncheck all types
-    const checkboxes = screen.getAllByRole('checkbox');
-    for (const cb of checkboxes) {
-      if ((cb as HTMLInputElement).checked) {
-        await user.click(cb);
-      }
-    }
-    await user.type(screen.getByLabelText('race_id（12 桁）'), '202506050911');
-    await user.click(screen.getByRole('button', { name: 'オッズ取得' }));
-    expect(await screen.findByText('少なくとも 1 つの券種を選択してください')).toBeInTheDocument();
-    expect(vi.mocked(fetchLiveOdds)).not.toHaveBeenCalled();
+    await screen.findByText('Ingest');
+    expect(screen.queryByText('当日連系オッズ取得')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'オッズ取得' })).not.toBeInTheDocument();
   });
 });
