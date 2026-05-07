@@ -87,11 +87,28 @@ class GroupStats:
 
 
 @dataclass
+class BankrollPoint:
+    """資産推移グラフ用の 1 日分のスナップショット。
+
+    日跨ぎで複数 race ある場合、最後の race 終了時点の bankroll を採用する。
+    """
+
+    date: str           # YYYY-MM-DD
+    bankroll: int       # その日の最終 race 後の残高
+    invested: int       # その日の累計 stake
+    payout: float       # その日の累計 payout
+    n_bets: int         # その日の bet 件数
+
+
+@dataclass
 class SimulationResult:
     """Top-level simulation result.
 
     n_races: total races within window (including ones where no bets fired)
     n_settled_races: subset where finish_position was available (i.e. past)
+    final_bankroll: 期間終了時の残高 (= budget + 累計 profit、ただし途中で 0 になれば 0)
+    peak_bankroll: 期間中の最高残高
+    bankroll_timeseries: 日次の資産推移 (グラフ用)
     """
 
     window_start: str | None
@@ -101,10 +118,13 @@ class SimulationResult:
     budget: int
     n_races: int = 0
     n_settled_races: int = 0
+    final_bankroll: int = 0
+    peak_bankroll: int = 0
     summary: GroupStats = field(default_factory=lambda: GroupStats(label="all"))
     by_bet_type: list[GroupStats] = field(default_factory=list)
     by_race_class: list[GroupStats] = field(default_factory=list)
     by_course: list[GroupStats] = field(default_factory=list)
+    bankroll_timeseries: list[BankrollPoint] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -114,10 +134,22 @@ class SimulationResult:
             "budget": self.budget,
             "n_races": self.n_races,
             "n_settled_races": self.n_settled_races,
+            "final_bankroll": self.final_bankroll,
+            "peak_bankroll": self.peak_bankroll,
             "summary": self.summary.as_dict(),
             "by_bet_type": [g.as_dict() for g in self.by_bet_type],
             "by_race_class": [g.as_dict() for g in self.by_race_class],
             "by_course": [g.as_dict() for g in self.by_course],
+            "bankroll_timeseries": [
+                {
+                    "date": p.date,
+                    "bankroll": p.bankroll,
+                    "invested": p.invested,
+                    "payout": round(p.payout),
+                    "n_bets": p.n_bets,
+                }
+                for p in self.bankroll_timeseries
+            ],
         }
 
 
@@ -213,18 +245,19 @@ def simulate_active_model(
         session: SQLAlchemy session bound to the keiba DB.
         model_path: Path to a model directory (model.txt + binary.txt + calibrator.pkl).
         start / end: window date range (YYYY-MM-DD), inclusive. Both optional.
-        budget: 期間全体の累計投資の上限 (円)。各 race の Kelly stake は
-            `budget - 累計 invested` を bankroll として計算するため、後半 race は
-            stake が自然に縮み、予算尽きたら以降は実質 bet しない。
+        budget: 初期資産 (円)。各 race ごとに残資産 (= budget + 累計 profit) を
+            bankroll として Kelly stake を計算する (compounding wealth)。
+            payout は次 race の bet 余力に加算される。資産が最小単位 (100 円) を
+            下回れば以降の race は実質 bet しない (破産)。
         strategy: preset key from STRATEGY_PRESETS.
-        max_stake_per_race_pct: per-race stake cap (default 5% of 残予算).
+        max_stake_per_race_pct: per-race stake cap (default 5% of 残資産).
         enabled_bet_types: subset of DEFAULT_BET_TYPES to consider.
             None = all types.
         top_n_horses: top-N horses for box / formation candidates.
 
     Returns:
-        SimulationResult with summary, by_bet_type, by_race_class, by_course.
-        result.summary.invested は budget を **超えない** (depleting bankroll).
+        SimulationResult with summary, by_bet_type, by_race_class, by_course,
+        final_bankroll, peak_bankroll, and bankroll_timeseries (日次推移).
     """
     preset = STRATEGY_PRESETS[strategy]
     types = enabled_bet_types or DEFAULT_BET_TYPES
@@ -259,11 +292,16 @@ def simulate_active_model(
     result.n_races = len(race_ids)
     log.info("Simulating %d races...", result.n_races)
 
-    # Depleting bankroll: 予算 budget を「累計投資の上限」として扱う。
-    # 各 race の Kelly 計算には budget - cumulative_invested を渡し、
-    # 残予算に応じて自然に stake が縮む。0 円になればそれ以降の race は
-    # cap が 0 → stake も 0 に丸まり実質賭けない。
-    cumulative_invested = 0
+    # Compounding wealth: budget を初期資産として、各 race ごとに
+    #   bankroll <- bankroll - sum(stake) + sum(payout)
+    # で更新する。payout は次の race の bet 余力に加算され、
+    # 自信のあるレース (高 EV) ほど Kelly が多めに賭ける挙動になる。
+    # bankroll が最小 stake (100 円) を下回ると recommend_for_race 内の
+    # cap × 5% も 100 円未満となり実質賭け不可 (= 破産)。
+    current_bankroll = budget
+    peak_bankroll = budget
+    # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
+    daily_buckets: dict[str, dict[str, float | int]] = {}
 
     n_settled = 0
     for race_id in race_ids:
@@ -308,10 +346,8 @@ def simulate_active_model(
                 if c.ev is not None and c.ev >= min_ev
             ]
 
-        # Depleting bankroll: 残予算ベースで Kelly stake を計算する。
+        # Compounding wealth: 残資産 current_bankroll を Kelly base として渡す。
         # 0 円のときは recommend_for_race 内で cap=0 → 全 stake が 0 に丸まる。
-        current_bankroll = max(0, budget - cumulative_invested)
-
         # Recommend
         rec = recommend_for_race(
             predictions=preds,
@@ -361,11 +397,31 @@ def simulate_active_model(
             rec.candidates, race_id, finish_to_pp, past_odds
         )
 
-        for s in settlements:
-            # 残予算 tracking (depleting bankroll). 0 円を超えて bet することは
-            # recommend_for_race 内の cap で防いでいるが、念のためここでも累計を更新する。
-            cumulative_invested += s["stake"]
+        # Compounding wealth: race ごとに資産更新
+        race_invested = sum(int(s["stake"]) for s in settlements)
+        race_payout = sum(float(s["payout"]) for s in settlements)
+        current_bankroll = max(0, current_bankroll - race_invested + int(round(race_payout)))
+        if current_bankroll > peak_bankroll:
+            peak_bankroll = current_bankroll
 
+        # 日次バケット update (race の date 単位で集約)
+        race_date_str = (
+            str(race_frame["date"].iloc[0])
+            if "date" in race_frame.columns and not race_frame.empty
+            else ""
+        )
+        if race_date_str:
+            bucket = daily_buckets.setdefault(
+                race_date_str,
+                {"invested": 0, "payout": 0.0, "n_bets": 0, "bankroll_at_end": current_bankroll},
+            )
+            bucket["invested"] = int(bucket["invested"]) + race_invested
+            bucket["payout"] = float(bucket["payout"]) + race_payout
+            bucket["n_bets"] = int(bucket["n_bets"]) + len(settlements)
+            # 同一日内の race は順次処理されるので、最後の race 後の bankroll が残る
+            bucket["bankroll_at_end"] = current_bankroll
+
+        for s in settlements:
             # global summary
             result.summary.n_bets += 1
             result.summary.invested += s["stake"]
@@ -397,6 +453,8 @@ def simulate_active_model(
             crs_grp.hits += s["hit"]
 
     result.n_settled_races = n_settled
+    result.final_bankroll = current_bankroll
+    result.peak_bankroll = peak_bankroll
     # Sort groups by invested desc for predictable display order
     result.by_bet_type = sorted(
         bet_type_groups.values(), key=lambda g: g.invested, reverse=True
@@ -407,10 +465,23 @@ def simulate_active_model(
     result.by_course = sorted(
         course_groups.values(), key=lambda g: g.invested, reverse=True
     )
+    # 日次 bankroll 推移を date 昇順で list 化 (グラフ用)
+    result.bankroll_timeseries = [
+        BankrollPoint(
+            date=d,
+            bankroll=int(v["bankroll_at_end"]),
+            invested=int(v["invested"]),
+            payout=float(v["payout"]),
+            n_bets=int(v["n_bets"]),
+        )
+        for d, v in sorted(daily_buckets.items())
+    ]
 
     log.info(
-        "Done. %d settled races, %d bets, payback=%.3f, hit_rate=%.3f",
+        "Done. %d settled races, %d bets, payback=%.3f, hit_rate=%.3f, "
+        "final_bankroll=%d (peak=%d, initial=%d)",
         n_settled, result.summary.n_bets,
         result.summary.payback_rate, result.summary.hit_rate,
+        result.final_bankroll, result.peak_bankroll, budget,
     )
     return result

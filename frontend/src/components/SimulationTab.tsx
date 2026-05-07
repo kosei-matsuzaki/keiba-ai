@@ -214,9 +214,9 @@ export function SimulationTab() {
                 onChange={(e) => setBudget(Math.max(1000, Number(e.target.value) || 0))}
               />
               <p className="text-xs text-muted-foreground">
-                期間全体の累計投資の上限。各 race の Kelly stake は残予算ベース
-                (depleting bankroll) で計算するため、後半は自然に stake が縮み、
-                予算尽きたら以降は bet しません。
+                初期資産 (Kelly 戦略の元手)。回収分は次レースの bet 余力に加算され、
+                自信のあるレース (高 EV) ほど Kelly が大きく賭けます。
+                資産が尽きたら以降は実質 bet しません (破産)。
               </p>
             </div>
           </div>
@@ -287,7 +287,43 @@ export function SimulationTab() {
         />
       ) : (
         <>
-          {/* Summary KPI cards */}
+          {/* Bankroll KPI cards: 資産の絶対値 */}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <MetricCard
+              title="初期資産"
+              value={result.budget}
+              format="yen"
+              description="シミュレーション開始時"
+            />
+            <MetricCard
+              title="最終資産"
+              value={result.final_bankroll}
+              format="yen"
+              description={
+                result.final_bankroll === 0
+                  ? '破産'
+                  : result.final_bankroll >= result.budget
+                  ? `+${formatYen(result.final_bankroll - result.budget)}`
+                  : `−${formatYen(result.budget - result.final_bankroll)}`
+              }
+            />
+            <MetricCard
+              title="ピーク資産"
+              value={result.peak_bankroll}
+              format="yen"
+              description="期間中の最高値"
+            />
+            <MetricCard
+              title="資産変化率"
+              value={
+                result.budget > 0 ? result.final_bankroll / result.budget : 0
+              }
+              format="ratio"
+              description="1.00 = 損益なし"
+            />
+          </div>
+
+          {/* Bet stats KPI cards: bet 単位の統計 */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <MetricCard
               title="累計投資"
