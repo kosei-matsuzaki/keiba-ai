@@ -173,6 +173,9 @@ export function UpcomingRaces() {
   const [bootstrap, setBootstrap] = useState<BootstrapState>({ phase: 'idle' });
   // Tracks whether auto-bootstrap has already been attempted this mount.
   const autoFiredRef = useRef(false);
+  // 再取込ボタンが押された直後だけ「races>0 でも shutuba ingest を強制再実行」
+  // するためのフラグ。auto-bootstrap effect 内で使い終わったら自動で false に戻す。
+  const [forceReingest, setForceReingest] = useState(false);
 
   const runShutuba = useRunShutuba();
 
@@ -200,24 +203,28 @@ export function UpcomingRaces() {
     }
   }, [jobStatus.data, bootstrap.phase, refetch]);
 
-  // Auto-bootstrap: fire once when races are empty
+  // Auto-bootstrap: fire when races are empty OR forceReingest is set
   useEffect(() => {
     if (isPending || isError) return;
-    if (data && data.races.length > 0) return;
     if (autoFiredRef.current) return;
     if (bootstrap.phase !== 'idle') return;
+    // races が既にあって、かつ強制再取込フラグが立っていなければ skip
+    if (data && data.races.length > 0 && !forceReingest) return;
 
+    const wasForced = forceReingest;
     autoFiredRef.current = true;
-    runBootstrap();
+    setForceReingest(false);  // consume the flag
+    runBootstrap(wasForced);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPending, isError, data, bootstrap.phase]);
+  }, [isPending, isError, data, bootstrap.phase, forceReingest]);
 
-  async function runBootstrap() {
+  async function runBootstrap(forced: boolean = false) {
     setBootstrap({ phase: 'discovering' });
 
     let raceIds: string[];
     try {
-      const result = await discoverThisWeekendRaceIds();
+      // 強制再取込時は backend キャッシュ (30 分 TTL) を bypass する
+      const result = await discoverThisWeekendRaceIds(forced);
       raceIds = result.race_ids;
     } catch (err) {
       const msg = await formatErrorMessage(err);
@@ -247,8 +254,11 @@ export function UpcomingRaces() {
   }
 
   function handleManualRefetch() {
+    // races > 0 でも shutuba ingest を強制再実行することで、馬体重・直前
+    // odds_win・除外馬・補欠繰上り等の最新化を反映できる。
     autoFiredRef.current = false;
     setBootstrap({ phase: 'idle' });
+    setForceReingest(true);
     refetch();
   }
 
