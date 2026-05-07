@@ -4,6 +4,12 @@ import { cn } from '@/lib/cn';
 
 const Tabs = TabsPrimitive.Root;
 
+/**
+ * Underline-style tabs (CamuQuotes 参考)。
+ * - TabsList は背景なしで bottom border を 1 本引く
+ * - 各 TabsTrigger は active 時に primary 色 + 下に 2px の indicator を出す
+ *   (下線は border-bottom で実現、disabled なときは出ない)
+ */
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
@@ -11,7 +17,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      'inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground',
+      'inline-flex h-10 items-center gap-1 border-b border-border text-muted-foreground',
       className
     )}
     {...props}
@@ -26,7 +32,15 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      'inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm',
+      // base
+      'relative inline-flex items-center justify-center whitespace-nowrap px-4 py-2.5 text-sm font-medium ' +
+      'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ' +
+      'disabled:pointer-events-none disabled:opacity-50',
+      // hover (inactive)
+      'hover:text-foreground',
+      // active: foreground 色 + 下に indicator (擬似要素風だが border 1 本で表現)
+      'data-[state=active]:text-primary',
+      'data-[state=active]:after:absolute data-[state=active]:after:bottom-[-1px] data-[state=active]:after:left-2 data-[state=active]:after:right-2 data-[state=active]:after:h-[2px] data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary',
       className
     )}
     {...props}

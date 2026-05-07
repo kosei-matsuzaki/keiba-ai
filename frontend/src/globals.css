@@ -28,10 +28,10 @@
     --border:         220 14% 88%;
     --border-strong:  220 12% 76%;
     --input:          220 14% 88%;
-    --ring:           239 84% 67%;
+    --ring:           217 91% 60%;
 
-    /* Primary accent (indigo) */
-    --primary:           239 84% 67%; /* #6366F1 — light/dark で同じ */
+    /* Primary accent (blue 寄り、紫味抑制) */
+    --primary:           217 91% 60%; /* #3B82F6 tailwind blue-500 */
     --primary-foreground: 0 0% 100%;
 
     --secondary:           220 14% 93%;
@@ -52,7 +52,7 @@
     --info-foreground:       0 0% 100%;
 
     /* Chart series */
-    --chart-1: 239 84% 60%; /* indigo  */
+    --chart-1: 217 91% 60%; /* blue    */
     --chart-2: 158 64% 42%; /* emerald */
     --chart-3: 32 95% 50%;  /* amber   */
     --chart-4: 0 72% 55%;   /* rose    */
@@ -83,9 +83,10 @@
     --border:         222 18% 22%;
     --border-strong:  222 16% 32%;
     --input:          222 18% 22%;
-    --ring:           239 84% 67%;
+    --ring:           217 91% 65%;
 
-    --primary:           239 84% 67%;
+    /* dark 上では少し明るくした blue (#4F94F8 相当) */
+    --primary:           217 91% 65%;
     --primary-foreground: 0 0% 100%;
 
     --secondary:           222 22% 19%;
@@ -106,7 +107,7 @@
     --info-foreground:       213 80% 8%;
 
     /* dark 向け chart は明るめに */
-    --chart-1: 234 89% 74%;
+    --chart-1: 217 91% 70%; /* blue light */
     --chart-2: 158 64% 52%;
     --chart-3: 43 96% 56%;
     --chart-4: 0 91% 71%;

@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { discoverThisWeekendRaceIds, formatErrorMessage } from '@/lib/api';
 import { toast } from '@/components/ui/toast';
 import type { RaceSummary, RacePredictionSummary } from '@/types/api';
@@ -369,31 +370,40 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
           />
         )
       ) : (
-        <div className="flex flex-col gap-10">
+        <Tabs defaultValue={daySections[0].date} className="flex flex-col gap-6">
+          <TabsList className="self-start">
+            {daySections.map((day) => {
+              const total = day.courseSections.reduce(
+                (sum, s) => sum + s.races.length,
+                0,
+              );
+              return (
+                <TabsTrigger key={day.date} value={day.date}>
+                  {day.label}
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {total}
+                  </span>
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
           {daySections.map((day) => (
-            <section key={day.date} aria-labelledby={`day-${day.date}`}>
-              <h2
-                id={`day-${day.date}`}
-                className="mb-3 flex items-center gap-2 text-lg font-semibold tracking-tight"
-              >
-                <span>{day.label}</span>
-                <span className="text-sm font-normal text-muted-foreground">
-                  ({day.courseSections.reduce((sum, s) => sum + s.races.length, 0)} race)
-                </span>
-              </h2>
-              <div className="flex flex-col gap-6">
-                {day.courseSections.map((section) => (
-                  <RaceTable
-                    key={`${day.date}-${section.course}`}
-                    section={section}
-                    predictions={predictions}
-                    onRowClick={handleRowClick}
-                  />
-                ))}
-              </div>
-            </section>
+            <TabsContent
+              key={day.date}
+              value={day.date}
+              className="mt-0 flex flex-col gap-6"
+            >
+              {day.courseSections.map((section) => (
+                <RaceTable
+                  key={`${day.date}-${section.course}`}
+                  section={section}
+                  predictions={predictions}
+                  onRowClick={handleRowClick}
+                />
+              ))}
+            </TabsContent>
           ))}
-        </div>
+        </Tabs>
       )}
     </div>
   );
