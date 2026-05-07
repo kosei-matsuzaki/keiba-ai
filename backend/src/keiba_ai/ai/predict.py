@@ -219,6 +219,17 @@ def predict_race_with_combinations(
             for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
         }
 
+    # post_position が 1 つでも欠けると combo 文字列を作れず int(None) で
+    # crash する (shutuba 取込中の半端なデータで起こる)。combinations は
+    # 全頭の post_position が揃って初めて意味を持つので、欠けがあれば全
+    # bet_type で空リストを返す。caller (route) は HTTPException でなく
+    # 静かに「組合わせ予想なし」を返せる。
+    if frame["post_position"].isna().any():
+        return {
+            bt: []
+            for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
+        }
+
     base_df = predict_race(model, frame, binary_model=binary_model, calibrator=calibrator)
 
     # Normalise race_odds — None means no confirmed odds data available
