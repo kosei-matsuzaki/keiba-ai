@@ -111,6 +111,12 @@ FEATURE_COLUMNS: list[str] = [
     "recent_avg_class_weight",
     "high_class_starts",
     "high_class_places",
+    # Phase B: margin / finish_time / passing 由来の履歴指標
+    "recent_avg_margin",
+    "recent_avg_finish_time_norm",
+    "recent_best_margin_in_top3",
+    "recent_avg_position_change",
+    "recent_passing_volatility",
     # Within-race relative features (PR-C)
     "horse_weight_pct",
     "odds_win_rank",

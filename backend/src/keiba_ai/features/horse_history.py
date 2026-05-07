@@ -17,6 +17,7 @@ Two implementations:
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass
 from datetime import date
 
@@ -70,6 +71,112 @@ def is_high_class(race_class: str | None) -> bool:
     return race_class in _HIGH_CLASS_SET if race_class is not None else False
 
 
+# ---------------------------------------------------------------------------
+# Margin / passing parsers — netkeiba 着差・通過順位文字列を float / int に変換
+# ---------------------------------------------------------------------------
+# `entries.margin` は前着馬との差を 馬身単位 で表す文字列:
+#   ハナ / アタマ / クビ        — 1 馬身未満 (head / nose / neck)
+#   1/2, 3/4                    — 純粋分数
+#   1.1/4, 2.3/4 など           — 整数 + 分数
+#   1, 2, 3, ..., 10           — 整数馬身
+#   大 / 大差                    — 10 馬身超 (10 として保守的に保存)
+#   同着                         — 0 馬身 (dead heat)
+#   3+ハナ など                  — 稀少 (~0.001%)。None で無視
+
+_MARGIN_LITERAL: dict[str, float] = {
+    "ハナ": 0.05,
+    "アタマ": 0.10,
+    "クビ": 0.15,
+    "同着": 0.0,
+    "大": 12.0,
+    "大差": 12.0,
+}
+
+
+def parse_margin(s: str | None) -> float | None:
+    """着差文字列を 馬身単位 float に変換する。
+
+    Returns None for unparseable / empty / None / NaN inputs.
+    勝ち馬の着差は通常 None (前者が居ないため) なので呼び出し側で 0.0 に補完する。
+    """
+    if s is None:
+        return None
+    # pandas は string 列の None を float NaN に変換するので isinstance check も入れる
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    if s in _MARGIN_LITERAL:
+        return _MARGIN_LITERAL[s]
+    if "/" in s:
+        try:
+            if "." in s:
+                # "1.1/4" → 1 + 1/4
+                int_str, frac_str = s.split(".", 1)
+                num_str, den_str = frac_str.split("/", 1)
+                return float(int_str) + float(num_str) / float(den_str)
+            num_str, den_str = s.split("/", 1)
+            return float(num_str) / float(den_str)
+        except (ValueError, ZeroDivisionError):
+            return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def parse_passing(s: str | None) -> list[int] | None:
+    """通過順位文字列 (例 "11-12-11-10") を int リストに変換する。
+
+    Returns None for invalid / empty / None / NaN inputs.
+    """
+    if s is None:
+        return None
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        return [int(p) for p in s.split("-") if p]
+    except ValueError:
+        return None
+
+
+def _passing_std(positions: list[int] | None) -> float:
+    """通過順位 list の標準偏差 (population std)。len < 2 のとき NaN。"""
+    if not positions or len(positions) < 2:
+        return math.nan
+    return float(statistics.pstdev(positions))
+
+
+def _empty_horse_history() -> dict[str, float | int | None]:
+    """履歴 0 件のときの返却値テンプレート。SQL/cache 両方が同一を返すよう一元化。"""
+    nan = math.nan
+    return {
+        "recent_avg_finish": nan,
+        "recent_n_starts": 0,
+        "starts_same_distance": 0,
+        "starts_same_course": 0,
+        "recent_avg_agari_3f": nan,
+        "days_since_last_race": nan,
+        "wins_same_course": 0,
+        "horse_course_place_rate": nan,
+        "recent_finish_1": nan,
+        "recent_finish_2": nan,
+        "recent_finish_3": nan,
+        "recent_avg_class_weight": nan,
+        "high_class_starts": 0,
+        "high_class_places": 0,
+        "recent_avg_margin": nan,
+        "recent_avg_finish_time_norm": nan,
+        "recent_best_margin_in_top3": nan,
+        "recent_avg_position_change": nan,
+        "recent_passing_volatility": nan,
+    }
+
+
 def compute_horse_history(
     session: Session,
     horse_id: str,
@@ -88,7 +195,10 @@ def compute_horse_history(
         starts_same_course, wins_same_course, horse_course_place_rate,
         recent_avg_agari_3f, days_since_last_race,
         recent_finish_1, recent_finish_2, recent_finish_3,
-        recent_avg_class_weight, high_class_starts, high_class_places.
+        recent_avg_class_weight, high_class_starts, high_class_places,
+        recent_avg_margin, recent_avg_finish_time_norm,
+        recent_best_margin_in_top3, recent_avg_position_change,
+        recent_passing_volatility.
 
     horse_course_place_rate is the share of finishes <= 3 at the given course
     (NaN when course is None or starts_same_course == 0). It is consumed by
@@ -101,6 +211,18 @@ def compute_horse_history(
                                  履歴 0 件のとき NaN。
       high_class_starts        — G1/G2/G3 のいずれかへの出走回数 (生涯, 過去 only)。
       high_class_places        — G1/G2/G3 で finish_position ≤ 3 だった回数。
+
+    Phase B keys (margin / finish_time / passing 由来):
+      recent_avg_margin             — 直近 n_recent 戦の 着差 (馬身) 平均。
+                                      勝ち馬は 0 として扱う。NaN if 全 None。
+      recent_avg_finish_time_norm   — 直近 n_recent 戦の finish_time/distance
+                                      (秒/m) 平均。距離正規化スピード。
+      recent_best_margin_in_top3    — 直近 n_recent 戦のうち 3 着以内に入った
+                                      ときの最小着差 (馬身)。 NaN if no top-3.
+      recent_avg_position_change    — 直近 n_recent 戦の (last passing - finish)
+                                      平均。正なら追い込み, 負なら垂れた。
+      recent_passing_volatility     — 直近 n_recent 戦の通過順位 std の平均。
+                                      レース内ポジション変動の指標。
     """
     before_str = before_date.isoformat()
 
@@ -116,22 +238,7 @@ def compute_horse_history(
     nan = math.nan
 
     if not rows:
-        return {
-            "recent_avg_finish": nan,
-            "recent_n_starts": 0,
-            "starts_same_distance": 0,
-            "starts_same_course": 0,
-            "recent_avg_agari_3f": nan,
-            "days_since_last_race": nan,
-            "wins_same_course": 0,
-            "horse_course_place_rate": nan,
-            "recent_finish_1": nan,
-            "recent_finish_2": nan,
-            "recent_finish_3": nan,
-            "recent_avg_class_weight": nan,
-            "high_class_starts": 0,
-            "high_class_places": 0,
-        }
+        return _empty_horse_history()
 
     recent_rows = rows[:n_recent]
     finish_positions = [
@@ -216,6 +323,51 @@ def compute_horse_history(
         and r.Entry.finish_position <= 3
     )
 
+    # Phase B: margin / finish_time / passing 由来の特徴量
+    margin_values: list[float] = []
+    top3_margins: list[float] = []
+    finish_time_norms: list[float] = []
+    position_changes: list[float] = []
+    passing_stds: list[float] = []
+    for r in recent_rows:
+        m = parse_margin(r.Entry.margin)
+        if m is None and r.Entry.finish_position == 1:
+            # 勝ち馬は 着差 文字列が無い → 0 馬身として扱う
+            m = 0.0
+        if m is not None:
+            margin_values.append(m)
+            if r.Entry.finish_position is not None and r.Entry.finish_position <= 3:
+                top3_margins.append(m)
+        if (
+            r.Entry.finish_time is not None
+            and r.Race.distance is not None
+            and r.Race.distance > 0
+        ):
+            finish_time_norms.append(r.Entry.finish_time / r.Race.distance)
+        passing_positions = parse_passing(r.Entry.passing)
+        if passing_positions:
+            if r.Entry.finish_position is not None:
+                position_changes.append(
+                    float(passing_positions[-1] - r.Entry.finish_position)
+                )
+            std_val = _passing_std(passing_positions)
+            if not math.isnan(std_val):
+                passing_stds.append(std_val)
+
+    recent_avg_margin = (
+        sum(margin_values) / len(margin_values) if margin_values else nan
+    )
+    recent_avg_finish_time_norm = (
+        sum(finish_time_norms) / len(finish_time_norms) if finish_time_norms else nan
+    )
+    recent_best_margin_in_top3 = min(top3_margins) if top3_margins else nan
+    recent_avg_position_change = (
+        sum(position_changes) / len(position_changes) if position_changes else nan
+    )
+    recent_passing_volatility = (
+        sum(passing_stds) / len(passing_stds) if passing_stds else nan
+    )
+
     return {
         "recent_avg_finish": recent_avg_finish,
         "recent_n_starts": len(rows),
@@ -231,6 +383,11 @@ def compute_horse_history(
         "recent_avg_class_weight": recent_avg_class_weight,
         "high_class_starts": high_class_starts,
         "high_class_places": high_class_places,
+        "recent_avg_margin": recent_avg_margin,
+        "recent_avg_finish_time_norm": recent_avg_finish_time_norm,
+        "recent_best_margin_in_top3": recent_best_margin_in_top3,
+        "recent_avg_position_change": recent_avg_position_change,
+        "recent_passing_volatility": recent_passing_volatility,
     }
 
 
@@ -265,6 +422,7 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
     sorted descending by date (for fast recent-N head() calls).
 
     Q4: race_class も同時取得し、recent_avg_class_weight などの計算で使う。
+    Phase B: margin / finish_time / passing も取得し、関連 5 特徴量の計算に使う。
     """
     query = (
         select(
@@ -275,6 +433,9 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
             Race.race_class,
             Entry.finish_position,
             Entry.agari_3f,
+            Entry.margin,
+            Entry.finish_time,
+            Entry.passing,
         )
         .join(Race, Entry.race_id == Race.race_id)
     )
@@ -284,11 +445,34 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
         columns=[
             "horse_id", "date", "distance", "course", "race_class",
             "finish_position", "agari_3f",
+            "margin", "finish_time", "passing",
         ],
     )
     # Pre-compute class_weight column once (vectorised) so per-pair lookup
     # is just a column read.
     df["class_weight"] = df["race_class"].map(_RACE_CLASS_WEIGHTS).fillna(1).astype(int)
+
+    # Phase B: margin / finish_time / passing 由来の派生列を 1 度だけ計算しておく。
+    # 行ごとに parse する SQL 版と同じ semantics を維持しつつ、per-pair lookup を
+    # 単純な column read で済ませるためのキャッシュ。
+    margin_values = df["margin"].map(parse_margin)
+    # 勝ち馬 (finish_position == 1) かつ margin 文字列が parse できないときは
+    # 0 馬身として扱う (前者がいないため netkeiba は空にする)。
+    winner_no_margin = (df["finish_position"] == 1) & margin_values.isna()
+    margin_values = margin_values.where(~winner_no_margin, 0.0)
+    df["margin_value"] = margin_values
+
+    # finish_time / distance: distance が 0 や None は inf / NaN を避けて NaN 化。
+    distance_safe = df["distance"].where(df["distance"] > 0)
+    df["finish_time_norm"] = df["finish_time"] / distance_safe
+
+    passing_lists = df["passing"].map(parse_passing)
+    df["passing_std"] = passing_lists.map(_passing_std)
+    # last_pos - finish_position; 正なら追い込み (last 位より上昇), 負なら垂れた。
+    df["passing_last_pos"] = passing_lists.map(
+        lambda lst: float(lst[-1]) if lst else math.nan
+    )
+    df["position_change"] = df["passing_last_pos"] - df["finish_position"]
 
     # Sort by date desc so head(n_recent) gives the n most recent races.
     # Stable sort keeps insertion order across ties (rare but harmless).
@@ -315,43 +499,13 @@ def compute_horse_history_from_cache(
     nan = math.nan
     horse_df = cache.by_horse.get(horse_id)
     if horse_df is None:
-        return {
-            "recent_avg_finish": nan,
-            "recent_n_starts": 0,
-            "starts_same_distance": 0,
-            "starts_same_course": 0,
-            "recent_avg_agari_3f": nan,
-            "days_since_last_race": nan,
-            "wins_same_course": 0,
-            "horse_course_place_rate": nan,
-            "recent_finish_1": nan,
-            "recent_finish_2": nan,
-            "recent_finish_3": nan,
-            "recent_avg_class_weight": nan,
-            "high_class_starts": 0,
-            "high_class_places": 0,
-        }
+        return _empty_horse_history()
 
     before_str = before_date.isoformat()
     h = horse_df[horse_df["date"] < before_str]
 
     if h.empty:
-        return {
-            "recent_avg_finish": nan,
-            "recent_n_starts": 0,
-            "starts_same_distance": 0,
-            "starts_same_course": 0,
-            "recent_avg_agari_3f": nan,
-            "days_since_last_race": nan,
-            "wins_same_course": 0,
-            "horse_course_place_rate": nan,
-            "recent_finish_1": nan,
-            "recent_finish_2": nan,
-            "recent_finish_3": nan,
-            "recent_avg_class_weight": nan,
-            "high_class_starts": 0,
-            "high_class_places": 0,
-        }
+        return _empty_horse_history()
 
     # h is already sorted by date desc within the group — head(n_recent) gives
     # the n most recent rows.
@@ -427,6 +581,28 @@ def compute_horse_history_from_cache(
         high_class_starts = 0
         high_class_places = 0
 
+    # Phase B: margin / finish_time / passing 由来 (recent n_recent races のみ)
+    margin_recent = recent["margin_value"].dropna() if "margin_value" in recent.columns else pd.Series(dtype=float)
+    recent_avg_margin = float(margin_recent.mean()) if not margin_recent.empty else nan
+
+    ftn_recent = recent["finish_time_norm"].dropna() if "finish_time_norm" in recent.columns else pd.Series(dtype=float)
+    recent_avg_finish_time_norm = float(ftn_recent.mean()) if not ftn_recent.empty else nan
+
+    if "margin_value" in recent.columns:
+        top3_mask = (recent["finish_position"] >= 1) & (recent["finish_position"] <= 3)
+        top3_margins = recent.loc[top3_mask, "margin_value"].dropna()
+        recent_best_margin_in_top3 = (
+            float(top3_margins.min()) if not top3_margins.empty else nan
+        )
+    else:
+        recent_best_margin_in_top3 = nan
+
+    pc_recent = recent["position_change"].dropna() if "position_change" in recent.columns else pd.Series(dtype=float)
+    recent_avg_position_change = float(pc_recent.mean()) if not pc_recent.empty else nan
+
+    pv_recent = recent["passing_std"].dropna() if "passing_std" in recent.columns else pd.Series(dtype=float)
+    recent_passing_volatility = float(pv_recent.mean()) if not pv_recent.empty else nan
+
     return {
         "recent_avg_finish": recent_avg_finish,
         "recent_n_starts": int(len(h)),
@@ -442,4 +618,9 @@ def compute_horse_history_from_cache(
         "recent_avg_class_weight": recent_avg_class_weight,
         "high_class_starts": high_class_starts,
         "high_class_places": high_class_places,
+        "recent_avg_margin": recent_avg_margin,
+        "recent_avg_finish_time_norm": recent_avg_finish_time_norm,
+        "recent_best_margin_in_top3": recent_best_margin_in_top3,
+        "recent_avg_position_change": recent_avg_position_change,
+        "recent_passing_volatility": recent_passing_volatility,
     }

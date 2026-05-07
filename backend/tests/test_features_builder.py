@@ -188,8 +188,10 @@ def test_horse_weight_pct_bounded(syn_engine):
 
 
 def test_feature_columns_count():
-    """FEATURE_COLUMNS should have exactly 38 columns (24 original + 14 new)."""
-    assert len(FEATURE_COLUMNS) == 38
+    """FEATURE_COLUMNS should have exactly 46 columns:
+    24 original + 14 (PR-C extensions) + 3 (Q4 race-level) + 5 (Phase B margin/passing).
+    """
+    assert len(FEATURE_COLUMNS) == 46
 
 
 # ── Frame caching ─────────────────────────────────────────────────────────────
