@@ -30,9 +30,23 @@ const _PLACEHOLDER_YEAR = '----';
 const _PLACEHOLDER_MONTH = '--';
 const _PLACEHOLDER_DAY = '--';
 
+const _DOW_CHARS = ['日', '月', '火', '水', '木', '金', '土'] as const;
+
 function _daysInMonth(year: number, month: number): number {
   // month: 1-12
   return new Date(year, month, 0).getDate();
+}
+
+function _dayOfWeek(year: number, month: number, day: number): number {
+  // 0=Sun, 6=Sat
+  return new Date(year, month - 1, day).getDay();
+}
+
+/** JRA は基本土日開催。土曜=青 / 日曜=赤 で見つけやすくする。 */
+function _dowColorClass(dow: number | null): string {
+  if (dow === 0) return 'text-red-600 dark:text-red-400';
+  if (dow === 6) return 'text-blue-600 dark:text-blue-400';
+  return '';
 }
 
 function _parse(value: string | undefined): {
@@ -93,8 +107,11 @@ export function DateYMDPicker({
 
   const days = useMemo(() => {
     const upper = year && month ? _daysInMonth(year, month) : 31;
-    const out: number[] = [];
-    for (let d = 1; d <= upper; d++) out.push(d);
+    const out: { day: number; dow: number | null }[] = [];
+    for (let d = 1; d <= upper; d++) {
+      const dow = year && month ? _dayOfWeek(year, month, d) : null;
+      out.push({ day: d, dow });
+    }
     return out;
   }, [year, month]);
 
@@ -159,17 +176,23 @@ export function DateYMDPicker({
         disabled={disabled}
       >
         <SelectTrigger
-          className="w-[68px]"
+          className="w-[88px]"
           aria-label={ariaLabel ? `${ariaLabel} 日` : '日'}
         >
           <SelectValue placeholder={_PLACEHOLDER_DAY} />
         </SelectTrigger>
         <SelectContent>
-          {days.map((d) => (
-            <SelectItem key={d} value={String(d)}>
-              {d}
-            </SelectItem>
-          ))}
+          {days.map(({ day: d, dow }) => {
+            const dowChar = dow !== null ? _DOW_CHARS[dow] : null;
+            return (
+              <SelectItem key={d} value={String(d)}>
+                <span className={_dowColorClass(dow)}>
+                  {d}
+                  {dowChar !== null && ` (${dowChar})`}
+                </span>
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
       <span className="text-sm text-muted-foreground">日</span>
