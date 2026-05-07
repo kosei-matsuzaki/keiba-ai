@@ -5,6 +5,7 @@ Used by the Ledger 「シミュレーション」 tab.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -24,6 +25,10 @@ from keiba_ai.core.logging import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+# 1 年 ≒ 3000 race で逐次 predict + settle すると 5 分以上かかり frontend HTTP
+# timeout に当たる。実用上は 6 か月 (~1500 race) が上限の目安。
+MAX_WINDOW_DAYS: int = 186
 
 
 class GroupStatsResponse(BaseModel):
@@ -80,7 +85,13 @@ def run_simulation(
     end: Annotated[str | None, Query(description="窓の終了日 YYYY-MM-DD")] = None,
     budget: Annotated[
         int,
-        Query(ge=1000, le=100_000_000, description="期間全体の予算 (円)"),
+        Query(
+            ge=1000,
+            le=100_000_000,
+            description="Kelly 計算用の元手 (円)。1 race ごとの stake 上限は "
+            "元手 × max_stake_per_race_pct (= 5%) で決まる。"
+            "累計支出のキャップではないため、race 数が増えると累計 invested は増える。",
+        ),
     ] = 100_000,
     strategy: Annotated[
         Literal["conservative", "balanced", "aggressive"],
@@ -102,6 +113,32 @@ def run_simulation(
             status_code=400,
             detail=f"unknown strategy {strategy!r}. Choose from {list(STRATEGY_PRESETS)}.",
         )
+
+    # 期間の上限 check (frontend HTTP timeout を未然防止)。
+    # 1 年だと数分かかり HTTP timeout に当たるため 6 か月で頭打ちにする。
+    if start is not None and end is not None:
+        try:
+            d_start = date.fromisoformat(start)
+            d_end = date.fromisoformat(end)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start / end は YYYY-MM-DD 形式で指定してください: {exc}",
+            ) from exc
+        if d_end < d_start:
+            raise HTTPException(
+                status_code=400,
+                detail="end は start 以降の日付を指定してください。",
+            )
+        if (d_end - d_start).days > MAX_WINDOW_DAYS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"期間が長すぎます (max {MAX_WINDOW_DAYS} 日 ≒ 6 か月)。"
+                    " 1 年規模だと逐次 predict + settle が数分かかり HTTP timeout"
+                    " するので、現状は 6 か月までで分割実行してください。"
+                ),
+            )
 
     active_path = get_active(session)
     if active_path is None:
