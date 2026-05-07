@@ -30,21 +30,32 @@ function AccuracyChartImpl({ points, metricLabel }: AccuracyChartProps) {
   return (
     <ResponsiveContainer width="100%" height={240}>
       <LineChart data={points} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          stroke="hsl(var(--border))"
           tickFormatter={(v: string | number) => String(v).slice(5)} // MM-DD
         />
-        <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
+        <YAxis
+          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          stroke="hsl(var(--border))"
+          domain={['auto', 'auto']}
+        />
         <Tooltip
           labelFormatter={(label: string) => label}
           formatter={(value: number) => [formatScore(value), metricLabel]}
+          contentStyle={{
+            background: 'hsl(var(--popover))',
+            border: '1px solid hsl(var(--border))',
+            borderRadius: 'var(--radius)',
+            fontSize: 12,
+          }}
         />
         <Line
           type="monotone"
           dataKey="value"
-          stroke="hsl(var(--primary))"
+          stroke="hsl(var(--chart-1))"
           strokeWidth={2}
           dot={false}
           connectNulls

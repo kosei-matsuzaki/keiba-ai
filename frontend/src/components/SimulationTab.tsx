@@ -591,6 +591,13 @@ export function SimulationTab() {
               title="最終資産"
               value={result.final_bankroll}
               format="yen"
+              tone={
+                result.final_bankroll === 0
+                  ? 'negative'
+                  : result.final_bankroll >= result.budget
+                  ? 'positive'
+                  : 'negative'
+              }
               description={
                 result.final_bankroll === 0
                   ? '破産'
@@ -646,6 +653,11 @@ export function SimulationTab() {
               title="純利益"
               value={result.summary.payout - result.summary.invested}
               format="yen"
+              tone={
+                result.summary.payout >= result.summary.invested
+                  ? 'positive'
+                  : 'negative'
+              }
               description={
                 result.summary.payout >= result.summary.invested
                   ? 'プラス収支'

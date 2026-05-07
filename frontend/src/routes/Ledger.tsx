@@ -248,31 +248,44 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
 
   const minProfit = Math.min(...data.points.map((p) => p.cumulative_profit));
   const maxProfit = Math.max(...data.points.map((p) => p.cumulative_profit));
-  // Use green when all cumulative values are positive, red when all negative, gradient otherwise
-  const areaColor = minProfit >= 0 ? '#22c55e' : maxProfit <= 0 ? '#ef4444' : 'hsl(var(--primary))';
+  // 全プラスなら success (emerald)、全マイナスなら destructive (rose)、混在は chart-1 (indigo)
+  const areaColor =
+    minProfit >= 0
+      ? 'hsl(var(--success))'
+      : maxProfit <= 0
+      ? 'hsl(var(--destructive))'
+      : 'hsl(var(--chart-1))';
 
   return (
     <ResponsiveContainer width="100%" height={260}>
       <AreaChart data={data.points} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
         <defs>
           <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={areaColor} stopOpacity={0.3} />
+            <stop offset="5%" stopColor={areaColor} stopOpacity={0.4} />
             <stop offset="95%" stopColor={areaColor} stopOpacity={0.0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          stroke="hsl(var(--border))"
           tickFormatter={(v: string) => v.slice(5)}
         />
         <YAxis
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          stroke="hsl(var(--border))"
           tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`}
         />
         <Tooltip
           labelFormatter={(label: string) => label}
           formatter={(value: number) => [formatYen(value), '累計損益']}
+          contentStyle={{
+            background: 'hsl(var(--popover))',
+            border: '1px solid hsl(var(--border))',
+            borderRadius: 'var(--radius)',
+            fontSize: 12,
+          }}
         />
         <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" />
         <Area
