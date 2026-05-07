@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -380,8 +380,7 @@ def _validate_request_bg(
     "/simulation/start",
     response_model=JobAccepted,
 )
-def start_simulation_job(
-    request: Request,
+async def start_simulation_job(
     session: Annotated[Session, Depends(get_session)],
     registry: Annotated[JobRegistry, Depends(get_job_registry)],
     engine: Annotated[Engine, Depends(get_engine)],
@@ -401,6 +400,9 @@ def start_simulation_job(
     HTTP timeout を気にせず長い window (最大 1 年) を扱える。
     完了後 job.result.run_id に保存済み run の id が入るので、UI は
     /api/simulation/runs/{run_id} で詳細を取得すれば良い。
+
+    NOTE: async def で宣言する必要がある (registry.start 内部で
+    asyncio.create_task を呼ぶため、event loop 上で動かす必要がある)。
     """
     _validate_request_bg(start, end, strategy)
     active_path = get_active(session)
