@@ -330,6 +330,9 @@ export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted>
   };
   if (req.start) searchParams.start = req.start;
   if (req.end) searchParams.end = req.end;
+  if (req.max_stake_per_race_yen && req.max_stake_per_race_yen > 0) {
+    searchParams.max_stake_per_race_yen = req.max_stake_per_race_yen;
+  }
   return getClient().then((c) =>
     c
       .post('simulation/start', { searchParams })

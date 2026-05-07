@@ -440,4 +440,6 @@ export interface SimulationRequest {
   end?: string;            // YYYY-MM-DD
   budget: number;
   strategy: SimulationStrategy;
+  /** 1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効 (% cap のみ)。 */
+  max_stake_per_race_yen?: number;
 }
