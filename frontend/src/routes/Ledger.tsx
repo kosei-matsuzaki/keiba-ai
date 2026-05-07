@@ -341,14 +341,7 @@ export function Ledger() {
         description="ベット記録の集計・損益推移"
       />
 
-      <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={handleCsvDownload}>
-          <Download className="h-4 w-4" />
-          CSV
-        </Button>
-      </div>
-
-      {/* Period & source filters */}
+      {/* Period & source filters + CSV (一行で揃える) */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1">
           {(
@@ -394,6 +387,15 @@ export function Ledger() {
             <SelectItem value="manual">手動のみ</SelectItem>
           </SelectContent>
         </Select>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleCsvDownload}
+          className="ml-auto"
+        >
+          <Download className="h-4 w-4" />
+          CSV
+        </Button>
       </div>
 
       {/* KPI cards */}
