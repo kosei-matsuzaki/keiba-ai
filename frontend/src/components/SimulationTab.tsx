@@ -437,7 +437,7 @@ export function SimulationTab() {
           <CardTitle className="text-base">シミュレーション設定</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>期間 開始日</Label>
               <DateYMDPicker
@@ -472,7 +472,7 @@ export function SimulationTab() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="sim-max-stake">1 race の投資額上限 (円)</Label>
               <Input
@@ -508,10 +508,10 @@ export function SimulationTab() {
                   key={p.key}
                   type="button"
                   onClick={() => setStrategy(p.key)}
-                  className={`flex flex-col items-start gap-1 rounded-md border px-4 py-2 text-left transition ${
+                  className={`flex flex-col items-start gap-1 rounded-lg border px-4 py-3 text-left transition-all active:scale-[0.99] ${
                     strategy === p.key
-                      ? 'border-primary bg-primary/10 ring-1 ring-primary'
-                      : 'border-border hover:bg-accent'
+                      ? 'border-primary bg-primary/15 text-foreground ring-1 ring-primary/40'
+                      : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:bg-card-elevated/40 hover:text-foreground'
                   }`}
                 >
                   <span className="text-sm font-medium">
@@ -591,6 +591,13 @@ export function SimulationTab() {
               title="最終資産"
               value={result.final_bankroll}
               format="yen"
+              tone={
+                result.final_bankroll === 0
+                  ? 'negative'
+                  : result.final_bankroll >= result.budget
+                  ? 'positive'
+                  : 'negative'
+              }
               description={
                 result.final_bankroll === 0
                   ? '破産'
@@ -646,6 +653,11 @@ export function SimulationTab() {
               title="純利益"
               value={result.summary.payout - result.summary.invested}
               format="yen"
+              tone={
+                result.summary.payout >= result.summary.invested
+                  ? 'positive'
+                  : 'negative'
+              }
               description={
                 result.summary.payout >= result.summary.invested
                   ? 'プラス収支'

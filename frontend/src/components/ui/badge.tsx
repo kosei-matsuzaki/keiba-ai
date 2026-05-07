@@ -18,6 +18,20 @@ const badgeVariants = cva(
         warning:
           'border-transparent bg-warning text-warning-foreground hover:bg-warning/80',
         info: 'border-transparent bg-info text-info-foreground hover:bg-info/80',
+        // Soft variants — dashboard 風の tinted bg + saturated fg。
+        // dark surface 上で目立ちすぎず、status を読み取りやすい。
+        'soft-primary':
+          'border-transparent bg-primary/15 text-primary',
+        'soft-success':
+          'border-transparent bg-success/15 text-success',
+        'soft-warning':
+          'border-transparent bg-warning/15 text-warning',
+        'soft-destructive':
+          'border-transparent bg-destructive/15 text-destructive',
+        'soft-info':
+          'border-transparent bg-info/15 text-info',
+        'soft-muted':
+          'border-transparent bg-muted-foreground/15 text-muted-foreground',
       },
     },
     defaultVariants: {

@@ -1,18 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useForm, useController } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import {
-  CircleDollarSign,
-  Layers,
-  Power,
-  Timer,
-  type LucideIcon,
-} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/cn';
 import type { BetType, SettingsResponse, SettingsUpdate } from '@/types/api';
 
@@ -61,50 +55,17 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
-type SectionKey = 'scraper' | 'betting' | 'bet_types' | 'ops';
-
-interface SectionMeta {
-  key: SectionKey;
-  icon: LucideIcon;
-  label: string;
-  description: string;
-}
-
-const SECTIONS: SectionMeta[] = [
-  {
-    key: 'scraper',
-    icon: Timer,
-    label: 'スクレイパー',
-    description: 'netkeiba へのアクセス頻度と User-Agent',
-  },
-  {
-    key: 'betting',
-    icon: CircleDollarSign,
-    label: 'ベッティング',
-    description: 'EV 閾値と Kelly 資金配分',
-  },
-  {
-    key: 'bet_types',
-    icon: Layers,
-    label: '買い方ターゲット',
-    description: '対象とする馬券種の選択',
-  },
-  {
-    key: 'ops',
-    icon: Power,
-    label: '運用',
-    description: 'スクレイパー停止フラグ',
-  },
-];
+export type SettingsSection = 'scraper' | 'betting' | 'bet_types' | 'ops';
 
 interface SettingsFormProps {
   defaults: SettingsResponse;
   onSubmit: (values: SettingsUpdate) => void;
   isPending: boolean;
+  /** 表示するセクション。指定されなければ全セクションを縦並びで表示する。 */
+  activeSection?: SettingsSection;
 }
 
-export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProps) {
-  const [activeSection, setActiveSection] = useState<SectionKey>('scraper');
+export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: SettingsFormProps) {
   const {
     register,
     handleSubmit,
@@ -131,6 +92,11 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
     control,
   });
 
+  const { field: scraperStoppedField } = useController({
+    name: 'scraper_stopped',
+    control,
+  });
+
   function toggleBetType(betType: BetType) {
     const current = enabledBetTypesField.value;
     const next = current.includes(betType)
@@ -146,60 +112,17 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
   // dirty 件数をフッターに表示
   const dirtyCount = countDirtyFields(dirtyFields);
 
+  // activeSection 指定時はそれ以外を hidden に。指定なし (undefined) なら全表示。
+  const visible = (key: SettingsSection): boolean =>
+    activeSection === undefined || activeSection === key;
+
   return (
     <form onSubmit={handleSubmit(submit)} className="flex flex-col gap-6" noValidate>
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-        {/* Left vertical nav */}
-        <nav
-          aria-label="設定セクション"
-          className="flex shrink-0 flex-row gap-1 overflow-x-auto rounded-lg border bg-card p-2 lg:w-64 lg:flex-col lg:gap-1"
+      <div className="flex flex-col gap-6">
+        <Section
+          description="netkeiba へのアクセス頻度と User-Agent。レート制御を緩めると検出リスクが上がります。"
+          hidden={!visible('scraper')}
         >
-          {SECTIONS.map((s) => {
-            const Icon = s.icon;
-            const isActive = activeSection === s.key;
-            return (
-              <button
-                key={s.key}
-                type="button"
-                onClick={() => setActiveSection(s.key)}
-                className={cn(
-                  'flex shrink-0 items-start gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors',
-                  isActive
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-foreground hover:bg-accent',
-                )}
-              >
-                <Icon
-                  className={cn(
-                    'mt-0.5 h-4 w-4 shrink-0',
-                    isActive ? 'text-primary' : 'text-muted-foreground',
-                  )}
-                />
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <span
-                    className={cn(
-                      'font-medium leading-tight',
-                      isActive ? 'text-primary' : '',
-                    )}
-                  >
-                    {s.label}
-                  </span>
-                  <span className="hidden text-xs text-muted-foreground lg:block">
-                    {s.description}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Right content panel */}
-        <div className="min-w-0 flex-1 rounded-lg border bg-card p-6">
-          {activeSection === 'scraper' && (
-            <SectionPanel
-              title="スクレイパー"
-              description="netkeiba へのアクセス頻度と User-Agent。レート制御を緩めると検出リスクが上がります。"
-            >
               <FieldRow
                 label="User-Agent"
                 id="user_agent"
@@ -209,7 +132,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                 <Input id="user_agent" {...register('user_agent')} />
               </FieldRow>
 
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-4">
                 <FieldRow
                   label="rate_min (秒)"
                   id="rate_min_seconds"
@@ -250,15 +173,13 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                   />
                 </FieldRow>
               </div>
-            </SectionPanel>
-          )}
+        </Section>
 
-          {activeSection === 'betting' && (
-            <SectionPanel
-              title="ベッティング期待値"
-              description="evaluate.py で「賭ける / 賭けない」を判定する閾値と Kelly 資金配分。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。"
-            >
-              <div className="grid gap-4 sm:grid-cols-2">
+        <Section
+          description="evaluate.py で「賭ける / 賭けない」を判定する閾値と Kelly 資金配分。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。"
+          hidden={!visible('betting')}
+        >
+              <div className="flex flex-col gap-4">
                 <FieldRow
                   label="単勝 EV 閾値"
                   id="win_ev_threshold"
@@ -287,7 +208,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                 </FieldRow>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-4">
                 <FieldRow
                   label="バンクロール (円)"
                   id="bankroll"
@@ -332,14 +253,12 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                   />
                 </FieldRow>
               </div>
-            </SectionPanel>
-          )}
+        </Section>
 
-          {activeSection === 'bet_types' && (
-            <SectionPanel
-              title="買い方ターゲット"
-              description="推奨買目と evaluate.py の賭け判定で対象とする馬券種。チェックを外した券種は賭け対象から除外される。"
-            >
+        <Section
+          description="推奨買目と evaluate.py の賭け判定で対象とする馬券種。チェックを外した券種は賭け対象から除外される。"
+          hidden={!visible('bet_types')}
+        >
               <div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
                   {ALL_BET_TYPES.map((betType) => {
@@ -351,10 +270,10 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                         onClick={() => toggleBetType(betType)}
                         aria-pressed={isSelected}
                         className={cn(
-                          'flex h-10 items-center justify-center rounded-md border text-sm font-medium transition-colors',
+                          'flex h-9 items-center justify-center rounded-full border text-sm font-medium transition-all active:scale-[0.97]',
                           isSelected
-                            ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
-                            : 'border-input bg-background text-foreground hover:bg-accent',
+                            ? 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
+                            : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
                         )}
                       >
                         {betType}
@@ -368,34 +287,29 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
                   </p>
                 )}
               </div>
-            </SectionPanel>
-          )}
+        </Section>
 
-          {activeSection === 'ops' && (
-            <SectionPanel
-              title="運用"
-              description="緊急停止フラグ。ON にすると進行中ジョブが ScraperStopped 例外で中断される。"
-            >
-              <label
-                htmlFor="scraper_stopped"
-                className="flex cursor-pointer items-center justify-between rounded-md border bg-background px-4 py-3 text-sm transition-colors hover:bg-accent/30"
-              >
-                <div className="min-w-0 pr-4">
-                  <div className="font-medium">スクレイパーを停止する</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    KEIBA_SCRAPER_STOP=1 と同等。CLI 経由で実行中のジョブにも反映される
-                  </div>
-                </div>
-                <input
-                  id="scraper_stopped"
-                  type="checkbox"
-                  className="h-4 w-4 shrink-0 rounded border-gray-300"
-                  {...register('scraper_stopped')}
-                />
-              </label>
-            </SectionPanel>
-          )}
-        </div>
+        <Section
+          description="緊急停止フラグ。ON にすると進行中ジョブが ScraperStopped 例外で中断される。"
+          hidden={!visible('ops')}
+        >
+          <label
+            htmlFor="scraper_stopped"
+            className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 text-sm transition-colors hover:bg-card-elevated/40"
+          >
+            <div className="min-w-0">
+              <div className="font-medium">スクレイパーを停止する</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                KEIBA_SCRAPER_STOP=1 と同等。CLI 経由で実行中のジョブにも反映される
+              </div>
+            </div>
+            <Switch
+              id="scraper_stopped"
+              checked={scraperStoppedField.value}
+              onCheckedChange={scraperStoppedField.onChange}
+            />
+          </label>
+        </Section>
       </div>
 
       {/* Sticky footer */}
@@ -421,23 +335,24 @@ function countDirtyFields(dirty: object): number {
   return count;
 }
 
-// ── SectionPanel: 中央 panel の見出し + body ───────────────────────────────
+// ── Section: タブ配下のフラット section (Card なし、タイトルなし) ──────────
+// タブ名がそのままセクションのタイトルとして機能するので、カード/タイトルの
+// 重複を避けてフラットに並べる。description のみ muted で 1 行表示。
 
-interface SectionPanelProps {
-  title: string;
+interface SectionProps {
+  /** 補足説明 (1 行 muted)。省略可能。 */
   description?: string;
   children: ReactNode;
+  /** true のとき表示せず DOM には残す (form state を維持するため) */
+  hidden?: boolean;
 }
 
-function SectionPanel({ title, description, children }: SectionPanelProps) {
+function Section({ description, children, hidden = false }: SectionProps) {
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {description && (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-        )}
-      </div>
+    <div className={cn('flex flex-col gap-5', hidden && 'hidden')}>
+      {description && (
+        <p className="text-sm text-muted-foreground">{description}</p>
+      )}
       <div className="space-y-5">{children}</div>
     </div>
   );

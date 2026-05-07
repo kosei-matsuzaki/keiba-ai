@@ -18,7 +18,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { discoverThisWeekendRaceIds, formatErrorMessage } from '@/lib/api';
+import { PastRaces } from '@/routes/PastRaces';
 import { toast } from '@/components/ui/toast';
 import type { RaceSummary, RacePredictionSummary } from '@/types/api';
 
@@ -71,6 +73,15 @@ interface CourseSection {
   races: RaceSummary[];
 }
 
+interface DaySection {
+  /** YYYY-MM-DD (group key) */
+  date: string;
+  /** "5/10 (土)" 等の表示用 */
+  label: string;
+  /** その日の course 別さらに sub-section */
+  courseSections: CourseSection[];
+}
+
 function groupByCourse(races: RaceSummary[]): CourseSection[] {
   const map = new Map<string, RaceSummary[]>();
   for (const race of races) {
@@ -79,6 +90,25 @@ function groupByCourse(races: RaceSummary[]): CourseSection[] {
     map.set(race.course, list);
   }
   return Array.from(map.entries()).map(([course, rs]) => ({ course, races: rs }));
+}
+
+/**
+ * race を 日付 → コース の二段階で grouping する。
+ * 土曜と日曜が同じテーブルに混じらないよう、日付セクションでまず分割。
+ */
+function groupByDayAndCourse(races: RaceSummary[]): DaySection[] {
+  const byDate = new Map<string, RaceSummary[]>();
+  for (const race of races) {
+    const list = byDate.get(race.date) ?? [];
+    list.push(race);
+    byDate.set(race.date, list);
+  }
+  const sortedDates = Array.from(byDate.keys()).sort();
+  return sortedDates.map((date) => ({
+    date,
+    label: formatRaceDate(date),
+    courseSections: groupByCourse(byDate.get(date) ?? []),
+  }));
 }
 
 // ── skeleton ──────────────────────────────────────────────────────────────────
@@ -104,52 +134,46 @@ interface RaceTableProps {
 function RaceTable({ section, predictions, onRowClick }: RaceTableProps) {
   return (
     <section aria-labelledby={`upcoming-course-${section.course}`}>
-      <h2
+      <h3
         id={`upcoming-course-${section.course}`}
-        className="mb-2 text-base font-semibold text-foreground"
+        className="mb-2 text-sm font-semibold text-muted-foreground"
       >
         {section.course}
-      </h2>
-      <div className="overflow-hidden rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-24">日付</TableHead>
-              <TableHead className="w-16">R</TableHead>
-              <TableHead>レース名</TableHead>
-              <TableHead>クラス</TableHead>
-              <TableHead>馬場</TableHead>
-              <TableHead className="text-right">距離</TableHead>
-              <TableHead className="text-right">頭数</TableHead>
-              <TableHead>AI 予想</TableHead>
+      </h3>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-16">R</TableHead>
+            <TableHead>レース名</TableHead>
+            <TableHead>クラス</TableHead>
+            <TableHead>馬場</TableHead>
+            <TableHead className="text-right">距離</TableHead>
+            <TableHead className="text-right">頭数</TableHead>
+            <TableHead>AI 予想</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {section.races.map((race) => (
+            <TableRow
+              key={race.race_id}
+              className="cursor-pointer"
+              onClick={() => onRowClick(race)}
+              role="button"
+              aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
+            >
+              <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
+              <TableCell>{race.name ?? '—'}</TableCell>
+              <TableCell>{race.race_class ?? '—'}</TableCell>
+              <TableCell>{race.surface}</TableCell>
+              <TableCell className="text-right">{race.distance} m</TableCell>
+              <TableCell className="text-right">{race.n_runners ?? '—'}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {formatTopHorses(predictions[race.race_id])}
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {section.races.map((race) => (
-              <TableRow
-                key={race.race_id}
-                className="cursor-pointer hover:bg-accent/60"
-                onClick={() => onRowClick(race)}
-                role="button"
-                aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
-              >
-                <TableCell className="text-sm text-muted-foreground">
-                  {formatRaceDate(race.date)}
-                </TableCell>
-                <TableCell className="font-medium">{raceNumber(race.race_id)}R</TableCell>
-                <TableCell>{race.name ?? '—'}</TableCell>
-                <TableCell>{race.race_class ?? '—'}</TableCell>
-                <TableCell>{race.surface}</TableCell>
-                <TableCell className="text-right">{race.distance} m</TableCell>
-                <TableCell className="text-right">{race.n_runners ?? '—'}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatTopHorses(predictions[race.race_id])}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+          ))}
+        </TableBody>
+      </Table>
     </section>
   );
 }
@@ -274,7 +298,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
   const isBootstrapping =
     bootstrap.phase === 'discovering' || bootstrap.phase === 'scraping';
 
-  const sections = data ? groupByCourse(data.races) : [];
+  const daySections = data ? groupByDayAndCourse(data.races) : [];
 
   const refetchButton = (
     <Button
@@ -311,7 +335,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
 
       {/* Bootstrap progress banner */}
       {isBootstrapping && (
-        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+        <div className="rounded-lg border border-info/30 bg-info/10 px-4 py-3 text-sm text-info">
           {bootstrap.phase === 'discovering'
             ? '今週末の JRA レースを確認中...'
             : '今週末の JRA レースを取得中...（最大 5 分）'}
@@ -325,7 +349,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
           message="レース情報の取得に失敗しました"
           description="バックエンドが起動しているか確認してください。"
         />
-      ) : sections.length === 0 ? (
+      ) : daySections.length === 0 ? (
         bootstrap.phase === 'no_races' ? (
           <EmptyState
             message="今週末の JRA レースはありません"
@@ -345,16 +369,44 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
           />
         )
       ) : (
-        <div className="flex flex-col gap-8">
-          {sections.map((section) => (
-            <RaceTable
-              key={section.course}
-              section={section}
-              predictions={predictions}
-              onRowClick={handleRowClick}
-            />
+        <Tabs defaultValue={daySections[0].date} className="flex flex-col gap-6">
+          <TabsList className="self-start">
+            {daySections.map((day) => {
+              const total = day.courseSections.reduce(
+                (sum, s) => sum + s.races.length,
+                0,
+              );
+              return (
+                <TabsTrigger key={day.date} value={day.date}>
+                  {day.label}
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {total}
+                  </span>
+                </TabsTrigger>
+              );
+            })}
+            <TabsTrigger value="past">Past</TabsTrigger>
+          </TabsList>
+          {daySections.map((day) => (
+            <TabsContent
+              key={day.date}
+              value={day.date}
+              className="mt-0 flex flex-col gap-6"
+            >
+              {day.courseSections.map((section) => (
+                <RaceTable
+                  key={`${day.date}-${section.course}`}
+                  section={section}
+                  predictions={predictions}
+                  onRowClick={handleRowClick}
+                />
+              ))}
+            </TabsContent>
           ))}
-        </div>
+          <TabsContent value="past" className="mt-0">
+            <PastRaces embedded />
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );

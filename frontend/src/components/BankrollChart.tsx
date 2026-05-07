@@ -71,18 +71,20 @@ function BankrollChartImpl({ points, initialBudget }: BankrollChartProps) {
       <AreaChart data={points} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
         <defs>
           <linearGradient id="bankrollGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.4} />
-            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.05} />
+            <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.5} />
+            <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0.04} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          stroke="hsl(var(--border))"
           tickFormatter={(v: string | number) => String(v).slice(5)} // MM-DD
         />
         <YAxis
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+          stroke="hsl(var(--border))"
           domain={[0, yDomainTop]}
           tickFormatter={(v: number) => {
             if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -106,7 +108,7 @@ function BankrollChartImpl({ points, initialBudget }: BankrollChartProps) {
         <Area
           type="monotone"
           dataKey="bankroll"
-          stroke="hsl(var(--primary))"
+          stroke="hsl(var(--chart-1))"
           strokeWidth={2}
           fill="url(#bankrollGradient)"
         />
