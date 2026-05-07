@@ -42,15 +42,22 @@ def _prepare_features(
     model が渡された場合、学習時の feature_name() を使って列を選ぶ
     （odds 抜きモデルでも正しく動作する）。model=None のときは
     後方互換のため FEATURE_COLUMNS を使う。
+
+    LightGBM は object dtype を受け付けない (TypeError: pandas dtypes must
+    be int, float or bool)。inference frame で None / 混在型が入ると pandas
+    が object として推論してしまうため、CATEGORICAL_FEATURES 以外は明示的に
+    pd.to_numeric (errors='coerce') で float に強制する。
     """
     if model is not None:
         cols = list(model.feature_name())
     else:
         cols = FEATURE_COLUMNS
     X = frame[cols].copy()
-    for col in CATEGORICAL_FEATURES:
-        if col in X.columns:
+    for col in X.columns:
+        if col in CATEGORICAL_FEATURES:
             X[col] = X[col].astype("category")
+        elif X[col].dtype == "object":
+            X[col] = pd.to_numeric(X[col], errors="coerce")
     return X
 
 

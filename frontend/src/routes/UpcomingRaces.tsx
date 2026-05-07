@@ -195,9 +195,31 @@ interface UpcomingRacesProps {
   embedded?: boolean;
 }
 
+/** 相対時間ラベル ("3 分前" / "2 時間前" / "今") を返す。0 のとき空文字。 */
+function _relativeTimeJa(timestamp: number): string {
+  if (!timestamp) return '';
+  const sec = Math.floor((Date.now() - timestamp) / 1000);
+  if (sec < 30) return '今';
+  if (sec < 60) return `${sec} 秒前`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 時間前`;
+  const day = Math.floor(hr / 24);
+  return `${day} 日前`;
+}
+
 export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
   const navigate = useNavigate();
-  const { data, isPending, isError, refetch } = useThisWeekendRaces();
+  const { data, isPending, isError, refetch, dataUpdatedAt } = useThisWeekendRaces();
+  // dataUpdatedAt は react-query の最終 fetch 成功時刻 (ms)。これを 30 秒
+  // 間隔で再評価して "X 分前" 表示を実時間更新する。
+  const [, setTickNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setTickNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const lastUpdatedLabel = _relativeTimeJa(dataUpdatedAt);
 
   const [bootstrap, setBootstrap] = useState<BootstrapState>({ phase: 'idle' });
   // Tracks whether auto-bootstrap has already been attempted this mount.
@@ -321,15 +343,27 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
           title="今週末のレース（JRA）"
           description="今週土・日に予定されている JRA レース一覧"
         >
+          {lastUpdatedLabel && (
+            <span className="text-xs text-muted-foreground">
+              最終更新: {lastUpdatedLabel}
+            </span>
+          )}
           {refetchButton}
         </PageHeader>
       )}
       {embedded && (
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
             今週土・日に予定されている JRA レース一覧
           </p>
-          {refetchButton}
+          <div className="flex items-center gap-3">
+            {lastUpdatedLabel && (
+              <span className="text-xs text-muted-foreground">
+                最終更新: {lastUpdatedLabel}
+              </span>
+            )}
+            {refetchButton}
+          </div>
         </div>
       )}
 
