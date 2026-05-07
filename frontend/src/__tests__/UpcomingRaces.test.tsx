@@ -288,4 +288,28 @@ describe('UpcomingRaces auto-bootstrap', () => {
       expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledTimes(2);
     });
   });
+
+  it('再取込 button forces shutuba ingest even when races already exist', async () => {
+    // races > 0 のケース: 通常の auto-bootstrap は発火しないが、
+    // 再取込ボタンで強制的に shutuba ingest を再実行する。
+    vi.mocked(fetchThisWeekendRaces).mockResolvedValue(mockRaces);  // 3 races
+    const user = userEvent.setup();
+
+    renderUpcoming();
+
+    // 初期状態: races > 0 なので auto-bootstrap は発火しない
+    await screen.findByText('東京'); // races already loaded
+    expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledTimes(0);
+
+    const btn = screen.getByRole('button', { name: '再取込' });
+    await user.click(btn);
+
+    // races > 0 でも再取込で発火する
+    await waitFor(() => {
+      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledTimes(1);
+    });
+
+    // discoverThisWeekendRaceIds は refresh=true で呼ばれるはず
+    expect(vi.mocked(discoverThisWeekendRaceIds)).toHaveBeenCalledWith(true);
+  });
 });
