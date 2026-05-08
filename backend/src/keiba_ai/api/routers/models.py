@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.registry import set_active
+from keiba_ai.ai.registry import set_active_by_id
 from keiba_ai.ai.train import train
 from keiba_ai.api.deps import get_job_registry, get_or_404, get_session
 from keiba_ai.api.jobs import JobRegistry
@@ -71,7 +70,8 @@ def activate_model(
 ) -> ModelMeta:
     run = get_or_404(session, ModelRun, model_id, label="Model")
 
-    set_active(Path(run.model_path), session)
+    # id ベースで activate (パス比較は WSL/Windows でセパレータ差により壊れる)
+    set_active_by_id(model_id, session)
     # Refresh after flush so is_active reflects the change
     session.refresh(run)
     return _run_to_schema(run)
