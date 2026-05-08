@@ -17,6 +17,7 @@ EV-threshold parameters:
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -159,6 +160,13 @@ class SimulationResult:
 # ---------------------------------------------------------------------------
 
 
+# 連系 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の miss を最大何件 log する か。
+# KEIBA_DEBUG_SIM_MISSES=1 のときのみ有効。0% hit_rate の根本原因が
+# combo 表記不一致なのか pure miss なのかを切り分けるための診断ログ。
+_DEBUG_MISSES_LIMIT = 20
+_debug_misses_emitted = 0
+
+
 def _settle_candidates(
     candidates: list,
     race_id: str,
@@ -177,6 +185,9 @@ def _settle_candidates(
     Returns:
         list[dict] with keys: bet_type, stake, payout, hit (0/1)
     """
+    global _debug_misses_emitted
+    debug_misses = os.environ.get("KEIBA_DEBUG_SIM_MISSES", "0") == "1"
+
     winner_pp = finish_to_pp.get(1)
     top3 = {finish_to_pp.get(p) for p in (1, 2, 3) if finish_to_pp.get(p) is not None}
 
@@ -213,6 +224,19 @@ def _settle_candidates(
             if confirmed is not None:
                 hit = True
                 payout = cand.stake * confirmed
+            elif debug_misses and _debug_misses_emitted < _DEBUG_MISSES_LIMIT:
+                # combo 表記の不一致 vs 純粋な miss を切り分ける診断 log。
+                # past_odds[bet_type] の登録 combo を最大 3 件並べて、cand.combo
+                # がそれと比較して妥当かどうかを目視できるようにする。
+                _debug_misses_emitted += 1
+                bet_keys = list(past_odds.get(cand.bet_type, {}).keys())
+                top3_pps = [finish_to_pp.get(p) for p in (1, 2, 3)]
+                log.info(
+                    "[SIM_DEBUG_MISS] race=%s bet_type=%s cand.combo=%r "
+                    "past_keys=%r (sample) top3_pps=%r",
+                    race_id, cand.bet_type, cand.combo,
+                    bet_keys[:3], top3_pps,
+                )
 
         settlements.append({
             "bet_type": cand.bet_type,
