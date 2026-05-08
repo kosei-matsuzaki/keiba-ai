@@ -32,9 +32,15 @@ from keiba_ai.ai.simulation_persistence import (
     list_simulation_runs,
     save_simulation_result,
 )
-from keiba_ai.api.deps import get_engine, get_job_registry, get_session
+from keiba_ai.api.deps import (
+    get_engine,
+    get_job_registry,
+    get_session,
+    get_settings_store,
+)
 from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.schemas import JobAccepted
+from keiba_ai.core.settings_store import SettingsStore
 from keiba_ai.core.logging import get_logger
 from keiba_ai.db.models.simulation_run import SimulationRun
 from keiba_ai.db.session import session_scope
@@ -224,6 +230,7 @@ def _validate_request(
 )
 def run_simulation(
     session: Annotated[Session, Depends(get_session)],
+    settings_store: Annotated[SettingsStore, Depends(get_settings_store)],
     start: Annotated[str | None, Query(description="窓の開始日 YYYY-MM-DD")] = None,
     end: Annotated[str | None, Query(description="窓の終了日 YYYY-MM-DD")] = None,
     budget: Annotated[
@@ -270,9 +277,14 @@ def run_simulation(
             detail="アクティブなモデルがありません。Models 画面でモデルを active 化してください。",
         )
 
+    # Settings の馬券種ターゲットを simulation でも反映する
+    settings = settings_store.load()
+    enabled_bet_types = settings.get("enabled_bet_types") or None
+
     logger.info(
-        "Simulation request: window=%s..%s, budget=%d, strategy=%s",
-        start, end, budget, strategy,
+        "Simulation request: window=%s..%s, budget=%d, strategy=%s, "
+        "enabled_bet_types=%s",
+        start, end, budget, strategy, enabled_bet_types,
     )
 
     result = simulate_active_model(
@@ -283,6 +295,7 @@ def run_simulation(
         budget=budget,
         strategy=strategy,  # type: ignore[arg-type]
         max_stake_per_race_yen=max_stake_per_race_yen,
+        enabled_bet_types=enabled_bet_types,
     )
 
     # 自動保存 (上限 50 件、超過したら古い順に削除)
@@ -395,6 +408,7 @@ async def start_simulation_job(
     session: Annotated[Session, Depends(get_session)],
     registry: Annotated[JobRegistry, Depends(get_job_registry)],
     engine: Annotated[Engine, Depends(get_engine)],
+    settings_store: Annotated[SettingsStore, Depends(get_settings_store)],
     start: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
     end: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
     budget: Annotated[
@@ -430,15 +444,20 @@ async def start_simulation_job(
             detail="アクティブなモデルがありません。",
         )
 
+    settings = settings_store.load()
+    enabled_bet_types = settings.get("enabled_bet_types") or None
+
     logger.info(
-        "Simulation job submit: window=%s..%s, budget=%d, strategy=%s",
-        start, end, budget, strategy,
+        "Simulation job submit: window=%s..%s, budget=%d, strategy=%s, "
+        "enabled_bet_types=%s",
+        start, end, budget, strategy, enabled_bet_types,
     )
 
     # asyncio.create_task の中で session を作るため、Engine だけを capture。
     # request 由来の session を job loop 内で使うと scope が合わない。
     captured_engine = engine
     captured_path = Path(active_path)
+    captured_bet_types = enabled_bet_types
 
     def _run_simulation_blocking() -> int:
         """Worker thread: open new session + run + save。Returns saved run id."""
@@ -451,6 +470,7 @@ async def start_simulation_job(
                 budget=budget,
                 strategy=strategy,  # type: ignore[arg-type]
                 max_stake_per_race_yen=max_stake_per_race_yen,
+                enabled_bet_types=captured_bet_types,
             )
             saved = save_simulation_result(bg_session, result)
             saved_id = saved.id
