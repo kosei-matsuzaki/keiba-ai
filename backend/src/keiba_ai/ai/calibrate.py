@@ -536,3 +536,164 @@ class IsotonicCalibrator:
             if total > 0:
                 calibrated = calibrated / total
         return calibrated
+
+
+# ---------------------------------------------------------------------------
+# 連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の確率 calibration
+# ---------------------------------------------------------------------------
+
+
+_RENKEI_BET_TYPES: tuple[str, ...] = ("馬連", "ワイド", "馬単", "三連複", "三連単")
+
+
+class ComboCalibrators:
+    """連系 馬券種ごとに isotonic 補正を持つコンテナ。
+
+    Plackett-Luce MC で導出した combo prob は系統的に低 prob 帯で過大評価、
+    高 prob 帯で過小評価される (combo_calibration_diagnosis 参照)。
+    馬券種ごとに (PL_prob, hit) で iso fit すれば、個別 calibrator の
+    transform で歪みを吸収できる。
+
+    `predict` は **正規化を行わない** 点が IsotonicCalibrator と異なる
+    (連系 combo は race 内合計が 1 にならないので): 単純にスカラー値の
+    monotone 補正のみ。
+    """
+
+    def __init__(self) -> None:
+        self._calibrators: dict[str, IsotonicRegression] = {}
+
+    def fit_for(
+        self,
+        bet_type: str,
+        raw_probs: np.ndarray,
+        outcomes: np.ndarray,
+    ) -> None:
+        """1 馬券種分の calibrator を学習。"""
+        raw = np.asarray(raw_probs, dtype=np.float64).ravel()
+        out = np.asarray(outcomes, dtype=np.float64).ravel()
+        if raw.shape != out.shape:
+            raise ValueError(
+                f"raw_probs shape {raw.shape} != outcomes shape {out.shape}"
+            )
+        if raw.size == 0:
+            return
+        iso = IsotonicRegression(
+            out_of_bounds="clip",
+            y_min=0.0,
+            y_max=1.0,
+            increasing=True,
+        )
+        iso.fit(raw, out)
+        self._calibrators[bet_type] = iso
+
+    def predict(self, bet_type: str, raw_probs: np.ndarray) -> np.ndarray:
+        """馬券種に対応した calibrator で transform。fit していない bet_type
+        は raw を返す (後方互換)。"""
+        raw = np.asarray(raw_probs, dtype=np.float64).ravel()
+        iso = self._calibrators.get(bet_type)
+        if iso is None:
+            return raw
+        return iso.predict(raw)
+
+    def has(self, bet_type: str) -> bool:
+        return bet_type in self._calibrators
+
+    @property
+    def fitted_bet_types(self) -> list[str]:
+        return list(self._calibrators.keys())
+
+
+def fit_combo_calibrators(
+    valid_frame,  # pd.DataFrame: feature frame for valid set with finish_position + post_position
+    lambdarank_model,
+    binary_model=None,
+    single_horse_calibrator: IsotonicCalibrator | None = None,
+    n_samples: int = 5_000,
+    rng: np.random.Generator | None = None,
+) -> ComboCalibrators:
+    """Validation set 上で各 連系 馬券種の (PL_prob, hit) を集めて iso fit する。
+
+    train.py から呼び出される想定。重い処理 (race ごとに predict_race_with_combinations
+    を回す) を含むので、valid_frame の race 数 (~1000 程度) で 1-2 分。
+
+    Args:
+        valid_frame: build_training_frame の output から validation 期間を切り出したもの。
+            'race_id', 'horse_id', 'post_position', 'finish_position' を含む。
+        lambdarank_model / binary_model / single_horse_calibrator: 学習済みモデル一式。
+        n_samples: predict_race_with_combinations の MC samples。fit 時は精度を抑えて速度優先で OK。
+
+    Returns:
+        ComboCalibrators 5 馬券種分が fit された状態。
+    """
+    # NOTE: 循環 import を避けるため、predict_race_with_combinations の import は遅延。
+    from keiba_ai.ai.predict import predict_race_with_combinations
+
+    bet_types = list(_RENKEI_BET_TYPES)
+    records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
+
+    for race_id, race_frame in valid_frame.groupby("race_id"):
+        if len(race_frame) < 4:
+            continue
+        if race_frame["post_position"].isna().any():
+            continue
+        # top-3 finish_position → post_position
+        finished = race_frame.dropna(subset=["finish_position"])
+        finished = finished[finished["finish_position"].astype(int).isin([1, 2, 3])]
+        if len(finished) < 3:
+            continue
+        by_finish = {
+            int(row["finish_position"]): int(row["post_position"])
+            for _, row in finished.iterrows()
+        }
+        pp1, pp2, pp3 = by_finish.get(1), by_finish.get(2), by_finish.get(3)
+        if pp1 is None or pp2 is None or pp3 is None:
+            continue
+
+        try:
+            combo_map = predict_race_with_combinations(
+                lambdarank_model, race_frame,
+                n_samples=n_samples, rng=rng,
+                binary_model=binary_model,
+                calibrator=single_horse_calibrator,
+                # combo_calibrators は渡さない (ここで fit するための raw を集める)
+            )
+        except Exception:
+            continue
+
+        for bt in bet_types:
+            for cp in combo_map.get(bt, []):
+                hit = _is_combo_hit(bt, cp.combo, pp1, pp2, pp3)
+                records[bt].append((float(cp.prob), 1 if hit else 0))
+
+    cal = ComboCalibrators()
+    for bt, recs in records.items():
+        if len(recs) < 100:
+            # サンプル不足の bet_type は fit しない (PL prob raw のまま使う)
+            continue
+        raw = np.asarray([r[0] for r in recs], dtype=np.float64)
+        out = np.asarray([r[1] for r in recs], dtype=np.float64)
+        cal.fit_for(bt, raw, out)
+    return cal
+
+
+def _is_combo_hit(bet_type: str, combo: str, pp1: int, pp2: int, pp3: int) -> bool:
+    """連系 combo が実 top-3 と一致するか。combo_calibration_diagnosis と同じロジック。"""
+    try:
+        if bet_type == "馬連":
+            pps = sorted(int(x) for x in combo.split("-"))
+            return pps == sorted([pp1, pp2])
+        if bet_type == "ワイド":
+            pps = {int(x) for x in combo.split("-")}
+            return pps.issubset({pp1, pp2, pp3})
+        if bet_type == "馬単":
+            parts = [int(x) for x in combo.split("→")]
+            return parts == [pp1, pp2]
+        if bet_type == "三連複":
+            pps = sorted(int(x) for x in combo.split("-"))
+            return pps == sorted([pp1, pp2, pp3])
+        if bet_type == "三連単":
+            parts = [int(x) for x in combo.split("→")]
+            return parts == [pp1, pp2, pp3]
+    except (ValueError, TypeError):
+        return False
+    return False

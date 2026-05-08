@@ -22,6 +22,7 @@ import pandas as pd
 from sqlalchemy.orm import Session  # noqa: F401 — kept for API compatibility
 
 from keiba_ai.ai.calibrate import (
+    ComboCalibrators,
     IsotonicCalibrator,
     compute_all_combination_probs,
     plackett_luce_place_prob,
@@ -185,6 +186,7 @@ def predict_race_with_combinations(
     race_odds_sources: dict[str, dict[str, str]] | None = None,
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | None = None,
+    combo_calibrators: ComboCalibrators | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race with EV calculations for all combination bet types.
 
@@ -264,6 +266,19 @@ def predict_race_with_combinations(
         """
         return confirmed.get(bet_type, {}).get(combo)
 
+    def _calibrate(bet_type: str, prob: float) -> float:
+        """連系 馬券種に combo_calibrators が指定されていれば prob を補正する。
+        単勝・複勝は呼ばれない (上の専用 path で処理済み)。"""
+        if combo_calibrators is None:
+            return prob
+        if not combo_calibrators.has(bet_type):
+            return prob
+        # スカラー単発 transform。EV 計算前にここで上書きしておくと
+        # ev = prob * est で自動的に calibrated EV になる。
+        adjusted = float(combo_calibrators.predict(bet_type, np.array([prob]))[0])
+        # 万一 0 未満になる極端値を 0 にクランプ (iso は y_min=0 だが念のため)
+        return max(0.0, min(1.0, adjusted))
+
     def _est_source(bet_type: str, combo: str, has_odds: bool) -> str:
         """est_odds_source の決定ロジック。
 
@@ -324,7 +339,7 @@ def predict_race_with_combinations(
     pair_matrix: np.ndarray = combo_probs["pair"]
     umaren_list: list[CombinationPrediction] = []
     for i, j in combinations(range(n), 2):
-        prob = float(pair_matrix[i, j])
+        prob = _calibrate("馬連", float(pair_matrix[i, j]))
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_lo, pp_hi = (pp_i, pp_j) if pp_i <= pp_j else (pp_j, pp_i)
@@ -345,7 +360,7 @@ def predict_race_with_combinations(
     # ── ワイド ────────────────────────────────────────────────────────────────
     wide_list: list[CombinationPrediction] = []
     for i, j in combinations(range(n), 2):
-        prob = float(wide_matrix[i, j])
+        prob = _calibrate("ワイド", float(wide_matrix[i, j]))
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_lo, pp_hi = (pp_i, pp_j) if pp_i <= pp_j else (pp_j, pp_i)
@@ -367,7 +382,7 @@ def predict_race_with_combinations(
     ordered_pair_matrix: np.ndarray = combo_probs["ordered_pair"]
     umatan_list: list[CombinationPrediction] = []
     for i, j in permutations(range(n), 2):
-        prob = float(ordered_pair_matrix[i, j])
+        prob = _calibrate("馬単", float(ordered_pair_matrix[i, j]))
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         combo = f"{pp_i}→{pp_j}"
@@ -389,7 +404,7 @@ def predict_race_with_combinations(
     sanrenpuku_list: list[CombinationPrediction] = []
     for i, j, k in combinations(range(n), 3):
         fs = frozenset({i, j, k})
-        prob = float(triple_prob.get(fs, 0.0))
+        prob = _calibrate("三連複", float(triple_prob.get(fs, 0.0)))
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_k = int(post_positions[k])
@@ -411,7 +426,7 @@ def predict_race_with_combinations(
     # ── 三連単 ────────────────────────────────────────────────────────────────
     sanrentan_list: list[CombinationPrediction] = []
     for i, j, k in permutations(range(n), 3):
-        prob = float(ordered_triple[i, j, k])
+        prob = _calibrate("三連単", float(ordered_triple[i, j, k]))
         pp_i = int(post_positions[i])
         pp_j = int(post_positions[j])
         pp_k = int(post_positions[k])

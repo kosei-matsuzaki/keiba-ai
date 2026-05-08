@@ -188,7 +188,9 @@ def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4):
                 ))
         session.commit()
 
-    fake_bundle = SimpleNamespace(lambdarank=None, binary=None, calibrator=None)
+    fake_bundle = SimpleNamespace(
+        lambdarank=None, binary=None, calibrator=None, combo_calibrators=None,
+    )
     monkeypatch.setattr(sim_mod, "load_model_full", lambda _p: fake_bundle)
     monkeypatch.setattr(sim_mod, "predict_race", lambda _m, f, **_kw: pd.DataFrame({
         "horse_id": f["horse_id"].values, "score": [1.0] * len(f),

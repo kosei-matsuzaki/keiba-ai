@@ -335,6 +335,31 @@ def train(
     metrics.update(binary_metrics)
     log.info("All metrics: %s", metrics)
 
+    # ── Phase A 後追加: 連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の
+    # PL 由来 combo prob は系統的に長配側で過大評価される (combo_calibration_diagnosis
+    # 参照, ratio 2-7x)。馬券種ごとに isotonic 補正を学習して save_model で永続化する。
+    # 学習は valid_df 上で行うので訓練データへのリークは無い。
+    combo_calibrators = None
+    if not valid_df.empty:
+        log.info("Fitting combo calibrators on valid set (馬連/ワイド/馬単/三連複/三連単)…")
+        from keiba_ai.ai.calibrate import fit_combo_calibrators
+
+        try:
+            combo_calibrators = fit_combo_calibrators(
+                valid_frame=valid_df,
+                lambdarank_model=model,
+                binary_model=binary_model,
+                single_horse_calibrator=calibrator,
+                n_samples=5_000,
+            )
+            log.info(
+                "Combo calibrators fitted for: %s",
+                combo_calibrators.fitted_bet_types,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fit_combo_calibrators failed: %s — proceeding without combo cal", exc)
+            combo_calibrators = None
+
     # Determine date ranges
     train_range = (
         f"{train_df['date'].min()}/{train_df['date'].max()}" if not train_df.empty else None
@@ -352,6 +377,7 @@ def train(
         feature_columns=feature_cols,
         binary_model=binary_model,
         calibrator=calibrator,
+        combo_calibrators=combo_calibrators,
     )
     log.info("Model saved to %s", model_dir)
 
