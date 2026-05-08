@@ -18,7 +18,7 @@ from pathlib import Path
 import lightgbm as lgb
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.calibrate import IsotonicCalibrator
+from keiba_ai.ai.calibrate import ComboCalibrators, IsotonicCalibrator
 from keiba_ai.core.paths import data_dir
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.features.builder import FEATURE_COLUMNS
@@ -51,6 +51,7 @@ def save_model(
     feature_columns: list[str] | None = None,
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | None = None,
+    combo_calibrators: ComboCalibrators | None = None,
 ) -> Path:
     """Persist model + (optional) binary classifier + calibrator and metadata.
 
@@ -81,6 +82,13 @@ def save_model(
         with (model_dir / "calibrator.pkl").open("wb") as f:
             pickle.dump(calibrator, f)
 
+    has_combo_calibrators = (
+        combo_calibrators is not None and len(combo_calibrators.fitted_bet_types) > 0
+    )
+    if has_combo_calibrators:
+        with (model_dir / "combo_calibrators.pkl").open("wb") as f:
+            pickle.dump(combo_calibrators, f)
+
     meta = {
         "timestamp": ts,
         "params": params,
@@ -91,6 +99,10 @@ def save_model(
         "notes": notes,
         "has_binary_model": has_binary,
         "has_calibrator": has_calibrator,
+        "has_combo_calibrators": has_combo_calibrators,
+        "combo_calibrators_bet_types": (
+            combo_calibrators.fitted_bet_types if has_combo_calibrators else []
+        ),
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
@@ -135,21 +147,23 @@ def load_model(path: Path) -> lgb.Booster:
 class ModelBundle:
     """All artifacts saved alongside a model directory.
 
-    lambdarank: 順位用 Booster (必須)
-    binary:     勝率用二項分類器 (Phase 2 以降のモデルで設定)
-    calibrator: binary 出力の post-hoc 補正 (binary とセット)
+    lambdarank:        順位用 Booster (必須)
+    binary:            勝率用二項分類器 (Phase 2 以降のモデルで設定)
+    calibrator:        binary 出力の post-hoc 補正 (binary とセット)
+    combo_calibrators: 連系 馬券種ごとの PL prob 補正 (#44, optional)
     """
 
     lambdarank: lgb.Booster
     binary: lgb.Booster | None
     calibrator: IsotonicCalibrator | None
+    combo_calibrators: ComboCalibrators | None = None
 
 
 def load_model_full(path: Path) -> ModelBundle:
-    """Load lambdarank + (optional) binary classifier + calibrator.
+    """Load lambdarank + (optional) binary classifier + calibrator + combo calibrators.
 
     旧モデル (model.txt のみ) でも安全にロード可能。
-    binary.txt / calibrator.pkl が無ければ None を返す。
+    binary.txt / calibrator.pkl / combo_calibrators.pkl が無ければ None を返す。
     """
     if not path.is_dir():
         # path が model.txt 直接指定なら lambdarank のみで返す
@@ -157,6 +171,7 @@ def load_model_full(path: Path) -> ModelBundle:
             lambdarank=lgb.Booster(model_file=str(path)),
             binary=None,
             calibrator=None,
+            combo_calibrators=None,
         )
 
     lambdarank = lgb.Booster(model_file=str(path / "model.txt"))
@@ -170,7 +185,18 @@ def load_model_full(path: Path) -> ModelBundle:
         with calibrator_path.open("rb") as f:
             calibrator = pickle.load(f)
 
-    return ModelBundle(lambdarank=lambdarank, binary=binary, calibrator=calibrator)
+    combo_cal_path = path / "combo_calibrators.pkl"
+    combo_calibrators = None
+    if combo_cal_path.exists():
+        with combo_cal_path.open("rb") as f:
+            combo_calibrators = pickle.load(f)
+
+    return ModelBundle(
+        lambdarank=lambdarank,
+        binary=binary,
+        calibrator=calibrator,
+        combo_calibrators=combo_calibrators,
+    )
 
 
 def set_active(model_path: Path, session: Session) -> None:

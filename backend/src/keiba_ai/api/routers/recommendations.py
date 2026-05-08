@@ -151,6 +151,7 @@ def get_recommendations(
         race_odds_sources=race_odds_sources,
         binary_model=bundle.binary,
         calibrator=bundle.calibrator,
+        combo_calibrators=bundle.combo_calibrators,
     )
 
     # Step 6: load settings and run recommendation logic

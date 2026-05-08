@@ -362,6 +362,7 @@ def simulate_active_model(
                 race_odds_sources=race_odds_sources,
                 binary_model=bundle.binary,
                 calibrator=bundle.calibrator,
+                combo_calibrators=bundle.combo_calibrators,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)

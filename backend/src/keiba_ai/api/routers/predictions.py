@@ -168,6 +168,7 @@ def get_predictions(
             top_k_combinations=top_k,
             binary_model=bundle.binary,
             calibrator=bundle.calibrator,
+            combo_calibrators=bundle.combo_calibrators,
         )
         combinations_out = CombinationPredictions(
             tansho=combo_map.get("単勝", []),
