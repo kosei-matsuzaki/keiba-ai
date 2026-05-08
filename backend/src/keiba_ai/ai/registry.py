@@ -174,12 +174,41 @@ def load_model_full(path: Path) -> ModelBundle:
 
 
 def set_active(model_path: Path, session: Session) -> None:
-    """Mark the model at model_path as active; deactivate all others."""
-    path_str = str(model_path)
+    """Mark the model at model_path as active; deactivate all others.
+
+    パス比較は basename (timestamp ディレクトリ名) ベースで行う。これにより
+    WSL で保存した `/mnt/c/...` を Windows サイドカーから activate しても
+    正しく一致する (Path() の str() 化で起こる区切り文字の差を回避)。
+    """
+    target_name = Path(model_path).name
     runs = session.query(ModelRun).all()
     for run in runs:
-        run.is_active = 1 if run.model_path == path_str else 0
+        run.is_active = 1 if Path(run.model_path).name == target_name else 0
     session.flush()
+
+
+def set_active_by_id(model_id: int, session: Session) -> None:
+    """Activate by ModelRun.id directly. パス比較不要なので最も堅牢。"""
+    runs = session.query(ModelRun).all()
+    for run in runs:
+        run.is_active = 1 if run.id == model_id else 0
+    session.flush()
+
+
+def _resolve_model_path(stored_path: str) -> Path:
+    """DB に格納された model_path を、現在の data_dir で解決し直す。
+
+    WSL で保存した `/mnt/c/.../data/models/<ts>` のようなパスを Windows サイド
+    カーから扱うとき、Path 解釈で実ファイルにたどり着けないことがある。
+    basename (= timestamp ディレクトリ名) を取り出して `data_dir() / "models"
+    / <ts>` に再配置することで、現プラットフォームに依存しない解決ができる。
+    再配置先が存在しなければ元の path をそのまま返す (後方互換)。
+    """
+    raw = Path(stored_path)
+    fallback = data_dir() / "models" / raw.name
+    if fallback.exists():
+        return fallback
+    return raw
 
 
 def get_active(session: Session) -> Path | None:
@@ -187,4 +216,4 @@ def get_active(session: Session) -> Path | None:
     run = session.query(ModelRun).filter(ModelRun.is_active == 1).first()
     if run is None:
         return None
-    return Path(run.model_path)
+    return _resolve_model_path(run.model_path)
