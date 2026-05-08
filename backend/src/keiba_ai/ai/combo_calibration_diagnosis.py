@@ -131,6 +131,7 @@ def diagnose_combo_calibration(
                     model, race_frame,
                     binary_model=bundle.binary,
                     calibrator=bundle.calibrator,
+                    combo_calibrators=bundle.combo_calibrators,
                 )
             except Exception as exc:
                 log.warning("predict_race_with_combinations failed for %s: %s",
