@@ -15,6 +15,7 @@ from keiba_ai.db.base import Base
 from keiba_ai.db.session import session_scope
 from keiba_ai.features.builder import (
     FEATURE_COLUMNS,
+    HIGH_CARDINALITY_ID_FEATURES,
     ODDS_FEATURE_COLUMNS,
     build_inference_frame,
     build_training_frame,
@@ -192,6 +193,48 @@ def test_feature_columns_count():
     24 original + 14 (PR-C extensions) + 3 (Q4 race-level) + 5 (Phase B margin/passing).
     """
     assert len(FEATURE_COLUMNS) == 46
+
+
+def test_high_cardinality_id_features_not_in_feature_columns():
+    """sire_id / dam_sire_id は高基数 ID のため FEATURE_COLUMNS に含まれてはならない。
+
+    LightGBM での高基数カテゴリ特徴量は過学習・メモリ増大を招くため除外する。
+    代わりに sire_progeny_win_rate / dam_progeny_win_rate の集約特徴量を使う。
+    このテストは将来の誤追加に対するリグレッションガードである。
+    """
+    feature_set = set(FEATURE_COLUMNS)
+    for col in HIGH_CARDINALITY_ID_FEATURES:
+        assert col not in feature_set, (
+            f"{col!r} は高基数 ID 特徴量のため FEATURE_COLUMNS に含めてはならない。"
+            " sire_progeny_win_rate / dam_progeny_win_rate などの集約特徴量を使うこと。"
+        )
+
+
+def test_high_cardinality_id_features_not_in_training_frame(syn_engine):
+    """build_training_frame が sire_id / dam_sire_id を出力しないことを確認する。
+
+    ガード処理が正しく機能しているかの実行時リグレッションテスト。
+    """
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session)
+
+    for col in HIGH_CARDINALITY_ID_FEATURES:
+        assert col not in df.columns, (
+            f"{col!r} が training frame に混入している。builder.py のガードを確認すること。"
+        )
+
+
+def test_pedigree_aggregate_features_present_in_feature_columns():
+    """集約された血統特徴量は FEATURE_COLUMNS に含まれている必要がある。
+
+    高基数 ID を除去した代わりに集約特徴量が維持されていることを確認する。
+    """
+    assert "sire_progeny_win_rate" in FEATURE_COLUMNS, (
+        "sire_progeny_win_rate が FEATURE_COLUMNS から欠落している"
+    )
+    assert "dam_progeny_win_rate" in FEATURE_COLUMNS, (
+        "dam_progeny_win_rate が FEATURE_COLUMNS から欠落している"
+    )
 
 
 # ── Frame caching ─────────────────────────────────────────────────────────────

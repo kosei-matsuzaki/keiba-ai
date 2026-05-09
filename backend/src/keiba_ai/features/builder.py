@@ -138,6 +138,16 @@ CATEGORICAL_FEATURES: list[str] = [
     "sex",
 ]
 
+# 高基数 ID 特徴量 — FEATURE_COLUMNS には絶対に含めない。
+# sire_id / dam_sire_id は netkeiba の馬 ID（10 桁英数字）であり、
+# ユニークな値の種類が数万に及ぶ。LightGBM のカテゴリ分岐では
+# 有効な汎化ができず過学習・メモリ増大を招くため除外する。
+# 代わりに集約特徴量（sire_progeny_win_rate / dam_progeny_win_rate）を使う。
+HIGH_CARDINALITY_ID_FEATURES: list[str] = [
+    "sire_id",
+    "dam_sire_id",
+]
+
 # 単勝オッズ由来の特徴量。市場予想を直接 model に流し込みたくない A/B 評価で
 # 除外可能にしておく。KEIBA_EXCLUDE_ODDS_FEATURES=1 のとき get_active_features
 # はこれらを取り除いた FEATURE_COLUMNS を返す。
@@ -506,6 +516,18 @@ def build_training_frame(
         if col not in df.columns:
             df[col] = float("nan")
 
+    # Guard: 高基数 ID 特徴量が混入していた場合に除去する。
+    # sire_id / dam_sire_id は netkeiba の馬 ID であり FEATURE_COLUMNS に含まれない。
+    # 将来の feature builder 変更で誤って行に追加されても学習データに入らないよう
+    # ここで明示的に drop する。
+    _id_cols_in_df = [c for c in HIGH_CARDINALITY_ID_FEATURES if c in df.columns]
+    if _id_cols_in_df:
+        log.warning(
+            "Dropping high-cardinality ID columns from training frame: %s",
+            _id_cols_in_df,
+        )
+        df = df.drop(columns=_id_cols_in_df)
+
     if cache_active and cache_key is not None:
         _frame_cache_save(cache_key, df)
 
@@ -533,6 +555,16 @@ def build_inference_frame(session: Session, race_id: str) -> pd.DataFrame:
     for col in FEATURE_COLUMNS:
         if col not in df.columns:
             df[col] = float("nan")
+
+    # Guard: 高基数 ID 特徴量が混入していた場合に除去する（build_training_frame と同様）。
+    _id_cols_in_df = [c for c in HIGH_CARDINALITY_ID_FEATURES if c in df.columns]
+    if _id_cols_in_df:
+        log.warning(
+            "Dropping high-cardinality ID columns from inference frame: %s",
+            _id_cols_in_df,
+        )
+        df = df.drop(columns=_id_cols_in_df)
+
     return df
 
 
