@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session  # noqa: F401 — kept for API compatibility
 
 from keiba_ai.ai.calibrate import (
     ComboCalibrators,
+    ConditionalIsotonicCalibrator,
     IsotonicCalibrator,
     compute_all_combination_probs,
     plackett_luce_place_prob,
@@ -79,7 +80,7 @@ def predict_race(
     model: lgb.Booster,
     frame: pd.DataFrame,
     binary_model: lgb.Booster | None = None,
-    calibrator: IsotonicCalibrator | None = None,
+    calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
 ) -> pd.DataFrame:
     """Score all horses in a single race and return calibrated probabilities.
@@ -126,7 +127,26 @@ def predict_race(
         # use its own feature_name() instead of the lambdarank model's.
         X_binary = _prepare_features(frame, model=binary_model)
         raw_win = binary_model.predict(X_binary)
-        win_probs = calibrator.predict(raw_win, normalise=True)
+        if isinstance(calibrator, ConditionalIsotonicCalibrator):
+            # Build per-entry conditions for the conditional calibrator.
+            n_runners_val = (
+                int(frame["n_runners"].iloc[0])
+                if "n_runners" in frame.columns
+                else len(frame)
+            )
+            cond_df = pd.DataFrame(
+                {
+                    "surface": (
+                        frame["surface"].values
+                        if "surface" in frame.columns
+                        else ["unknown"] * len(frame)
+                    ),
+                    "n_runners": n_runners_val,
+                }
+            )
+            win_probs = calibrator.predict(raw_win, cond_df, normalise=True)
+        else:
+            win_probs = calibrator.predict(raw_win, normalise=True)
     else:
         # Backward-compat: softmax(lambdarank scores)
         win_probs = softmax_within_race(scores)
@@ -195,7 +215,7 @@ def predict_race_with_combinations(
     race_odds: dict[str, dict[str, float]] | None = None,
     race_odds_sources: dict[str, dict[str, str]] | None = None,
     binary_model: lgb.Booster | None = None,
-    calibrator: IsotonicCalibrator | None = None,
+    calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     combo_calibrators: ComboCalibrators | None = None,
     loss_type: str | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
@@ -279,6 +299,14 @@ def predict_race_with_combinations(
         """
         return confirmed.get(bet_type, {}).get(combo)
 
+    # Build a single-row conditions DataFrame for this race (used only when
+    # the combo_calibrators contains ConditionalIsotonicCalibrator instances).
+    _race_surface = str(frame["surface"].iloc[0]) if "surface" in frame.columns else "unknown"
+    _race_n_runners = int(frame["n_runners"].iloc[0]) if "n_runners" in frame.columns else n
+    _race_conditions = pd.DataFrame(
+        {"surface": [_race_surface], "n_runners": [_race_n_runners]}
+    )
+
     def _calibrate(bet_type: str, prob: float) -> float:
         """連系 馬券種に combo_calibrators が指定されていれば prob を補正する。
         単勝・複勝は呼ばれない (上の専用 path で処理済み)。"""
@@ -288,7 +316,10 @@ def predict_race_with_combinations(
             return prob
         # スカラー単発 transform。EV 計算前にここで上書きしておくと
         # ev = prob * est で自動的に calibrated EV になる。
-        adjusted = float(combo_calibrators.predict(bet_type, np.array([prob]))[0])
+        # ConditionalIsotonicCalibrator の場合は race-level conditions を渡す。
+        adjusted = float(
+            combo_calibrators.predict(bet_type, np.array([prob]), conditions=_race_conditions)[0]
+        )
         # 万一 0 未満になる極端値を 0 にクランプ (iso は y_min=0 だが念のため)
         return max(0.0, min(1.0, adjusted))
 
@@ -465,7 +496,7 @@ def predict_race_with_shap(
     frame: pd.DataFrame,
     top_n: int = 3,
     binary_model: lgb.Booster | None = None,
-    calibrator: IsotonicCalibrator | None = None,
+    calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
 ) -> pd.DataFrame:
     """Same as predict_race but adds a 'top_features' column (list[str]).

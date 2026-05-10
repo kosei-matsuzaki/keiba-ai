@@ -13,6 +13,7 @@ from __future__ import annotations
 from itertools import combinations, permutations
 
 import numpy as np
+import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
 
@@ -539,6 +540,139 @@ class IsotonicCalibrator:
 
 
 # ---------------------------------------------------------------------------
+# Conditional isotonic calibration — surface × n_runners bin 別
+# ---------------------------------------------------------------------------
+
+
+def _n_runners_bin(n: int) -> int:
+    """Map n_runners to a discrete bin index (0..3).
+
+    Bins: 0 = <=8, 1 = 9-12, 2 = 13-15, 3 = 16+.
+    """
+    if n <= 8:
+        return 0
+    if n <= 12:
+        return 1
+    if n <= 15:
+        return 2
+    return 3
+
+
+class ConditionalIsotonicCalibrator:
+    """Post-hoc isotonic calibrator stratified by (surface, n_runners_bin).
+
+    Fits one IsotonicRegression per (surface × n_runners_bin) stratum where
+    sample count meets min_samples_per_bin.  Strata with too few samples fall
+    back to a global IsotonicRegression fit on all data.
+
+    n_runners_bin mapping: <=8 → 0, 9-12 → 1, 13-15 → 2, 16+ → 3.
+
+    Usage:
+        cal = ConditionalIsotonicCalibrator()
+        cal.fit(raw_valid_probs, valid_is_winner, conditions_df)
+        calibrated = cal.predict(raw_probs, conditions_df)
+
+    conditions_df must have columns ['surface', 'n_runners'], one row per
+    element of raw_probs / target.
+    """
+
+    def __init__(self, min_samples_per_bin: int = 100) -> None:
+        self._calibrators: dict[tuple, IsotonicRegression] = {}
+        self._global: IsotonicRegression = IsotonicRegression(
+            out_of_bounds="clip", y_min=0.0, y_max=1.0, increasing=True
+        )
+        self._global_fitted: bool = False
+        self._min_samples_per_bin = min_samples_per_bin
+
+    def fit(
+        self,
+        raw: np.ndarray,
+        target: np.ndarray,
+        conditions: pd.DataFrame,
+    ) -> None:
+        """Fit global fallback and per-stratum calibrators.
+
+        Args:
+            raw: 1-D array of raw probabilities.
+            target: 1-D array of 0/1 outcomes (e.g. is_winner).
+            conditions: DataFrame with columns ['surface', 'n_runners'],
+                same length as raw/target.
+        """
+        raw_arr = np.asarray(raw, dtype=np.float64).ravel()
+        tgt_arr = np.asarray(target, dtype=np.float64).ravel()
+
+        if raw_arr.shape != tgt_arr.shape:
+            raise ValueError(
+                f"raw shape {raw_arr.shape} != target shape {tgt_arr.shape}"
+            )
+        if len(raw_arr) != len(conditions):
+            raise ValueError(
+                f"raw length {len(raw_arr)} != conditions length {len(conditions)}"
+            )
+
+        # Global fallback — fit on all data.
+        self._global.fit(raw_arr, tgt_arr)
+        self._global_fitted = True
+
+        # Per-stratum fits.
+        bins = conditions["n_runners"].apply(_n_runners_bin).values
+        surfaces = conditions["surface"].values
+
+        # Group by (surface, bin).
+        # Build a structured array of (surface_str, bin_int) keys.
+        unique_keys = set(zip(surfaces.tolist(), bins.tolist()))
+        for surf, b in unique_keys:
+            mask = (surfaces == surf) & (bins == b)
+            count = int(mask.sum())
+            if count < self._min_samples_per_bin:
+                continue
+            iso = IsotonicRegression(
+                out_of_bounds="clip", y_min=0.0, y_max=1.0, increasing=True
+            )
+            iso.fit(raw_arr[mask], tgt_arr[mask])
+            self._calibrators[(surf, b)] = iso
+
+    def predict(
+        self,
+        raw: np.ndarray,
+        conditions: pd.DataFrame,
+        normalise: bool = False,
+    ) -> np.ndarray:
+        """Apply per-stratum calibration with global fallback.
+
+        Args:
+            raw: 1-D array of raw probabilities.
+            conditions: DataFrame with columns ['surface', 'n_runners'],
+                same length as raw.
+            normalise: If True, divide result by its sum so it forms a proper
+                distribution (only meaningful when raw covers one full race).
+
+        Returns:
+            Calibrated probabilities (same shape as raw).
+        """
+        if not self._global_fitted:
+            raise RuntimeError(
+                "ConditionalIsotonicCalibrator must be fit() before predict()"
+            )
+        raw_arr = np.asarray(raw, dtype=np.float64).ravel()
+        result = np.empty_like(raw_arr)
+
+        bins = conditions["n_runners"].apply(_n_runners_bin).values
+        surfaces = conditions["surface"].values
+
+        for i, (surf, b) in enumerate(zip(surfaces.tolist(), bins.tolist())):
+            iso = self._calibrators.get((surf, b), self._global)
+            result[i] = float(iso.predict(raw_arr[i : i + 1])[0])
+
+        if normalise:
+            total = result.sum()
+            if total > 0:
+                result = result / total
+
+        return result
+
+
+# ---------------------------------------------------------------------------
 # 連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の確率 calibration
 # ---------------------------------------------------------------------------
 
@@ -557,18 +691,34 @@ class ComboCalibrators:
     `predict` は **正規化を行わない** 点が IsotonicCalibrator と異なる
     (連系 combo は race 内合計が 1 にならないので): 単純にスカラー値の
     monotone 補正のみ。
+
+    use_conditional=True のとき内部の isotonic を ConditionalIsotonicCalibrator
+    に切り替える。各馬券種ごとに conditions (surface × n_runners) 別の補正を
+    学習・適用できる。
     """
 
-    def __init__(self) -> None:
-        self._calibrators: dict[str, IsotonicRegression] = {}
+    def __init__(self, use_conditional: bool = False) -> None:
+        # When use_conditional is True, values are ConditionalIsotonicCalibrator;
+        # otherwise, they are plain IsotonicRegression (backward-compat).
+        self._calibrators: dict[str, IsotonicRegression | ConditionalIsotonicCalibrator] = {}
+        self._use_conditional = use_conditional
 
     def fit_for(
         self,
         bet_type: str,
         raw_probs: np.ndarray,
         outcomes: np.ndarray,
+        conditions: pd.DataFrame | None = None,
     ) -> None:
-        """1 馬券種分の calibrator を学習。"""
+        """1 馬券種分の calibrator を学習。
+
+        Args:
+            bet_type: Bet type label (e.g. '馬連').
+            raw_probs: 1-D array of raw PL probabilities.
+            outcomes: 1-D array of 0/1 hit outcomes.
+            conditions: DataFrame with ['surface', 'n_runners'] required when
+                use_conditional=True.  Ignored when use_conditional=False.
+        """
         raw = np.asarray(raw_probs, dtype=np.float64).ravel()
         out = np.asarray(outcomes, dtype=np.float64).ravel()
         if raw.shape != out.shape:
@@ -577,30 +727,82 @@ class ComboCalibrators:
             )
         if raw.size == 0:
             return
-        iso = IsotonicRegression(
-            out_of_bounds="clip",
-            y_min=0.0,
-            y_max=1.0,
-            increasing=True,
-        )
-        iso.fit(raw, out)
-        self._calibrators[bet_type] = iso
 
-    def predict(self, bet_type: str, raw_probs: np.ndarray) -> np.ndarray:
+        if self._use_conditional:
+            if conditions is None:
+                raise ValueError(
+                    "conditions DataFrame required when use_conditional=True"
+                )
+            cal: IsotonicRegression | ConditionalIsotonicCalibrator = (
+                ConditionalIsotonicCalibrator()
+            )
+            cal.fit(raw, out, conditions)
+        else:
+            iso = IsotonicRegression(
+                out_of_bounds="clip",
+                y_min=0.0,
+                y_max=1.0,
+                increasing=True,
+            )
+            iso.fit(raw, out)
+            cal = iso
+        self._calibrators[bet_type] = cal
+
+    def predict(
+        self,
+        bet_type: str,
+        raw_probs: np.ndarray,
+        conditions: pd.DataFrame | None = None,
+    ) -> np.ndarray:
         """馬券種に対応した calibrator で transform。fit していない bet_type
-        は raw を返す (後方互換)。"""
+        は raw を返す (後方互換)。
+
+        Args:
+            bet_type: Bet type label.
+            raw_probs: 1-D array of raw probabilities.
+            conditions: Required when the stored calibrator is a
+                ConditionalIsotonicCalibrator (i.e. use_conditional=True was
+                used at fit time).
+        """
         raw = np.asarray(raw_probs, dtype=np.float64).ravel()
-        iso = self._calibrators.get(bet_type)
-        if iso is None:
+        cal = self._calibrators.get(bet_type)
+        if cal is None:
             return raw
-        return iso.predict(raw)
+        if isinstance(cal, ConditionalIsotonicCalibrator):
+            if conditions is None:
+                raise ValueError(
+                    "conditions DataFrame required for ConditionalIsotonicCalibrator predict"
+                )
+            return cal.predict(raw, conditions)
+        return cal.predict(raw)
 
     def has(self, bet_type: str) -> bool:
         return bet_type in self._calibrators
 
     @property
+    def use_conditional(self) -> bool:
+        return self._use_conditional
+
+    @property
     def fitted_bet_types(self) -> list[str]:
         return list(self._calibrators.keys())
+
+
+def _build_conditions_for_race(race_frame: pd.DataFrame) -> pd.DataFrame:
+    """Build a per-entry conditions DataFrame from race_frame.
+
+    Extracts 'surface' (entry-level column already in the feature frame) and
+    'n_runners' (computed from race size and broadcast to all entries).
+    Returns a DataFrame with columns ['surface', 'n_runners'] aligned to
+    race_frame's index.
+    """
+    n = len(race_frame)
+    surface = race_frame["surface"].values if "surface" in race_frame.columns else ["unknown"] * n
+    n_runners_val = int(race_frame["n_runners"].iloc[0]) if "n_runners" in race_frame.columns else n
+    return pd.DataFrame(
+        {"surface": surface, "n_runners": n_runners_val},
+        index=race_frame.index,
+    )
 
 
 def fit_combo_calibrators(
@@ -610,6 +812,7 @@ def fit_combo_calibrators(
     single_horse_calibrator: IsotonicCalibrator | None = None,
     n_samples: int = 5_000,
     rng: np.random.Generator | None = None,
+    use_conditional: bool = False,
 ) -> ComboCalibrators:
     """Validation set 上で各 連系 馬券種の (PL_prob, hit) を集めて iso fit する。
 
@@ -621,6 +824,8 @@ def fit_combo_calibrators(
             'race_id', 'horse_id', 'post_position', 'finish_position' を含む。
         lambdarank_model / binary_model / single_horse_calibrator: 学習済みモデル一式。
         n_samples: predict_race_with_combinations の MC samples。fit 時は精度を抑えて速度優先で OK。
+        use_conditional: True のとき、各馬券種の isotonic を ConditionalIsotonicCalibrator
+            (surface × n_runners bin 別) で学習する。False (default) は従来の global iso。
 
     Returns:
         ComboCalibrators 5 馬券種分が fit された状態。
@@ -630,6 +835,8 @@ def fit_combo_calibrators(
 
     bet_types = list(_RENKEI_BET_TYPES)
     records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
+    # conditions per record: (surface_str, n_runners_int)
+    cond_records: dict[str, list[tuple[str, int]]] = {bt: [] for bt in bet_types}
 
     for race_id, race_frame in valid_frame.groupby("race_id"):
         if len(race_frame) < 4:
@@ -660,19 +867,33 @@ def fit_combo_calibrators(
         except Exception:
             continue
 
+        # Race-level condition info for conditional calibration.
+        surf = str(race_frame["surface"].iloc[0]) if "surface" in race_frame.columns else "unknown"
+        n_runners_val = (
+            int(race_frame["n_runners"].iloc[0])
+            if "n_runners" in race_frame.columns
+            else len(race_frame)
+        )
+
         for bt in bet_types:
             for cp in combo_map.get(bt, []):
                 hit = _is_combo_hit(bt, cp.combo, pp1, pp2, pp3)
                 records[bt].append((float(cp.prob), 1 if hit else 0))
+                cond_records[bt].append((surf, n_runners_val))
 
-    cal = ComboCalibrators()
+    cal = ComboCalibrators(use_conditional=use_conditional)
     for bt, recs in records.items():
         if len(recs) < 100:
             # サンプル不足の bet_type は fit しない (PL prob raw のまま使う)
             continue
         raw = np.asarray([r[0] for r in recs], dtype=np.float64)
         out = np.asarray([r[1] for r in recs], dtype=np.float64)
-        cal.fit_for(bt, raw, out)
+        if use_conditional:
+            conds = cond_records[bt]
+            cond_df = pd.DataFrame(conds, columns=["surface", "n_runners"])
+            cal.fit_for(bt, raw, out, conditions=cond_df)
+        else:
+            cal.fit_for(bt, raw, out)
     return cal
 
 

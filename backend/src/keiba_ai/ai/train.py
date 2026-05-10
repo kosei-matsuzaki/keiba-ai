@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import ndcg_score
 
-from keiba_ai.ai.calibrate import IsotonicCalibrator
+from keiba_ai.ai.calibrate import ConditionalIsotonicCalibrator, IsotonicCalibrator
 from keiba_ai.ai.cv import rolling_origin_splits
 from keiba_ai.ai.labels import assign_is_winner, assign_relevance
 from keiba_ai.ai.pl_loss import plackett_luce_eval_metric, plackett_luce_objective
@@ -313,7 +313,14 @@ def _train_single_split(
     params: dict,
     recency_lambda: float = 0.0,
     loss: str = "lambdarank",
-) -> tuple[lgb.Booster, lgb.Booster | None, IsotonicCalibrator | None, object, dict]:
+    conditional_calibration: bool = False,
+) -> tuple[
+    lgb.Booster,
+    lgb.Booster | None,
+    IsotonicCalibrator | ConditionalIsotonicCalibrator | None,
+    object,
+    dict,
+]:
     """Train lambdarank/PL + (optional) binary + calibrator + combo on one (train, valid, test) split.
 
     When recency_lambda > 0, sample weights are applied to both lambdarank
@@ -321,6 +328,8 @@ def _train_single_split(
     When loss == "plackett_luce", a custom PL objective is used and the binary
     classifier/calibrator are skipped (softmax(score) is the calibrated win
     probability).
+    When conditional_calibration=True, isotonic / combo calibrators are fit
+    per (surface, n_runners_bin) bucket with global fallback.
 
     Returns:
         (model, binary_model, calibrator, combo_calibrators, metrics)
@@ -449,6 +458,40 @@ def _train_single_split(
             train_df, valid_df, feature_cols, params, recency_lambda=recency_lambda
         )
         metrics.update(binary_metrics)
+
+        # ── conditional calibration: replace global isotonic with per-stratum one ─
+        if conditional_calibration and not valid_df.empty:
+            log.info("Fitting ConditionalIsotonicCalibrator (surface × n_runners bin)…")
+            feature_cols_binary = list(binary_model.feature_name())
+            valid_X_cond = valid_df[feature_cols_binary].copy()
+            for col in CATEGORICAL_FEATURES:
+                if col in valid_X_cond.columns:
+                    valid_X_cond[col] = valid_X_cond[col].astype("category")
+            valid_raw_cond = binary_model.predict(valid_X_cond)
+            valid_y_cond = valid_df["finish_position"].map(
+                lambda p: 1 if p == 1 else 0
+            ).values.astype(np.float32)
+
+            # Build conditions DataFrame from valid_df.
+            n_runners_col = (
+                valid_df["n_runners"]
+                if "n_runners" in valid_df.columns
+                else valid_df.groupby("race_id")["horse_id"].transform("count")
+            )
+            cond_df = pd.DataFrame(
+                {
+                    "surface": valid_df["surface"].values if "surface" in valid_df.columns else "unknown",
+                    "n_runners": n_runners_col.values,
+                }
+            )
+            cond_calibrator = ConditionalIsotonicCalibrator()
+            cond_calibrator.fit(valid_raw_cond, valid_y_cond, cond_df)
+            calibrator = cond_calibrator
+            log.info(
+                "ConditionalIsotonicCalibrator fitted with %d strata",
+                len(cond_calibrator._calibrators),
+            )
+
     log.info("All metrics: %s", metrics)
 
     # ── Phase A 後追加: 連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の
@@ -467,6 +510,7 @@ def _train_single_split(
                 binary_model=binary_model,
                 single_horse_calibrator=calibrator,
                 n_samples=5_000,
+                use_conditional=conditional_calibration,
             )
             log.info(
                 "Combo calibrators fitted for: %s",
@@ -516,6 +560,7 @@ def train(
     cv_folds: int = 1,
     recency_lambda: float = 0.0,
     loss: str = "lambdarank",
+    conditional_calibration: bool = False,
 ) -> dict:
     """Run the full training pipeline. Returns metrics dict.
 
@@ -536,6 +581,10 @@ def train(
         loss: "lambdarank" (default, backward-compatible) or "plackett_luce".
             In PL mode the binary classifier and calibrator are not trained;
             softmax(score) within each race gives calibrated win probabilities.
+        conditional_calibration: If True, fit the isotonic calibrator and combo
+            calibrators per (surface, n_runners_bin) bucket with global fallback
+            on sparse strata.  Default False keeps backward-compatible global
+            isotonic regression.
     """
     if loss not in ("lambdarank", "plackett_luce"):
         raise ValueError(f"Unknown loss type: {loss!r}. Choose 'lambdarank' or 'plackett_luce'.")
@@ -580,6 +629,7 @@ def train(
             n_folds=cv_folds,
             recency_lambda=recency_lambda,
             loss=loss,
+            conditional_calibration=conditional_calibration,
         )
 
     # ── Single-split path (cv_folds == 1, original behaviour) ────────────────
@@ -609,6 +659,7 @@ def train(
     model, binary_model, calibrator, combo_calibrators, metrics = _train_single_split(
         train_df, valid_df, test_df, feature_cols, params,
         recency_lambda=recency_lambda, loss=loss,
+        conditional_calibration=conditional_calibration,
     )
 
     return _save_and_register(
@@ -623,6 +674,7 @@ def train(
         valid_df=valid_df,
         metrics=metrics,
         loss=loss,
+        conditional_calibration=conditional_calibration,
     )
 
 
@@ -636,6 +688,7 @@ def _train_with_cv(
     n_folds: int,
     recency_lambda: float = 0.0,
     loss: str = "lambdarank",
+    conditional_calibration: bool = False,
 ) -> dict:
     """Rolling-origin CV training.  Saves/registers only the most-recent fold's model."""
     log.info("Starting rolling-origin CV with %d folds.", n_folds)
@@ -659,6 +712,7 @@ def _train_with_cv(
         model, binary_model, calibrator, combo_calibrators, fold_metrics = _train_single_split(
             train_df, valid_df, test_df, feature_cols, params,
             recency_lambda=recency_lambda, loss=loss,
+            conditional_calibration=conditional_calibration,
         )
         per_fold_metrics.append(fold_metrics)
 
@@ -702,6 +756,7 @@ def _train_with_cv(
         valid_df=valid_df,
         metrics=canonical_metrics,
         loss=loss,
+        conditional_calibration=conditional_calibration,
     )
 
 
@@ -710,7 +765,7 @@ def _save_and_register(
     engine,
     model: lgb.Booster,
     binary_model: lgb.Booster | None,
-    calibrator: IsotonicCalibrator | None,
+    calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None,
     combo_calibrators,
     params: dict,
     feature_cols: list[str],
@@ -718,6 +773,7 @@ def _save_and_register(
     valid_df: pd.DataFrame,
     metrics: dict,
     loss: str = "lambdarank",
+    conditional_calibration: bool = False,
 ) -> dict:
     """Persist model files and insert a model_runs DB row. Returns result dict."""
     train_range = (
@@ -743,6 +799,7 @@ def _save_and_register(
         calibrator=calibrator,
         combo_calibrators=combo_calibrators,
         loss_type=loss,
+        conditional_calibration=conditional_calibration,
     )
     log.info("Model saved to %s", model_dir)
 
@@ -816,6 +873,16 @@ def _cli() -> None:
             "softmax(score) directly gives calibrated win probabilities (no binary head)."
         ),
     )
+    parser.add_argument(
+        "--conditional-calibration",
+        action="store_true",
+        default=False,
+        help=(
+            "Use ConditionalIsotonicCalibrator (surface × n_runners bin) "
+            "for isotonic calibration and combo calibrators.  Default is "
+            "False (backward-compatible global isotonic regression)."
+        ),
+    )
     args = parser.parse_args()
 
     result = train(
@@ -827,6 +894,7 @@ def _cli() -> None:
         cv_folds=args.cv_folds,
         recency_lambda=args.recency_lambda,
         loss=args.loss,
+        conditional_calibration=args.conditional_calibration,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

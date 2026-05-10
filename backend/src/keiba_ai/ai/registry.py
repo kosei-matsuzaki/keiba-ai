@@ -34,6 +34,7 @@ class ModelMeta:
     metrics: dict
     feature_columns: list[str]
     loss_type: str | None = None
+    conditional_calibration: bool = False
 
 
 def _models_dir() -> Path:
@@ -54,6 +55,7 @@ def save_model(
     calibrator: IsotonicCalibrator | None = None,
     combo_calibrators: ComboCalibrators | None = None,
     loss_type: str | None = None,
+    conditional_calibration: bool = False,
 ) -> Path:
     """Persist model + (optional) binary classifier + calibrator and metadata.
 
@@ -106,6 +108,7 @@ def save_model(
             combo_calibrators.fitted_bet_types if has_combo_calibrators else []
         ),
         "loss_type": loss_type,
+        "conditional_calibration": conditional_calibration,
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
@@ -131,6 +134,7 @@ def list_models() -> list[ModelMeta]:
                 metrics=meta.get("metrics", {}),
                 feature_columns=meta.get("feature_columns", FEATURE_COLUMNS),
                 loss_type=meta.get("loss_type"),
+                conditional_calibration=bool(meta.get("conditional_calibration", False)),
             )
         )
     return results
