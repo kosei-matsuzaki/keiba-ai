@@ -166,6 +166,27 @@ def test_train_plackett_luce_runs(syn_engine, tmp_path, monkeypatch):
         assert key in result
 
 
+def test_train_with_conditional_calibration(syn_engine, tmp_path, monkeypatch):
+    """--conditional-calibration 経路で train が完走し meta.json に flag が保存される。"""
+    engine, db_file = syn_engine
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        conditional_calibration=True,
+    )
+
+    model_dir = Path(result["model_dir"])
+    assert (model_dir / "model.txt").exists()
+    assert (model_dir / "meta.json").exists()
+
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("conditional_calibration") is True
+
+
 def test_train_with_zero_valid_does_not_leak_test(syn_engine, tmp_path, monkeypatch):
     """valid_months=0 で valid が空でも、train_df に test 行が混ざってはいけない。
 
