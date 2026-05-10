@@ -31,8 +31,10 @@ from keiba_ai.ai.labels import assign_relevance
 from keiba_ai.ai.nn.dataset import RaceDataset, collate_fn
 from keiba_ai.ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
 from keiba_ai.ai.nn.model import RaceModel
+from keiba_ai.ai.registry import save_nn_model
 from keiba_ai.ai.splits import time_split
 from keiba_ai.core.paths import data_dir, db_path
+from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.db.session import make_engine, session_scope
 from keiba_ai.features.builder import CATEGORICAL_FEATURES, build_training_frame, get_active_features
 
@@ -441,7 +443,8 @@ def train_nn(
     model_dir = data_dir() / "models" / f"{timestamp}-nn"
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    torch.save(race_model.state_dict(), model_dir / "model.pt")
+    pt_path = model_dir / "model.pt"
+    torch.save(race_model.state_dict(), pt_path)
 
     train_range = (
         f"{train_df['date'].min()}/{train_df['date'].max()}"
@@ -459,7 +462,7 @@ def train_nn(
         else None
     )
 
-    meta = {
+    meta_dict = {
         "model_type": "nn",
         "loss_type": loss,
         "params": {
@@ -479,9 +482,28 @@ def train_nn(
         "valid_range": valid_range,
         "test_range": test_range,
     }
-    (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    # Delegate to registry (writes meta.json; model.pt is already in model_dir)
+    save_nn_model(pt_path, meta_dict)
 
     log.info("Model saved to %s", model_dir)
+
+    # Record in model_runs
+    with session_scope(engine) as session:
+        run = ModelRun(
+            created_at=datetime.now(UTC).isoformat(),
+            model_path=str(model_dir),
+            params_json=json.dumps(meta_dict["params"]),
+            train_range=train_range,
+            valid_range=valid_range,
+            metrics_json=json.dumps(metrics),
+            notes="NN Set Transformer ranking model",
+            is_active=0,
+            model_type="nn",
+        )
+        session.add(run)
+
+    log.info("model_runs row inserted.")
 
     return {"model_dir": str(model_dir), **metrics}
 
