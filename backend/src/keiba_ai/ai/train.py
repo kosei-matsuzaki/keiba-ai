@@ -23,6 +23,7 @@ import pandas as pd
 from sklearn.metrics import ndcg_score
 
 from keiba_ai.ai.calibrate import IsotonicCalibrator
+from keiba_ai.ai.cv import rolling_origin_splits
 from keiba_ai.ai.labels import assign_is_winner, assign_relevance
 from keiba_ai.ai.registry import save_model
 from keiba_ai.ai.splits import time_split
@@ -261,76 +262,27 @@ def _train_binary_classifier_and_calibrator(
     return binary_model, calibrator, metrics
 
 
-def train(
-    db: Path | None = None,
-    train_end: str | None = None,
-    valid_months: int = 12,
-    test_months: int = 6,
-    params_json: Path | None = None,
+def _train_single_split(
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: list[str],
+    params: dict,
     recency_lambda: float = 0.0,
-) -> dict:
-    """Run the full training pipeline. Returns metrics dict.
+) -> tuple[lgb.Booster, lgb.Booster, IsotonicCalibrator, object, dict]:
+    """Train lambdarank + binary + calibrator + combo on one (train, valid, test) split.
 
-    Args:
-        recency_lambda: Exponential decay factor for recency-weighted sample
-            weights.  When > 0, each training row is weighted by
-            exp(-λ × age_years) where age_years is the number of years before
-            the most recent race in the training set.  Set to 0.0 (default) to
-            use uniform weights (backward-compatible behaviour).
+    When recency_lambda > 0, sample weights are applied to both lambdarank
+    and binary heads (older rows down-weighted by exp(-λ × age_years)).
+
+    Returns:
+        (model, binary_model, calibrator, combo_calibrators, metrics)
     """
-    resolved_db = db or db_path()
-    engine = make_engine(resolved_db)
-
-    params = dict(DEFAULT_PARAMS)
-    if params_json:
-        params.update(json.loads(Path(params_json).read_text()))
-
-    # Store recency_lambda in params so it is persisted to meta.json.
-    params["recency_lambda"] = recency_lambda
-
-    log.info("Building feature frame from %s", resolved_db)
-    with session_scope(engine) as session:
-        frame = build_training_frame(session)
-
-    if frame.empty:
-        raise RuntimeError("No training data found in the database.")
-
-    frame["relevance"] = frame["finish_position"].map(assign_relevance)
-
-    log.info("Total rows: %d | Races: %d", len(frame), frame["race_id"].nunique())
-    train_df, valid_df, test_df = time_split(frame, train_end, valid_months, test_months)
-    log.info(
-        "Split → train=%d rows, valid=%d rows, test=%d rows",
-        len(train_df),
-        len(valid_df),
-        len(test_df),
-    )
-
-    if train_df.empty:
-        # Truly no training data after split — fall back to using everything.
-        # This still leaks any test rows into training, but at that point the
-        # split was so degenerate that we have nothing else to learn from.
-        log.warning(
-            "Train set is empty — using full frame for training (test will leak; "
-            "consider widening the split window)."
-        )
-        train_df = frame.copy()
-        valid_df = pd.DataFrame(columns=frame.columns)
-    elif valid_df.empty:
-        # Valid is just an early-stopping helper. Skipping it must NOT pull test
-        # rows into training (that would silently leak test → 1.0 NDCG).
-        log.info("Valid set is empty — proceeding without early stopping.")
-
-    # 学習で使う特徴量列。KEIBA_EXCLUDE_ODDS_FEATURES=1 で 5 つの odds 派生を除外
-    feature_cols = get_active_features()
-    log.info(
-        "Training with %d features (KEIBA_EXCLUDE_ODDS_FEATURES=%s)",
-        len(feature_cols),
-        os.environ.get("KEIBA_EXCLUDE_ODDS_FEATURES", "0"),
-    )
-
     if recency_lambda > 0.0:
-        log.info("Recency weighting enabled: λ=%.4f (weight = exp(-λ × age_years))", recency_lambda)
+        log.info(
+            "Recency weighting enabled: λ=%.4f (weight = exp(-λ × age_years))",
+            recency_lambda,
+        )
 
     train_data = _make_lgb_dataset(
         train_df, feature_cols, CATEGORICAL_FEATURES, recency_lambda=recency_lambda
@@ -364,7 +316,7 @@ def train(
     test_ndcg1 = _compute_ndcg(model, test_df, 1) if not test_df.empty else float("nan")
     test_ndcg3 = _compute_ndcg(model, test_df, 3) if not test_df.empty else float("nan")
 
-    metrics = {
+    metrics: dict = {
         "valid_ndcg1": valid_ndcg1,
         "valid_ndcg3": valid_ndcg3,
         "test_ndcg1": test_ndcg1,
@@ -378,9 +330,6 @@ def train(
     log.info("Lambdarank metrics: %s", metrics)
 
     # ── Phase 2: binary classifier + isotonic calibrator ──────────────────────
-    # 既存の lambdarank score (順位用) に加えて、別 head として binary classifier
-    # を学習し isotonic で post-hoc 補正する。これにより推論時の win_prob は
-    # softmax(lambdarank scores) ではなく真の確率に近い値を返せるようになる。
     binary_model, calibrator, binary_metrics = _train_binary_classifier_and_calibrator(
         train_df, valid_df, feature_cols, params, recency_lambda=recency_lambda
     )
@@ -412,7 +361,236 @@ def train(
             log.warning("fit_combo_calibrators failed: %s — proceeding without combo cal", exc)
             combo_calibrators = None
 
-    # Determine date ranges
+    return model, binary_model, calibrator, combo_calibrators, metrics
+
+
+def _aggregate_cv_metrics(per_fold: list[dict]) -> tuple[dict, dict]:
+    """Compute mean and std across per-fold metric dicts.
+
+    Non-numeric and NaN values are ignored in the aggregation.
+    Returns (mean_dict, std_dict) with the same keys as per_fold entries.
+    """
+    if not per_fold:
+        return {}, {}
+
+    all_keys = per_fold[0].keys()
+    mean_dict: dict = {}
+    std_dict: dict = {}
+
+    for key in all_keys:
+        values = [
+            v for fold in per_fold
+            if (v := fold.get(key)) is not None and isinstance(v, (int, float)) and not pd.isna(v)
+        ]
+        if values:
+            mean_dict[key] = float(np.mean(values))
+            std_dict[key] = float(np.std(values, ddof=0))
+        else:
+            mean_dict[key] = float("nan")
+            std_dict[key] = float("nan")
+
+    return mean_dict, std_dict
+
+
+def train(
+    db: Path | None = None,
+    train_end: str | None = None,
+    valid_months: int = 12,
+    test_months: int = 6,
+    params_json: Path | None = None,
+    cv_folds: int = 1,
+    recency_lambda: float = 0.0,
+) -> dict:
+    """Run the full training pipeline. Returns metrics dict.
+
+    When cv_folds >= 2 the pipeline runs rolling-origin cross-validation:
+    each fold trains on all data before its validation window, evaluates on
+    a held-out test window, and the metrics are aggregated (mean + std).
+    The model from the most-recent fold (fold 1) is saved and registered,
+    matching the behaviour of the single-split path (cv_folds == 1).
+
+    When cv_folds == 1 behaviour is identical to the original implementation.
+
+    Args:
+        recency_lambda: Exponential decay factor for recency-weighted sample
+            weights.  When > 0, each training row is weighted by
+            exp(-λ × age_years) where age_years is the number of years before
+            the most recent race in the training set.  Set to 0.0 (default) to
+            use uniform weights (backward-compatible behaviour).
+    """
+    resolved_db = db or db_path()
+    engine = make_engine(resolved_db)
+
+    params = dict(DEFAULT_PARAMS)
+    if params_json:
+        params.update(json.loads(Path(params_json).read_text()))
+
+    # Store recency_lambda in params so it is persisted to meta.json.
+    params["recency_lambda"] = recency_lambda
+
+    log.info("Building feature frame from %s", resolved_db)
+    with session_scope(engine) as session:
+        frame = build_training_frame(session)
+
+    if frame.empty:
+        raise RuntimeError("No training data found in the database.")
+
+    frame["relevance"] = frame["finish_position"].map(assign_relevance)
+
+    log.info("Total rows: %d | Races: %d", len(frame), frame["race_id"].nunique())
+
+    # 学習で使う特徴量列。KEIBA_EXCLUDE_ODDS_FEATURES=1 で 5 つの odds 派生を除外
+    feature_cols = get_active_features()
+    log.info(
+        "Training with %d features (KEIBA_EXCLUDE_ODDS_FEATURES=%s)",
+        len(feature_cols),
+        os.environ.get("KEIBA_EXCLUDE_ODDS_FEATURES", "0"),
+    )
+
+    if cv_folds >= 2:
+        return _train_with_cv(
+            frame=frame,
+            engine=engine,
+            feature_cols=feature_cols,
+            params=params,
+            valid_months=valid_months,
+            test_months=test_months,
+            n_folds=cv_folds,
+            recency_lambda=recency_lambda,
+        )
+
+    # ── Single-split path (cv_folds == 1, original behaviour) ────────────────
+    train_df, valid_df, test_df = time_split(frame, train_end, valid_months, test_months)
+    log.info(
+        "Split → train=%d rows, valid=%d rows, test=%d rows",
+        len(train_df),
+        len(valid_df),
+        len(test_df),
+    )
+
+    if train_df.empty:
+        # Truly no training data after split — fall back to using everything.
+        # This still leaks any test rows into training, but at that point the
+        # split was so degenerate that we have nothing else to learn from.
+        log.warning(
+            "Train set is empty — using full frame for training (test will leak; "
+            "consider widening the split window)."
+        )
+        train_df = frame.copy()
+        valid_df = pd.DataFrame(columns=frame.columns)
+    elif valid_df.empty:
+        # Valid is just an early-stopping helper. Skipping it must NOT pull test
+        # rows into training (that would silently leak test → 1.0 NDCG).
+        log.info("Valid set is empty — proceeding without early stopping.")
+
+    model, binary_model, calibrator, combo_calibrators, metrics = _train_single_split(
+        train_df, valid_df, test_df, feature_cols, params, recency_lambda=recency_lambda
+    )
+
+    return _save_and_register(
+        engine=engine,
+        model=model,
+        binary_model=binary_model,
+        calibrator=calibrator,
+        combo_calibrators=combo_calibrators,
+        params=params,
+        feature_cols=feature_cols,
+        train_df=train_df,
+        valid_df=valid_df,
+        metrics=metrics,
+    )
+
+
+def _train_with_cv(
+    frame: pd.DataFrame,
+    engine,
+    feature_cols: list[str],
+    params: dict,
+    valid_months: int,
+    test_months: int,
+    n_folds: int,
+    recency_lambda: float = 0.0,
+) -> dict:
+    """Rolling-origin CV training.  Saves/registers only the most-recent fold's model."""
+    log.info("Starting rolling-origin CV with %d folds.", n_folds)
+
+    per_fold_metrics: list[dict] = []
+    last_fold_artifacts: tuple | None = None  # (model, binary, cal, combo, train_df, valid_df)
+
+    for fold_idx, (train_df, valid_df, test_df) in enumerate(
+        rolling_origin_splits(frame, n_folds, valid_months, test_months)
+    ):
+        fold_num = fold_idx + 1
+        log.info(
+            "CV fold %d/%d — train=%d rows, valid=%d rows, test=%d rows",
+            fold_num,
+            n_folds,
+            len(train_df),
+            len(valid_df),
+            len(test_df),
+        )
+
+        model, binary_model, calibrator, combo_calibrators, fold_metrics = _train_single_split(
+            train_df, valid_df, test_df, feature_cols, params, recency_lambda=recency_lambda
+        )
+        per_fold_metrics.append(fold_metrics)
+
+        # Fold 1 (most recent) is used for the final saved model.
+        if fold_idx == 0:
+            last_fold_artifacts = (
+                model, binary_model, calibrator, combo_calibrators, train_df, valid_df
+            )
+
+    if not per_fold_metrics:
+        raise RuntimeError("All CV folds were skipped (train sets empty). Widen the date range.")
+
+    mean_metrics, std_metrics = _aggregate_cv_metrics(per_fold_metrics)
+    log.info("CV mean metrics: %s", mean_metrics)
+    log.info("CV std  metrics: %s", std_metrics)
+
+    # Build the top-level metrics dict: canonical flat keys come from fold-1
+    # (most recent), so downstream consumers that don't understand cv_metrics
+    # still get meaningful numbers.
+    assert last_fold_artifacts is not None
+    model, binary_model, calibrator, combo_calibrators, train_df, valid_df = last_fold_artifacts
+
+    # Fold-1 metrics are per_fold_metrics[0].
+    canonical_metrics = dict(per_fold_metrics[0])
+    canonical_metrics["cv_metrics"] = {
+        "n_folds": len(per_fold_metrics),
+        "mean": mean_metrics,
+        "std": std_metrics,
+        "per_fold": per_fold_metrics,
+    }
+
+    return _save_and_register(
+        engine=engine,
+        model=model,
+        binary_model=binary_model,
+        calibrator=calibrator,
+        combo_calibrators=combo_calibrators,
+        params=params,
+        feature_cols=feature_cols,
+        train_df=train_df,
+        valid_df=valid_df,
+        metrics=canonical_metrics,
+    )
+
+
+def _save_and_register(
+    *,
+    engine,
+    model: lgb.Booster,
+    binary_model: lgb.Booster,
+    calibrator: IsotonicCalibrator,
+    combo_calibrators,
+    params: dict,
+    feature_cols: list[str],
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    metrics: dict,
+) -> dict:
+    """Persist model files and insert a model_runs DB row. Returns result dict."""
     train_range = (
         f"{train_df['date'].min()}/{train_df['date'].max()}" if not train_df.empty else None
     )
@@ -433,7 +611,6 @@ def train(
     )
     log.info("Model saved to %s", model_dir)
 
-    # Record in model_runs（odds 抜き判定をメモに残して A/B 比較しやすくする）
     odds_excluded = "odds_excluded" if len(feature_cols) < 30 else "odds_included"
     notes_str = f"M4 baseline lambdarank ({odds_excluded})"
 
@@ -481,6 +658,16 @@ def _cli() -> None:
             "Default 0.0 disables weighting (uniform weights, backward-compatible)."
         ),
     )
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=1,
+        help=(
+            "Number of rolling-origin CV folds (default 1 = single split, original behaviour). "
+            "When >= 2, trains on each fold and saves aggregate cv_metrics alongside the "
+            "most-recent fold's model."
+        ),
+    )
     args = parser.parse_args()
 
     result = train(
@@ -489,6 +676,7 @@ def _cli() -> None:
         valid_months=args.valid_months,
         test_months=args.test_months,
         params_json=args.params_json,
+        cv_folds=args.cv_folds,
         recency_lambda=args.recency_lambda,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
