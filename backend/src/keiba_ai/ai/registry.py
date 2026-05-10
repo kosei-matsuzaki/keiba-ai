@@ -33,6 +33,7 @@ class ModelMeta:
     valid_range: str | None
     metrics: dict
     feature_columns: list[str]
+    loss_type: str | None = None
 
 
 def _models_dir() -> Path:
@@ -52,6 +53,7 @@ def save_model(
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | None = None,
     combo_calibrators: ComboCalibrators | None = None,
+    loss_type: str | None = None,
 ) -> Path:
     """Persist model + (optional) binary classifier + calibrator and metadata.
 
@@ -103,6 +105,7 @@ def save_model(
         "combo_calibrators_bet_types": (
             combo_calibrators.fitted_bet_types if has_combo_calibrators else []
         ),
+        "loss_type": loss_type,
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
@@ -127,6 +130,7 @@ def list_models() -> list[ModelMeta]:
                 valid_range=meta.get("valid_range"),
                 metrics=meta.get("metrics", {}),
                 feature_columns=meta.get("feature_columns", FEATURE_COLUMNS),
+                loss_type=meta.get("loss_type"),
             )
         )
     return results

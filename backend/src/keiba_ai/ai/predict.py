@@ -80,29 +80,34 @@ def predict_race(
     frame: pd.DataFrame,
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | None = None,
+    loss_type: str | None = None,
 ) -> pd.DataFrame:
     """Score all horses in a single race and return calibrated probabilities.
 
     Args:
-        model: Trained LightGBM lambdarank Booster (順位用).
+        model: Trained LightGBM Booster (lambdarank or Plackett-Luce).
         frame: Feature DataFrame for one race (output of build_inference_frame
                or a training-frame slice). Must contain FEATURE_COLUMNS.
         binary_model: Optional binary classifier (objective=binary) trained
             in parallel. When provided together with `calibrator`, win_prob
             is computed as `calibrator(binary_model.predict(X))` instead of
-            softmax(lambdarank scores). This produces well-calibrated
-            probabilities suitable for EV calculation.
+            softmax(scores). Ignored in Plackett-Luce mode.
         calibrator: Optional IsotonicCalibrator fit on the validation set.
-            Used in tandem with `binary_model`.
+            Used in tandem with `binary_model`. Ignored in Plackett-Luce mode.
+        loss_type: "lambdarank" or "plackett_luce" (or None for backward
+            compatibility, treated as "lambdarank").  When "plackett_luce",
+            win_prob is softmax(score) within the race — no binary head needed.
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob.
         Sorted by score descending (top prediction first).
 
     Notes:
-        - Lambdarank `score` is always returned (用途: 順位ソート, NDCG 評価).
-        - place_prob は引き続き Plackett-Luce で lambdarank scores から計算する。
-          binary head は単勝確率にしか使わない。
+        - The model `score` is always returned for ranking / NDCG evaluation.
+        - place_prob is computed from Plackett-Luce MC using model scores for
+          both loss types.
+        - When loss_type is None and binary_model/calibrator are also None,
+          falls back to softmax(scores) for backward compatibility.
     """
     if frame.empty:
         return pd.DataFrame(columns=["horse_id", "score", "win_prob", "place_prob"])
@@ -110,8 +115,13 @@ def predict_race(
     X = _prepare_features(frame, model=model)
     scores: np.ndarray = model.predict(X)
 
-    if binary_model is not None and calibrator is not None:
-        # Calibrated win_prob path (Phase 2 onward)
+    is_pl_mode = loss_type == "plackett_luce"
+
+    if is_pl_mode:
+        # Plackett-Luce model: softmax(score) is the calibrated win probability.
+        win_probs = softmax_within_race(scores)
+    elif binary_model is not None and calibrator is not None:
+        # Lambdarank + binary head path (Phase 2 onward).
         # binary_model may have been trained with a different feature subset;
         # use its own feature_name() instead of the lambdarank model's.
         X_binary = _prepare_features(frame, model=binary_model)
@@ -187,6 +197,7 @@ def predict_race_with_combinations(
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | None = None,
     combo_calibrators: ComboCalibrators | None = None,
+    loss_type: str | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race with EV calculations for all combination bet types.
 
@@ -232,7 +243,9 @@ def predict_race_with_combinations(
             for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
         }
 
-    base_df = predict_race(model, frame, binary_model=binary_model, calibrator=calibrator)
+    base_df = predict_race(
+        model, frame, binary_model=binary_model, calibrator=calibrator, loss_type=loss_type
+    )
 
     # Normalise race_odds — None means no confirmed odds data available
     confirmed: dict[str, dict[str, float]] = race_odds if race_odds is not None else {}
@@ -453,6 +466,7 @@ def predict_race_with_shap(
     top_n: int = 3,
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | None = None,
+    loss_type: str | None = None,
 ) -> pd.DataFrame:
     """Same as predict_race but adds a 'top_features' column (list[str]).
 
@@ -460,11 +474,12 @@ def predict_race_with_shap(
     horse. The top_n features by absolute SHAP value are returned per horse.
 
     Args:
-        model: Trained LightGBM Booster (lambdarank).
+        model: Trained LightGBM Booster (lambdarank or Plackett-Luce).
         frame: Feature DataFrame for one race. Must contain FEATURE_COLUMNS.
         top_n: Number of top features to return per horse.
         binary_model / calibrator: Optional. Forwarded to predict_race so the
             returned win_prob comes from the calibrated path when available.
+        loss_type: Forwarded to predict_race for win_prob computation branching.
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob, top_features.
@@ -472,7 +487,9 @@ def predict_race_with_shap(
     """
     import shap
 
-    base = predict_race(model, frame, binary_model=binary_model, calibrator=calibrator)
+    base = predict_race(
+        model, frame, binary_model=binary_model, calibrator=calibrator, loss_type=loss_type
+    )
     if frame.empty:
         base["top_features"] = pd.Series(dtype=object)
         return base

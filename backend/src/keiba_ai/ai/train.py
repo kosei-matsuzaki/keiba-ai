@@ -1,4 +1,4 @@
-"""CLI: Train a LightGBM lambdarank model and register it.
+"""CLI: Train a LightGBM lambdarank or Plackett-Luce model and register it.
 
 Usage:
     uv run python -m keiba_ai.ai.train [--train-end YYYY-MM-DD]
@@ -6,6 +6,7 @@ Usage:
                                         [--test-months 6]
                                         [--db PATH]
                                         [--params-json PATH]
+                                        [--loss {lambdarank,plackett_luce}]
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from sklearn.metrics import ndcg_score
 from keiba_ai.ai.calibrate import IsotonicCalibrator
 from keiba_ai.ai.cv import rolling_origin_splits
 from keiba_ai.ai.labels import assign_is_winner, assign_relevance
+from keiba_ai.ai.pl_loss import plackett_luce_eval_metric, plackett_luce_objective
 from keiba_ai.ai.registry import save_model
 from keiba_ai.ai.splits import time_split
 from keiba_ai.core.paths import db_path
@@ -81,7 +83,7 @@ def _make_lgb_dataset(
     reference: lgb.Dataset | None = None,
     recency_lambda: float = 0.0,
 ) -> lgb.Dataset:
-    """Build a LightGBM Dataset with group counts by race_id.
+    """Build a LightGBM Dataset with group counts by race_id (lambdarank).
 
     When recency_lambda > 0, each row is weighted by exp(-λ × age_years) so
     that older races contribute less to the lambdarank loss.
@@ -94,6 +96,47 @@ def _make_lgb_dataset(
     y = df["relevance"].values.astype(np.float32)
 
     # group = count of entries per race, in the order they appear in df
+    group = df.groupby("race_id", sort=False)["horse_id"].count().values
+
+    sample_weight = _compute_recency_weights(df, recency_lambda)
+
+    return lgb.Dataset(
+        X,
+        label=y,
+        group=group,
+        weight=sample_weight,
+        feature_name=feature_cols,
+        categorical_feature=categorical_cols,
+        reference=reference,
+        free_raw_data=False,
+    )
+
+
+def _make_lgb_dataset_pl(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    categorical_cols: list[str],
+    reference: lgb.Dataset | None = None,
+    recency_lambda: float = 0.0,
+) -> lgb.Dataset:
+    """Build a LightGBM Dataset for Plackett-Luce custom objective.
+
+    Labels are raw finish_position values (1-based integers, NaN for
+    non-finishers).  The PL objective reads these via ``get_label()`` to
+    determine the ranking order within each race group.
+
+    When recency_lambda > 0, sample weights are applied identically to the
+    lambdarank path (older rows down-weighted by exp(-λ × age_years)).
+    """
+    X = df[feature_cols].copy()
+    for col in categorical_cols:
+        if col in X.columns:
+            X[col] = X[col].astype("category")
+
+    # Use raw finish_position as label; NaN (non-finishers) stay as NaN
+    # (they'll be masked out inside the objective).
+    y = df["finish_position"].values.astype(np.float32)
+
     group = df.groupby("race_id", sort=False)["horse_id"].count().values
 
     sample_weight = _compute_recency_weights(df, recency_lambda)
@@ -269,46 +312,107 @@ def _train_single_split(
     feature_cols: list[str],
     params: dict,
     recency_lambda: float = 0.0,
-) -> tuple[lgb.Booster, lgb.Booster, IsotonicCalibrator, object, dict]:
-    """Train lambdarank + binary + calibrator + combo on one (train, valid, test) split.
+    loss: str = "lambdarank",
+) -> tuple[lgb.Booster, lgb.Booster | None, IsotonicCalibrator | None, object, dict]:
+    """Train lambdarank/PL + (optional) binary + calibrator + combo on one (train, valid, test) split.
 
     When recency_lambda > 0, sample weights are applied to both lambdarank
     and binary heads (older rows down-weighted by exp(-λ × age_years)).
+    When loss == "plackett_luce", a custom PL objective is used and the binary
+    classifier/calibrator are skipped (softmax(score) is the calibrated win
+    probability).
 
     Returns:
         (model, binary_model, calibrator, combo_calibrators, metrics)
+        binary_model and calibrator are None in PL mode.
     """
+    if loss not in ("lambdarank", "plackett_luce"):
+        raise ValueError(f"Unknown loss type: {loss!r}. Choose 'lambdarank' or 'plackett_luce'.")
+
     if recency_lambda > 0.0:
         log.info(
             "Recency weighting enabled: λ=%.4f (weight = exp(-λ × age_years))",
             recency_lambda,
         )
 
-    train_data = _make_lgb_dataset(
-        train_df, feature_cols, CATEGORICAL_FEATURES, recency_lambda=recency_lambda
-    )
+    use_pl = loss == "plackett_luce"
+
+    if use_pl:
+        # In PL mode, labels are raw finish_position values (1-based integers).
+        # The PL objective uses them to determine the ordering within each race.
+        train_data = _make_lgb_dataset_pl(
+            train_df, feature_cols, CATEGORICAL_FEATURES, recency_lambda=recency_lambda
+        )
+    else:
+        train_data = _make_lgb_dataset(
+            train_df, feature_cols, CATEGORICAL_FEATURES, recency_lambda=recency_lambda
+        )
 
     callbacks = [lgb.log_evaluation(period=50)]
     valid_sets: list[lgb.Dataset] = [train_data]
     valid_names: list[str] = ["train"]
 
     if not valid_df.empty:
-        valid_data = _make_lgb_dataset(
-            valid_df, feature_cols, CATEGORICAL_FEATURES, reference=train_data
-        )
+        if use_pl:
+            valid_data = _make_lgb_dataset_pl(
+                valid_df, feature_cols, CATEGORICAL_FEATURES, reference=train_data
+            )
+        else:
+            valid_data = _make_lgb_dataset(
+                valid_df, feature_cols, CATEGORICAL_FEATURES, reference=train_data
+            )
         valid_sets.append(valid_data)
         valid_names.append("valid")
         callbacks.append(lgb.early_stopping(stopping_rounds=50, verbose=False))
 
-    log.info("Starting LightGBM training…")
-    model = lgb.train(
-        params,
-        train_data,
-        num_boost_round=300,
-        valid_sets=valid_sets,
-        valid_names=valid_names,
-        callbacks=callbacks,
-    )
+    if use_pl:
+        # Build group sizes for each split (must match dataset construction order).
+        train_group_sizes = train_df.groupby("race_id", sort=False)["horse_id"].count().tolist()
+        pl_objective = plackett_luce_objective(train_group_sizes)
+
+        # PL params: remove lambdarank-specific keys, set objective to custom.
+        pl_params = {
+            k: v
+            for k, v in params.items()
+            if k not in ("objective", "metric", "ndcg_eval_at", "lambdarank_truncation_level")
+        }
+        pl_params["objective"] = pl_objective
+
+        # Use PL NLL as evaluation metric on valid set when available.
+        if not valid_df.empty:
+            valid_group_sizes = valid_df.groupby("race_id", sort=False)["horse_id"].count().tolist()
+            pl_eval = plackett_luce_eval_metric(valid_group_sizes)
+            # Also register on train set using same eval (for monitoring).
+            train_eval = plackett_luce_eval_metric(train_group_sizes)
+            feval = [train_eval, pl_eval]
+            # LightGBM custom feval receives (preds, dataset); we need per-split
+            # functions registered separately.  We use a single feval dict trick:
+            # pass both under different dataset names via a wrapper.
+            pl_params["metric"] = "custom"
+        else:
+            pl_params.pop("metric", None)
+            feval = None
+
+        log.info("Starting LightGBM training with Plackett-Luce objective…")
+        model = lgb.train(
+            pl_params,
+            train_data,
+            num_boost_round=300,
+            valid_sets=valid_sets,
+            valid_names=valid_names,
+            feval=pl_eval if not valid_df.empty else None,
+            callbacks=callbacks,
+        )
+    else:
+        log.info("Starting LightGBM training…")
+        model = lgb.train(
+            params,
+            train_data,
+            num_boost_round=300,
+            valid_sets=valid_sets,
+            valid_names=valid_names,
+            callbacks=callbacks,
+        )
 
     # Evaluate on valid and test
     valid_ndcg1 = _compute_ndcg(model, valid_df, 1) if not valid_df.empty else float("nan")
@@ -327,13 +431,24 @@ def _train_single_split(
         "ndcg1": test_ndcg1 if not pd.isna(test_ndcg1) else valid_ndcg1,
         "ndcg3": test_ndcg3 if not pd.isna(test_ndcg3) else valid_ndcg3,
     }
-    log.info("Lambdarank metrics: %s", metrics)
+    log.info("%s metrics: %s", loss, metrics)
 
     # ── Phase 2: binary classifier + isotonic calibrator ──────────────────────
-    binary_model, calibrator, binary_metrics = _train_binary_classifier_and_calibrator(
-        train_df, valid_df, feature_cols, params, recency_lambda=recency_lambda
-    )
-    metrics.update(binary_metrics)
+    # Skipped in Plackett-Luce mode: softmax(score) within each race serves
+    # directly as calibrated win probability, eliminating the need for a
+    # separate binary head and its associated calibrator.
+    if use_pl:
+        binary_model = None
+        calibrator = None
+        log.info("PL mode: skipping binary classifier and calibrator.")
+    else:
+        # 既存の lambdarank score (順位用) に加えて、別 head として binary classifier
+        # を学習し isotonic で post-hoc 補正する。これにより推論時の win_prob は
+        # softmax(lambdarank scores) ではなく真の確率に近い値を返せるようになる。
+        binary_model, calibrator, binary_metrics = _train_binary_classifier_and_calibrator(
+            train_df, valid_df, feature_cols, params, recency_lambda=recency_lambda
+        )
+        metrics.update(binary_metrics)
     log.info("All metrics: %s", metrics)
 
     # ── Phase A 後追加: 連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の
@@ -400,6 +515,7 @@ def train(
     params_json: Path | None = None,
     cv_folds: int = 1,
     recency_lambda: float = 0.0,
+    loss: str = "lambdarank",
 ) -> dict:
     """Run the full training pipeline. Returns metrics dict.
 
@@ -417,7 +533,13 @@ def train(
             exp(-λ × age_years) where age_years is the number of years before
             the most recent race in the training set.  Set to 0.0 (default) to
             use uniform weights (backward-compatible behaviour).
+        loss: "lambdarank" (default, backward-compatible) or "plackett_luce".
+            In PL mode the binary classifier and calibrator are not trained;
+            softmax(score) within each race gives calibrated win probabilities.
     """
+    if loss not in ("lambdarank", "plackett_luce"):
+        raise ValueError(f"Unknown loss type: {loss!r}. Choose 'lambdarank' or 'plackett_luce'.")
+
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
@@ -457,6 +579,7 @@ def train(
             test_months=test_months,
             n_folds=cv_folds,
             recency_lambda=recency_lambda,
+            loss=loss,
         )
 
     # ── Single-split path (cv_folds == 1, original behaviour) ────────────────
@@ -484,7 +607,8 @@ def train(
         log.info("Valid set is empty — proceeding without early stopping.")
 
     model, binary_model, calibrator, combo_calibrators, metrics = _train_single_split(
-        train_df, valid_df, test_df, feature_cols, params, recency_lambda=recency_lambda
+        train_df, valid_df, test_df, feature_cols, params,
+        recency_lambda=recency_lambda, loss=loss,
     )
 
     return _save_and_register(
@@ -498,6 +622,7 @@ def train(
         train_df=train_df,
         valid_df=valid_df,
         metrics=metrics,
+        loss=loss,
     )
 
 
@@ -510,6 +635,7 @@ def _train_with_cv(
     test_months: int,
     n_folds: int,
     recency_lambda: float = 0.0,
+    loss: str = "lambdarank",
 ) -> dict:
     """Rolling-origin CV training.  Saves/registers only the most-recent fold's model."""
     log.info("Starting rolling-origin CV with %d folds.", n_folds)
@@ -531,7 +657,8 @@ def _train_with_cv(
         )
 
         model, binary_model, calibrator, combo_calibrators, fold_metrics = _train_single_split(
-            train_df, valid_df, test_df, feature_cols, params, recency_lambda=recency_lambda
+            train_df, valid_df, test_df, feature_cols, params,
+            recency_lambda=recency_lambda, loss=loss,
         )
         per_fold_metrics.append(fold_metrics)
 
@@ -574,6 +701,7 @@ def _train_with_cv(
         train_df=train_df,
         valid_df=valid_df,
         metrics=canonical_metrics,
+        loss=loss,
     )
 
 
@@ -581,14 +709,15 @@ def _save_and_register(
     *,
     engine,
     model: lgb.Booster,
-    binary_model: lgb.Booster,
-    calibrator: IsotonicCalibrator,
+    binary_model: lgb.Booster | None,
+    calibrator: IsotonicCalibrator | None,
     combo_calibrators,
     params: dict,
     feature_cols: list[str],
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     metrics: dict,
+    loss: str = "lambdarank",
 ) -> dict:
     """Persist model files and insert a model_runs DB row. Returns result dict."""
     train_range = (
@@ -598,9 +727,14 @@ def _save_and_register(
         f"{valid_df['date'].min()}/{valid_df['date'].max()}" if not valid_df.empty else None
     )
 
+    # In PL mode the stored params dict still contains the original DEFAULT_PARAMS
+    # keys (num_leaves, learning_rate, etc.) which are safe to persist.  The
+    # objective key is a Python callable and cannot be serialised; we drop it.
+    serialisable_params = {k: v for k, v in params.items() if not callable(v)}
+
     model_dir = save_model(
         model,
-        params,
+        serialisable_params,
         train_range,
         valid_range,
         metrics,
@@ -608,17 +742,18 @@ def _save_and_register(
         binary_model=binary_model,
         calibrator=calibrator,
         combo_calibrators=combo_calibrators,
+        loss_type=loss,
     )
     log.info("Model saved to %s", model_dir)
 
     odds_excluded = "odds_excluded" if len(feature_cols) < 30 else "odds_included"
-    notes_str = f"M4 baseline lambdarank ({odds_excluded})"
+    notes_str = f"{loss} ({odds_excluded})"
 
     with session_scope(engine) as session:
         run = ModelRun(
             created_at=datetime.now(UTC).isoformat(),
             model_path=str(model_dir),
-            params_json=json.dumps(params),
+            params_json=json.dumps(serialisable_params),
             train_range=train_range,
             valid_range=valid_range,
             metrics_json=json.dumps(metrics),
@@ -632,7 +767,9 @@ def _save_and_register(
 
 
 def _cli() -> None:
-    parser = argparse.ArgumentParser(description="Train keiba-ai LightGBM lambdarank model")
+    parser = argparse.ArgumentParser(
+        description="Train keiba-ai LightGBM lambdarank or Plackett-Luce model"
+    )
     parser.add_argument("--db", type=Path, default=None, help="Path to SQLite DB")
     parser.add_argument("--train-end", default=None, help="Training end date YYYY-MM-DD")
     parser.add_argument("--valid-months", type=int, default=12, help="Validation window (months)")
@@ -668,6 +805,17 @@ def _cli() -> None:
             "most-recent fold's model."
         ),
     )
+    parser.add_argument(
+        "--loss",
+        choices=["lambdarank", "plackett_luce"],
+        default="lambdarank",
+        help=(
+            "Loss function to use. 'lambdarank' (default) uses the built-in LightGBM "
+            "lambdarank objective with a separate binary classifier for win probabilities. "
+            "'plackett_luce' uses a custom Plackett-Luce log-likelihood objective where "
+            "softmax(score) directly gives calibrated win probabilities (no binary head)."
+        ),
+    )
     args = parser.parse_args()
 
     result = train(
@@ -678,6 +826,7 @@ def _cli() -> None:
         params_json=args.params_json,
         cv_folds=args.cv_folds,
         recency_lambda=args.recency_lambda,
+        loss=args.loss,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

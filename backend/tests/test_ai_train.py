@@ -138,6 +138,34 @@ class TestComputeRecencyWeights:
         np.testing.assert_allclose(weights, 1.0, rtol=1e-5)
 
 
+def test_train_plackett_luce_runs(syn_engine, tmp_path, monkeypatch):
+    """--loss plackett_luce should complete training and save meta.json with loss_type."""
+    engine, db_file = syn_engine
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+    )
+
+    model_dir = Path(result["model_dir"])
+    assert (model_dir / "model.txt").exists(), "model.txt not found"
+    assert (model_dir / "meta.json").exists(), "meta.json not found"
+
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("loss_type") == "plackett_luce"
+    # Binary model and calibrator must NOT be saved in PL mode
+    assert meta.get("has_binary_model") is False
+    assert meta.get("has_calibrator") is False
+
+    # NDCG metrics must be present (may be NaN for tiny splits but key exists)
+    for key in ("valid_ndcg1", "valid_ndcg3", "test_ndcg1", "test_ndcg3"):
+        assert key in result
+
+
 def test_train_with_zero_valid_does_not_leak_test(syn_engine, tmp_path, monkeypatch):
     """valid_months=0 で valid が空でも、train_df に test 行が混ざってはいけない。
 
