@@ -242,6 +242,33 @@ class TestAlembicMigrations:
         idx_names = {ix["name"] for ix in inspector.get_indexes("simulation_runs")}
         assert "ix_simulation_runs_created_at" in idx_names
 
+    def test_migration_0008_up_down(self, tmp_db):
+        """0008 migration の up → down が動作する。
+
+        upgrade: model_runs.model_type 列が追加される。
+        downgrade: model_type 列が削除される。
+        """
+        url, engine = tmp_db
+        cfg = _make_alembic_cfg(url)
+
+        # 0007 まで適用して model_type 列が存在しないことを確認
+        command.upgrade(cfg, "0007")
+        inspector = inspect(engine)
+        cols_before = {c["name"] for c in inspector.get_columns("model_runs")}
+        assert "model_type" not in cols_before
+
+        # 0008 を適用して model_type 列が追加されることを確認
+        command.upgrade(cfg, "0008")
+        inspector = inspect(engine)
+        cols_after = {c["name"] for c in inspector.get_columns("model_runs")}
+        assert "model_type" in cols_after
+
+        # downgrade で model_type 列が削除されることを確認
+        command.downgrade(cfg, "0007")
+        inspector = inspect(engine)
+        cols_down = {c["name"] for c in inspector.get_columns("model_runs")}
+        assert "model_type" not in cols_down
+
     def test_autogen_produces_no_diff(self, tmp_db):
         """After upgrade head, autogen should find no schema differences."""
         url, engine = tmp_db

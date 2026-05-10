@@ -1,19 +1,27 @@
-"""Model registry — save, list, load, and activate trained LightGBM models.
+"""Model registry — save, list, load, and activate trained models.
 
-Each model is stored under data/models/<YYYYMMDD-HHMMSS>/ with:
+Supports both LightGBM GBDT models and PyTorch NN models.
+
+Each GBDT model is stored under data/models/<YYYYMMDD-HHMMSS>/ with:
   model.txt        — LightGBM lambdarank Booster (順位用、必須)
   binary.txt       — LightGBM binary classifier (勝率用、Phase 2 で追加; optional)
   calibrator.pkl   — IsotonicCalibrator (binary 出力の post-hoc 補正; optional)
+  combo_calibrators.pkl — ComboCalibrators (連系 馬券種補正; optional)
   meta.json        — params, ranges, metrics, feature columns
+
+Each NN model is stored under data/models/<YYYYMMDDTHHMMSS>-nn/ with:
+  model.pt         — PyTorch state_dict
+  meta.json        — model_type="nn", params, feature columns, etc.
 """
 
 from __future__ import annotations
 
 import json
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import lightgbm as lgb
 from sqlalchemy.orm import Session
@@ -22,6 +30,9 @@ from keiba_ai.ai.calibrate import ComboCalibrators, IsotonicCalibrator
 from keiba_ai.core.paths import data_dir
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.features.builder import FEATURE_COLUMNS
+
+if TYPE_CHECKING:
+    import torch.nn
 
 
 @dataclass
@@ -35,6 +46,7 @@ class ModelMeta:
     feature_columns: list[str]
     loss_type: str | None = None
     conditional_calibration: bool = False
+    model_type: str = "gbdt"  # "gbdt" or "nn" — default preserves backward compat
 
 
 def _models_dir() -> Path:
@@ -56,6 +68,7 @@ def save_model(
     combo_calibrators: ComboCalibrators | None = None,
     loss_type: str | None = None,
     conditional_calibration: bool = False,
+    model_type: str = "gbdt",
 ) -> Path:
     """Persist model + (optional) binary classifier + calibrator and metadata.
 
@@ -66,6 +79,7 @@ def save_model(
             (任意)。binary_model と calibrator は **両方揃って初めて意味がある**。
         feature_columns: 学習で実際に使った特徴量列。None のときは LightGBM の
             feature_name() を使う。
+        model_type: "gbdt" (default) or "nn". meta.json に記録する。
     """
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     model_dir = _models_dir() / ts
@@ -94,6 +108,7 @@ def save_model(
             pickle.dump(combo_calibrators, f)
 
     meta = {
+        "model_type": model_type,
         "timestamp": ts,
         "params": params,
         "train_range": train_range,
@@ -112,6 +127,48 @@ def save_model(
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
+    return model_dir
+
+
+def save_nn_model(
+    state_dict_path: Path,
+    meta_dict: dict,
+    model_dir_name: str | None = None,
+) -> Path:
+    """Register an already-saved NN model into the registry layout.
+
+    train_nn.py saves model.pt and meta.json directly.  This helper provides
+    an alternative entry point that places artifacts under data/models/ and
+    ensures meta.json is written consistently.
+
+    Args:
+        state_dict_path: Path to the existing model.pt file.
+        meta_dict: Metadata dict (must include model_type, horse_feature_cols,
+            race_feature_cols, params, metrics, feature_columns, etc.).
+        model_dir_name: Optional subdirectory name.  Defaults to the parent
+            directory name of state_dict_path (so train_nn's timestamp dir is
+            reused when the file is already inside data/models/).
+
+    Returns:
+        Path to the model directory (parent of model.pt).
+    """
+    if model_dir_name is None:
+        model_dir = state_dict_path.parent
+    else:
+        model_dir = _models_dir() / model_dir_name
+        model_dir.mkdir(parents=True, exist_ok=True)
+        # Copy model.pt only when the target dir differs from the source.
+        target_pt = model_dir / "model.pt"
+        if state_dict_path.resolve() != target_pt.resolve():
+            import shutil
+            shutil.copy2(state_dict_path, target_pt)
+
+    # Ensure model_type is set
+    meta_dict.setdefault("model_type", "nn")
+
+    (model_dir / "meta.json").write_text(
+        json.dumps(meta_dict, ensure_ascii=False, indent=2)
+    )
     return model_dir
 
 
@@ -135,6 +192,7 @@ def list_models() -> list[ModelMeta]:
                 feature_columns=meta.get("feature_columns", FEATURE_COLUMNS),
                 loss_type=meta.get("loss_type"),
                 conditional_calibration=bool(meta.get("conditional_calibration", False)),
+                model_type=meta.get("model_type", "gbdt"),
             )
         )
     return results
@@ -155,33 +213,72 @@ def load_model(path: Path) -> lgb.Booster:
 class ModelBundle:
     """All artifacts saved alongside a model directory.
 
-    lambdarank:        順位用 Booster (必須)
-    binary:            勝率用二項分類器 (Phase 2 以降のモデルで設定)
-    calibrator:        binary 出力の post-hoc 補正 (binary とセット)
-    combo_calibrators: 連系 馬券種ごとの PL prob 補正 (#44, optional)
+    GBDT 経路:
+        lambdarank:        順位用 Booster (GBDT の場合は必須、NN では None)
+        binary:            勝率用二項分類器 (Phase 2 以降のモデルで設定)
+        calibrator:        binary 出力の post-hoc 補正 (binary とセット)
+        combo_calibrators: 連系 馬券種ごとの PL prob 補正 (#44, optional)
+
+    NN 経路:
+        nn_model:              RaceModel インスタンス (eval 済み)
+        nn_horse_feature_cols: 馬ごとの特徴量列
+        nn_race_feature_cols:  レースレベルの特徴量列
+
+    共通:
+        model_type:     "gbdt" or "nn"
+        model_dir:      モデルディレクトリのパス
+        meta:           meta.json の内容 (dict)
+        feature_columns: 全特徴量列 (GBDT / NN 共通インターフェース)
     """
 
-    lambdarank: lgb.Booster
-    binary: lgb.Booster | None
-    calibrator: IsotonicCalibrator | None
+    model_type: str  # "gbdt" or "nn"
+    model_dir: Path
+    meta: dict
+    feature_columns: list[str]
+    # GBDT 経路
+    lambdarank: lgb.Booster | None = None
+    binary: lgb.Booster | None = None
+    calibrator: IsotonicCalibrator | None = None
     combo_calibrators: ComboCalibrators | None = None
+    # NN 経路 (torch は遅延 import のため型は文字列注釈のみ)
+    nn_model: "torch.nn.Module | None" = None
+    nn_horse_feature_cols: list[str] | None = None
+    nn_race_feature_cols: list[str] | None = None
 
 
 def load_model_full(path: Path) -> ModelBundle:
-    """Load lambdarank + (optional) binary classifier + calibrator + combo calibrators.
+    """Load a ModelBundle from a model directory.
 
-    旧モデル (model.txt のみ) でも安全にロード可能。
-    binary.txt / calibrator.pkl / combo_calibrators.pkl が無ければ None を返す。
+    meta.json の model_type を見て GBDT / NN 経路を自動選択する。
+
+    GBDT:
+        lambdarank + (optional) binary classifier + calibrator + combo calibrators
+    NN:
+        RaceModel (eval mode) + horse/race feature column lists
+
+    旧モデル (meta.json に model_type 無し) は "gbdt" として扱う。
+    torch がインストールされていない環境では NN モデルのロードのみ失敗する
+    (ImportError)。GBDT 経路は torch 不要。
     """
     if not path.is_dir():
-        # path が model.txt 直接指定なら lambdarank のみで返す
+        # path が model.txt 直接指定なら lambdarank のみで返す (後方互換)
         return ModelBundle(
+            model_type="gbdt",
+            model_dir=path.parent,
+            meta={},
+            feature_columns=list(FEATURE_COLUMNS),
             lambdarank=lgb.Booster(model_file=str(path)),
-            binary=None,
-            calibrator=None,
-            combo_calibrators=None,
         )
 
+    meta_path = path / "meta.json"
+    meta: dict = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    model_type = meta.get("model_type", "gbdt")
+    feature_columns: list[str] = meta.get("feature_columns", list(FEATURE_COLUMNS))
+
+    if model_type == "nn":
+        return _load_nn_bundle(path, meta, feature_columns)
+
+    # ── GBDT 経路 ────────────────────────────────────────────────────────────
     lambdarank = lgb.Booster(model_file=str(path / "model.txt"))
 
     binary_path = path / "binary.txt"
@@ -200,10 +297,57 @@ def load_model_full(path: Path) -> ModelBundle:
             combo_calibrators = pickle.load(f)
 
     return ModelBundle(
+        model_type="gbdt",
+        model_dir=path,
+        meta=meta,
+        feature_columns=feature_columns,
         lambdarank=lambdarank,
         binary=binary,
         calibrator=calibrator,
         combo_calibrators=combo_calibrators,
+    )
+
+
+def _load_nn_bundle(path: Path, meta: dict, feature_columns: list[str]) -> ModelBundle:
+    """Load a NN ModelBundle from a model directory.
+
+    torch は遅延 import — torch が入っていない環境では ImportError が伝播する。
+    """
+    import torch  # noqa: PLC0415 — intentional lazy import
+
+    from keiba_ai.ai.nn.model import RaceModel  # noqa: PLC0415
+
+    params = meta.get("params", {})
+    horse_feature_cols: list[str] = meta.get("horse_feature_cols", [])
+    race_feature_cols: list[str] = meta.get("race_feature_cols", [])
+
+    horse_feat_dim = len(horse_feature_cols)
+    race_feat_dim = len(race_feature_cols)
+
+    hidden_dim: int = params.get("hidden_dim", 64)
+    embed_dim: int = params.get("embed_dim", 32)
+    n_heads: int = params.get("n_heads", 4)
+
+    race_model = RaceModel(
+        horse_feat_dim=horse_feat_dim,
+        race_feat_dim=race_feat_dim,
+        embed_dim=embed_dim,
+        hidden_dim=hidden_dim,
+        n_heads=n_heads,
+    )
+
+    state_dict = torch.load(path / "model.pt", map_location="cpu", weights_only=True)
+    race_model.load_state_dict(state_dict)
+    race_model.eval()
+
+    return ModelBundle(
+        model_type="nn",
+        model_dir=path,
+        meta=meta,
+        feature_columns=feature_columns,
+        nn_model=race_model,
+        nn_horse_feature_cols=horse_feature_cols,
+        nn_race_feature_cols=race_feature_cols,
     )
 
 
