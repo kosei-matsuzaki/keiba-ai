@@ -53,13 +53,38 @@ DEFAULT_PARAMS: dict = {
 }
 
 
+def _compute_recency_weights(df: pd.DataFrame, recency_lambda: float) -> np.ndarray | None:
+    """Compute per-row sample weights based on race recency.
+
+    Weight formula (λ > 0):
+        age_years  = (latest_date_in_train - race_date).days / 365.25
+        weight     = exp(-λ × age_years)
+
+    The latest_date is derived from the df itself (not from any test period) to
+    prevent data leakage.  When λ = 0 returns None, meaning uniform weights.
+    """
+    if recency_lambda <= 0.0:
+        return None
+
+    dates = pd.to_datetime(df["date"])
+    latest_date = dates.max()
+    age_years = (latest_date - dates).dt.days / 365.25
+    weights = np.exp(-recency_lambda * age_years).astype(np.float32)
+    return weights
+
+
 def _make_lgb_dataset(
     df: pd.DataFrame,
     feature_cols: list[str],
     categorical_cols: list[str],
     reference: lgb.Dataset | None = None,
+    recency_lambda: float = 0.0,
 ) -> lgb.Dataset:
-    """Build a LightGBM Dataset with group counts by race_id."""
+    """Build a LightGBM Dataset with group counts by race_id.
+
+    When recency_lambda > 0, each row is weighted by exp(-λ × age_years) so
+    that older races contribute less to the lambdarank loss.
+    """
     X = df[feature_cols].copy()
     for col in categorical_cols:
         if col in X.columns:
@@ -70,10 +95,13 @@ def _make_lgb_dataset(
     # group = count of entries per race, in the order they appear in df
     group = df.groupby("race_id", sort=False)["horse_id"].count().values
 
+    sample_weight = _compute_recency_weights(df, recency_lambda)
+
     return lgb.Dataset(
         X,
         label=y,
         group=group,
+        weight=sample_weight,
         feature_name=feature_cols,
         categorical_feature=categorical_cols,
         reference=reference,
@@ -114,6 +142,7 @@ def _train_binary_classifier_and_calibrator(
     valid_df: pd.DataFrame,
     feature_cols: list[str],
     base_params: dict,
+    recency_lambda: float = 0.0,
 ) -> tuple[lgb.Booster, IsotonicCalibrator, dict]:
     """Train a binary classifier (objective=binary) on is_winner and a
     post-hoc isotonic calibrator on the validation set.
@@ -121,6 +150,9 @@ def _train_binary_classifier_and_calibrator(
     The binary classifier outputs sigmoid-calibrated raw probabilities.
     The isotonic regression then corrects any residual systematic bias by
     learning monotonic mapping (raw_prob → empirical win rate) on valid set.
+
+    When recency_lambda > 0, training rows are weighted by exp(-λ × age_years)
+    to down-weight older races (same weight formula as the lambdarank head).
 
     Returns:
         (binary_model, calibrator, metrics)
@@ -145,9 +177,12 @@ def _train_binary_classifier_and_calibrator(
         if col in train_X.columns:
             train_X[col] = train_X[col].astype("category")
 
+    train_sample_weight = _compute_recency_weights(train_df, recency_lambda)
+
     binary_train_data = lgb.Dataset(
         train_X,
         label=train_y_bin,
+        weight=train_sample_weight,
         categorical_feature=[
             c for c in CATEGORICAL_FEATURES if c in train_X.columns
         ] or None,
@@ -232,14 +267,26 @@ def train(
     valid_months: int = 12,
     test_months: int = 6,
     params_json: Path | None = None,
+    recency_lambda: float = 0.0,
 ) -> dict:
-    """Run the full training pipeline. Returns metrics dict."""
+    """Run the full training pipeline. Returns metrics dict.
+
+    Args:
+        recency_lambda: Exponential decay factor for recency-weighted sample
+            weights.  When > 0, each training row is weighted by
+            exp(-λ × age_years) where age_years is the number of years before
+            the most recent race in the training set.  Set to 0.0 (default) to
+            use uniform weights (backward-compatible behaviour).
+    """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
     params = dict(DEFAULT_PARAMS)
     if params_json:
         params.update(json.loads(Path(params_json).read_text()))
+
+    # Store recency_lambda in params so it is persisted to meta.json.
+    params["recency_lambda"] = recency_lambda
 
     log.info("Building feature frame from %s", resolved_db)
     with session_scope(engine) as session:
@@ -282,7 +329,12 @@ def train(
         os.environ.get("KEIBA_EXCLUDE_ODDS_FEATURES", "0"),
     )
 
-    train_data = _make_lgb_dataset(train_df, feature_cols, CATEGORICAL_FEATURES)
+    if recency_lambda > 0.0:
+        log.info("Recency weighting enabled: λ=%.4f (weight = exp(-λ × age_years))", recency_lambda)
+
+    train_data = _make_lgb_dataset(
+        train_df, feature_cols, CATEGORICAL_FEATURES, recency_lambda=recency_lambda
+    )
 
     callbacks = [lgb.log_evaluation(period=50)]
     valid_sets: list[lgb.Dataset] = [train_data]
@@ -330,7 +382,7 @@ def train(
     # を学習し isotonic で post-hoc 補正する。これにより推論時の win_prob は
     # softmax(lambdarank scores) ではなく真の確率に近い値を返せるようになる。
     binary_model, calibrator, binary_metrics = _train_binary_classifier_and_calibrator(
-        train_df, valid_df, feature_cols, params
+        train_df, valid_df, feature_cols, params, recency_lambda=recency_lambda
     )
     metrics.update(binary_metrics)
     log.info("All metrics: %s", metrics)
@@ -418,6 +470,17 @@ def _cli() -> None:
             'for production data set {"min_data_in_leaf": 50}.'
         ),
     )
+    parser.add_argument(
+        "--recency-lambda",
+        type=float,
+        default=0.0,
+        help=(
+            "Exponential decay factor for recency-weighted sample weights. "
+            "When λ > 0, each training row is weighted by exp(-λ × age_years) "
+            "where age_years = (latest_date_in_train - race_date).days / 365.25. "
+            "Default 0.0 disables weighting (uniform weights, backward-compatible)."
+        ),
+    )
     args = parser.parse_args()
 
     result = train(
@@ -426,6 +489,7 @@ def _cli() -> None:
         valid_months=args.valid_months,
         test_months=args.test_months,
         params_json=args.params_json,
+        recency_lambda=args.recency_lambda,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
