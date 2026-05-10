@@ -89,6 +89,35 @@ def test_predict_place_prob_in_range(trained_model):
     assert (result["place_prob"] <= 1.0 + 1e-6).all()
 
 
+def test_predict_race_pl_model_win_prob_sums_to_one(tmp_path):
+    """Plackett-Luce model predict_race: win_prob sums to 1 via softmax path."""
+    db_file = tmp_path / "test_pl.db"
+    engine = create_engine(f"sqlite:///{db_file}", future=True)
+    make_synthetic_db(engine, n_races=25, n_horses_per_race=8, days_back=150, seed=55)
+
+    import os
+    os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
+
+    result = train(db=db_file, train_end=None, valid_months=2, test_months=1,
+                   loss="plackett_luce")
+    model_dir = Path(result["model_dir"])
+
+    model = load_model(model_dir)
+    with Session(engine) as session:
+        race_id = session.scalars(select(Race.race_id).limit(1)).first()
+        from keiba_ai.features.builder import build_inference_frame
+        frame = build_inference_frame(session, race_id)
+
+    # No binary_model or calibrator; loss_type drives softmax path
+    pred = predict_race(model, frame, loss_type="plackett_luce")
+
+    assert not pred.empty
+    assert pred["win_prob"].sum() == pytest.approx(1.0, abs=1e-5)
+    # Confirm backward compat: lambdarank path with same model also works
+    pred_lr = predict_race(model, frame, loss_type="lambdarank")
+    assert pred_lr["win_prob"].sum() == pytest.approx(1.0, abs=1e-5)
+
+
 def test_predict_race_performance(trained_model, monkeypatch):
     """predict_race with plackett_luce must complete within 50 ms per race."""
     engine, db_file, model_dir = trained_model
