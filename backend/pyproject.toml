@@ -20,6 +20,12 @@ dependencies = [
     "pydantic-settings>=2.0",
 ]
 
+[project.optional-dependencies]
+nn = [
+    "torch>=2.0",
+    "lightning>=2.0",
+]
+
 [project.scripts]
 keiba-ingest = "keiba_ai.jobs.ingest:cli_main"
 keiba-ingest-shutuba = "keiba_ai.jobs.ingest_shutuba:cli_main"
