@@ -131,6 +131,35 @@ def sample_top_k(
     return top_k_idx.astype(np.intp)
 
 
+def compute_place_prob(
+    scores: np.ndarray,
+    k: int = 3,
+    n_samples: int = 10_000,
+    rng: np.random.Generator | None = None,
+    place_temperature: float = 1.0,
+) -> np.ndarray:
+    """Estimate each horse's probability of finishing in the top-k.
+
+    Thin wrapper around plackett_luce_place_prob that applies optional
+    temperature scaling to the scores before sampling.  When place_temperature
+    is 1.0 (default) the function is identical to plackett_luce_place_prob.
+
+    Args:
+        scores: Raw model scores for n horses.
+        k: Top-k threshold (default 3 for place bet).
+        n_samples: Monte Carlo sample count.
+        rng: Optional Generator for reproducibility.
+        place_temperature: Temperature divisor applied to scores before PL MC.
+            > 1 flattens the distribution (suppresses over-betting),
+            < 1 sharpens it, = 1 is the identity.
+
+    Returns:
+        Array of shape (n,) where result[i] = P(horse i finishes in top k).
+    """
+    scaled = scores / place_temperature if place_temperature != 1.0 else scores
+    return plackett_luce_place_prob(scaled, k=k, n_samples=n_samples, rng=rng)
+
+
 def plackett_luce_place_prob(
     scores: np.ndarray,
     k: int = 3,

@@ -38,6 +38,7 @@ from sqlalchemy import select
 from keiba_ai.ai.labels import assign_relevance
 from keiba_ai.ai.predict import predict_race
 from keiba_ai.ai.registry import load_model_full
+
 from keiba_ai.core.paths import db_path
 from keiba_ai.db.models import ModelRun  # noqa: F401
 from keiba_ai.db.session import make_engine, session_scope
@@ -48,6 +49,40 @@ log = logging.getLogger(__name__)
 
 WIN_EV_THRESHOLD = 1.1   # Expected value threshold for win bet
 PLACE_EV_THRESHOLD = 1.05  # Expected value threshold for place bet
+
+
+def kelly_bet_size(
+    win_prob: float,
+    odds: float,
+    bankroll: float,
+    kappa: float = 0.25,
+    min_bet: int = 100,
+) -> int:
+    """Fractional Kelly bet size (100 yen 単位で丸め).
+
+    Fractional Kelly fraction: f = kappa * edge / b
+    where edge = win_prob * odds - 1 and b = odds - 1.
+
+    Args:
+        win_prob: Estimated win probability.
+        odds: Decimal odds (payout per 1 yen bet, e.g. 3.5 means 3.5x return).
+        bankroll: Current bankroll in yen.
+        kappa: Fractional Kelly coefficient (0 < kappa <= 1). Default 0.25.
+        min_bet: Minimum bet size in yen; also the rounding unit. Default 100.
+
+    Returns:
+        Bet size in yen, a multiple of min_bet. Returns 0 when edge <= 0.
+    """
+    edge = win_prob * odds - 1.0
+    if edge <= 0:
+        return 0
+    b = odds - 1.0
+    if b <= 0:
+        return 0
+    fraction = kappa * edge / b
+    raw_size = bankroll * fraction
+    rounded = int(raw_size / min_bet) * min_bet
+    return rounded if rounded >= min_bet else 0
 
 
 def _bet_excluded(
@@ -259,6 +294,9 @@ def evaluate(
     exclude_top_rank: int = 0,
     min_popularity: int | None = None,
     max_popularity: int | None = None,
+    bet_sizing: str = "fixed",
+    kelly_kappa: float = 0.25,
+    bankroll: float = 100_000.0,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
@@ -280,6 +318,7 @@ def evaluate(
 
     bundle = load_model_full(model_path)
     model = bundle.lambdarank
+    use_kelly = bet_sizing == "kelly"
 
     log.info("Building evaluation frame from %s", resolved_db)
     with session_scope(engine) as session:
@@ -315,7 +354,11 @@ def evaluate(
             continue
 
         preds = predict_race(
-            model, race_frame, binary_model=bundle.binary, calibrator=bundle.calibrator
+            model, race_frame,
+            binary_model=bundle.binary,
+            calibrator=bundle.calibrator,
+            loss_type=bundle.meta.get("loss_type"),
+            temperature_scaler=bundle.temperature_scaler,
         )
         # Merge actual finish positions + popularity (needed for betting filters)
         actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]
@@ -353,10 +396,19 @@ def evaluate(
                 continue
             ev = row["win_prob"] * odds
             if ev > win_ev_threshold:
+                if use_kelly:
+                    bet_size = kelly_bet_size(
+                        float(row["win_prob"]), float(odds), bankroll,
+                        kappa=kelly_kappa,
+                    )
+                    if bet_size == 0:
+                        continue
+                else:
+                    bet_size = 100
                 win_bets += 1
-                win_invested += 100
+                win_invested += bet_size
                 if row.get("finish_position") == 1:
-                    win_gross_payout += odds * 100
+                    win_gross_payout += odds * bet_size
 
         # Place betting (複勝): requires payout_place data on the race frame
         # race_frame may carry payout_place if the training frame includes it.
@@ -382,8 +434,17 @@ def evaluate(
                     continue
                 ev = row["place_prob"] * min_odds
                 if ev > place_ev_threshold:
+                    if use_kelly:
+                        place_bet_size = kelly_bet_size(
+                            float(row["place_prob"]), min_odds, bankroll,
+                            kappa=kelly_kappa,
+                        )
+                        if place_bet_size == 0:
+                            continue
+                    else:
+                        place_bet_size = 100
                     place_bets += 1
-                    place_invested += 100
+                    place_invested += place_bet_size
                     finish_pos = row.get("finish_position")
                     # 同着（finish_position が小数 = 1.5/2.5 等）は日本競馬で複勝対象外（返還）
                     # のため整数着順のみカウントし、複勝 ROI を過大評価しないようにする。
@@ -393,7 +454,7 @@ def evaluate(
                         and float(finish_pos) == int(finish_pos)
                         and int(finish_pos) in payout_place_map
                     ):
-                        place_gross_payout += payout_place_map[int(finish_pos)]
+                        place_gross_payout += payout_place_map[int(finish_pos)] * (place_bet_size / 100)
 
     n_races = len(ndcg1_list)
     metrics = {
@@ -422,6 +483,9 @@ def evaluate(
         "exclude_top_rank": int(exclude_top_rank),
         "min_popularity": min_popularity,
         "max_popularity": max_popularity,
+        "bet_sizing": bet_sizing,
+        "kelly_kappa": float(kelly_kappa) if use_kelly else None,
+        "bankroll": float(bankroll) if use_kelly else None,
     }
 
     log.info("Evaluation metrics: %s", metrics)
@@ -497,6 +561,27 @@ def _cli() -> None:
         default=None,
         help="Upper bound on popularity rank (inclusive).",
     )
+    parser.add_argument(
+        "--bet-sizing",
+        choices=["fixed", "kelly"],
+        default="fixed",
+        help=(
+            "Bet sizing strategy. 'fixed' (default) bets 100 yen per pick. "
+            "'kelly' uses Fractional Kelly formula scaled by --bankroll."
+        ),
+    )
+    parser.add_argument(
+        "--kelly-kappa",
+        type=float,
+        default=0.25,
+        help="Fractional Kelly coefficient (0 < kappa <= 1). Default 0.25.",
+    )
+    parser.add_argument(
+        "--bankroll",
+        type=float,
+        default=100_000.0,
+        help="Starting bankroll in yen for Kelly bet sizing. Default 100000.",
+    )
     args = parser.parse_args()
 
     metrics = evaluate(
@@ -511,6 +596,9 @@ def _cli() -> None:
         exclude_top_rank=args.exclude_top_rank,
         min_popularity=args.min_popularity,
         max_popularity=args.max_popularity,
+        bet_sizing=args.bet_sizing,
+        kelly_kappa=args.kelly_kappa,
+        bankroll=args.bankroll,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 

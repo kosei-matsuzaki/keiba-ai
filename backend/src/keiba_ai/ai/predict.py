@@ -31,6 +31,7 @@ from keiba_ai.ai.calibrate import (
     ConditionalIsotonicCalibrator,
     IsotonicCalibrator,
     compute_all_combination_probs,
+    compute_place_prob,
     plackett_luce_place_prob,
     softmax_within_race,
     top_k_cumulative_prob,
@@ -40,6 +41,7 @@ from keiba_ai.features.builder import CATEGORICAL_FEATURES, FEATURE_COLUMNS
 
 if TYPE_CHECKING:
     from keiba_ai.ai.registry import ModelBundle
+    from keiba_ai.ai.temperature import TemperatureScaler
 
 _PLACE_PROB_METHOD = os.environ.get("KEIBA_PLACE_PROB_METHOD", "plackett_luce")
 
@@ -71,17 +73,23 @@ def _prepare_features(
     return X
 
 
-def _compute_place_prob(scores: np.ndarray) -> np.ndarray:
+def _compute_place_prob(scores: np.ndarray, place_temperature: float = 1.0) -> np.ndarray:
     """Dispatch to the configured place-probability estimator.
 
     Reads KEIBA_PLACE_PROB_METHOD at call time so that monkeypatching the
     module-level variable in tests takes immediate effect.
+
+    Args:
+        scores: Raw model scores for n horses.
+        place_temperature: Temperature divisor for PL score scaling (TemperatureScaler).
+            1.0 = no scaling (default, backward-compatible).
     """
     method = os.environ.get("KEIBA_PLACE_PROB_METHOD", _PLACE_PROB_METHOD)
     if method == "heuristic":
+        # Temperature not applied for heuristic method (legacy path)
         return top_k_cumulative_prob(scores, k=3)
-    # Default: plackett_luce
-    return plackett_luce_place_prob(scores, k=3, n_samples=10_000)
+    # Default: plackett_luce with optional temperature scaling
+    return compute_place_prob(scores, k=3, n_samples=10_000, place_temperature=place_temperature)
 
 
 def predict_race(
@@ -90,6 +98,7 @@ def predict_race(
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
+    temperature_scaler: "TemperatureScaler | None" = None,
 ) -> pd.DataFrame:
     """Score all horses in a single race and return calibrated probabilities.
 
@@ -106,6 +115,11 @@ def predict_race(
         loss_type: "lambdarank" or "plackett_luce" (or None for backward
             compatibility, treated as "lambdarank").  When "plackett_luce",
             win_prob is softmax(score) within the race — no binary head needed.
+        temperature_scaler: Optional TemperatureScaler for post-hoc probability
+            calibration.  In PL mode, win_prob = softmax(score / T_win);
+            in lambdarank mode, T_win is applied after isotonic calibration
+            as an additional multiplicative adjustment.  place_prob always
+            uses T_place for PL MC score scaling.  None = identity (backward-compat).
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob.
@@ -127,8 +141,11 @@ def predict_race(
     is_pl_mode = loss_type == "plackett_luce"
 
     if is_pl_mode:
-        # Plackett-Luce model: softmax(score) is the calibrated win probability.
-        win_probs = softmax_within_race(scores)
+        # Plackett-Luce model: softmax(score / T_win) is the calibrated win probability.
+        if temperature_scaler is not None:
+            win_probs = temperature_scaler.transform_win(scores)
+        else:
+            win_probs = softmax_within_race(scores)
     elif binary_model is not None and calibrator is not None:
         # Lambdarank + binary head path (Phase 2 onward).
         # binary_model may have been trained with a different feature subset;
@@ -155,11 +172,22 @@ def predict_race(
             win_probs = calibrator.predict(raw_win, cond_df, normalise=True)
         else:
             win_probs = calibrator.predict(raw_win, normalise=True)
+        # NOTE: temperature_scaler is intentionally NOT applied here.
+        # In lambdarank mode the win_probs are already calibrated probabilities
+        # (binary head + isotonic), and applying softmax(probs / T) on top
+        # re-normalises a probability distribution as if it were a score vector,
+        # flattening the top horse and inflating mid-tier EV → over-betting.
+        # train.py also skips fitting a TemperatureScaler in lambdarank mode,
+        # so this branch is normally not reached with a non-None scaler, but
+        # we keep the guard out of the lambdarank path defensively.
     else:
         # Backward-compat: softmax(lambdarank scores)
         win_probs = softmax_within_race(scores)
+        if temperature_scaler is not None:
+            win_probs = temperature_scaler.transform_win(win_probs)
 
-    place_probs = _compute_place_prob(scores)
+    place_temperature = temperature_scaler.T_place if temperature_scaler is not None else 1.0
+    place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
 
     result = pd.DataFrame(
         {
@@ -226,6 +254,7 @@ def predict_race_with_combinations(
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     combo_calibrators: ComboCalibrators | None = None,
     loss_type: str | None = None,
+    temperature_scaler: "TemperatureScaler | None" = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race with EV calculations for all combination bet types.
 
@@ -272,7 +301,11 @@ def predict_race_with_combinations(
         }
 
     base_df = predict_race(
-        model, frame, binary_model=binary_model, calibrator=calibrator, loss_type=loss_type
+        model, frame,
+        binary_model=binary_model,
+        calibrator=calibrator,
+        loss_type=loss_type,
+        temperature_scaler=temperature_scaler,
     )
 
     # Normalise race_odds — None means no confirmed odds data available
@@ -506,6 +539,7 @@ def predict_race_with_shap(
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
+    temperature_scaler: "TemperatureScaler | None" = None,
 ) -> pd.DataFrame:
     """Same as predict_race but adds a 'top_features' column (list[str]).
 
@@ -527,7 +561,11 @@ def predict_race_with_shap(
     import shap
 
     base = predict_race(
-        model, frame, binary_model=binary_model, calibrator=calibrator, loss_type=loss_type
+        model, frame,
+        binary_model=binary_model,
+        calibrator=calibrator,
+        loss_type=loss_type,
+        temperature_scaler=temperature_scaler,
     )
     if frame.empty:
         base["top_features"] = pd.Series(dtype=object)
@@ -597,6 +635,8 @@ def predict_race_bundle(
         frame,
         binary_model=bundle.binary,
         calibrator=bundle.calibrator,
+        loss_type=bundle.meta.get("loss_type"),
+        temperature_scaler=bundle.temperature_scaler,
     )
 
 
@@ -652,8 +692,14 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     if not finite_mask.all():
         scores = np.where(finite_mask, scores, scores[finite_mask].min() if finite_mask.any() else 0.0)
 
-    win_probs = softmax_within_race(scores)
-    place_probs = _compute_place_prob(scores)
+    ts = bundle.temperature_scaler
+    if ts is not None:
+        win_probs = ts.transform_win(scores)
+    else:
+        win_probs = softmax_within_race(scores)
+
+    place_temperature = ts.T_place if ts is not None else 1.0
+    place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
 
     result = pd.DataFrame(
         {
@@ -732,6 +778,8 @@ def predict_race_with_combinations_bundle(
         binary_model=bundle.binary,
         calibrator=bundle.calibrator,
         combo_calibrators=bundle.combo_calibrators,
+        loss_type=bundle.meta.get("loss_type"),
+        temperature_scaler=bundle.temperature_scaler,
     )
 
 
