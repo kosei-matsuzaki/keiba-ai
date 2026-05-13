@@ -161,6 +161,63 @@ def test_train_plackett_luce_runs(syn_engine, tmp_path, monkeypatch):
     assert meta.get("has_binary_model") is False
     assert meta.get("has_calibrator") is False
 
+
+def test_train_lambdarank_skips_temperature_scaler(syn_engine, tmp_path, monkeypatch):
+    """Lambdarank mode must NOT fit a TemperatureScaler.
+
+    Rationale: The binary head + isotonic calibrator already produces
+    well-calibrated win probabilities; applying softmax(probs / T) on top
+    flattens the distribution and inflates mid-tier EV → over-betting →
+    catastrophic ROI collapse (lambdarank payback_win 0.951 → 0.556
+    empirically). Temperature scaling is therefore only fit for plackett_luce
+    mode, where the raw model score is a log-utility that genuinely needs
+    softmax to become a probability.
+    """
+    engine, db_file = syn_engine
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="lambdarank",
+        fit_temperature=True,  # explicit; should still be skipped
+    )
+
+    model_dir = Path(result["model_dir"])
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("loss_type") == "lambdarank"
+    assert meta.get("has_temperature_scaler") is False, (
+        "lambdarank mode must not produce a temperature scaler artifact"
+    )
+    assert not (model_dir / "temperature_scaler.pkl").exists(), (
+        "temperature_scaler.pkl must not be saved in lambdarank mode"
+    )
+
+
+def test_train_plackett_luce_fits_temperature_scaler(syn_engine, tmp_path, monkeypatch):
+    """Plackett-Luce mode MUST fit a TemperatureScaler when valid set is non-empty."""
+    engine, db_file = syn_engine
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+        fit_temperature=True,
+    )
+
+    model_dir = Path(result["model_dir"])
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("loss_type") == "plackett_luce"
+    assert meta.get("has_temperature_scaler") is True, (
+        "PL mode should produce a TemperatureScaler artifact"
+    )
+    assert (model_dir / "temperature_scaler.pkl").exists()
+
     # NDCG metrics must be present (may be NaN for tiny splits but key exists)
     for key in ("valid_ndcg1", "valid_ndcg3", "test_ndcg1", "test_ndcg3"):
         assert key in result

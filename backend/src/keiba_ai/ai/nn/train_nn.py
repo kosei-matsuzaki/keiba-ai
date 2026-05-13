@@ -33,6 +33,7 @@ from keiba_ai.ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_lo
 from keiba_ai.ai.nn.model import RaceModel
 from keiba_ai.ai.registry import save_nn_model
 from keiba_ai.ai.splits import time_split
+from keiba_ai.ai.temperature import TemperatureScaler
 from keiba_ai.core.paths import data_dir, db_path
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.db.session import make_engine, session_scope
@@ -149,6 +150,86 @@ def _compute_ndcg_nn(
         ndcg_vals.append(float(ndcg_score(true_rel, pred_sc, k=at)))
 
     return float(np.mean(ndcg_vals)) if ndcg_vals else float("nan")
+
+
+def _fit_temperature_scaler_nn(
+    model: RaceModel,
+    valid_df: pd.DataFrame,
+    horse_feature_cols: list[str],
+    race_feature_cols: list[str],
+    device: torch.device,
+) -> TemperatureScaler:
+    """Fit TemperatureScaler on valid_df using payback-maximising grid search.
+
+    Per-race scores are extracted by running the NN in eval mode through
+    RaceDataset (same indexing order as groupby("race_id", sort=True)).
+
+    Args:
+        model: Trained RaceModel (already in eval mode).
+        valid_df: Validation DataFrame with finish_position, odds_win, payout_place.
+        horse_feature_cols: Horse-level feature columns.
+        race_feature_cols: Race-level feature columns.
+        device: Torch device for inference.
+
+    Returns:
+        Fitted TemperatureScaler.
+    """
+    dataset = RaceDataset(valid_df, horse_feature_cols, race_feature_cols)
+
+    scores_per_race: list[np.ndarray] = []
+    finish_positions_per_race: list[np.ndarray] = []
+    odds_win_per_race: list[np.ndarray] = []
+    payout_place_per_race: list = []
+
+    model.eval()
+    # Iterate dataset by integer index — same groupby("race_id", sort=True) order
+    # as RaceDataset._races, so grp and dataset[i] are always aligned.
+    with torch.no_grad():
+        for i, (_race_id, grp) in enumerate(valid_df.groupby("race_id", sort=True)):
+            if len(grp) < 2:
+                continue
+
+            sample = dataset[i]
+            n = sample["n_horses"]
+            hf = sample["horse_features"].unsqueeze(0).to(device)
+            rf = sample["race_features"].unsqueeze(0).to(device)
+            mask_single = torch.zeros(1, n, dtype=torch.bool, device=device)
+            mask_single[0, :n] = True
+
+            raw_scores = model(hf, rf, mask_single)  # [1, n]
+            scores = raw_scores[0, :n].cpu().numpy()
+
+            finish_pos = grp["finish_position"].values.astype(float)
+            odds_win = (
+                grp["odds_win"].values.astype(float)
+                if "odds_win" in grp.columns
+                else np.full(len(grp), float("nan"))
+            )
+
+            payout_map: dict[int, int] | None = None
+            if "payout_place" in grp.columns:
+                raw_val = grp["payout_place"].dropna()
+                if not raw_val.empty:
+                    import json as _json
+                    try:
+                        raw_dict = _json.loads(raw_val.iloc[0])
+                        payout_map = {int(k): int(v) for k, v in raw_dict.items()}
+                    except (ValueError, TypeError):
+                        payout_map = None
+
+            scores_per_race.append(scores)
+            finish_positions_per_race.append(finish_pos)
+            odds_win_per_race.append(odds_win)
+            payout_place_per_race.append(payout_map)
+
+    scaler = TemperatureScaler()
+    scaler.fit(
+        scores_per_race=scores_per_race,
+        finish_positions_per_race=finish_positions_per_race,
+        odds_win_per_race=odds_win_per_race,
+        payout_place_per_race=payout_place_per_race,
+    )
+    return scaler
 
 
 def _compute_loss_on_dataset(
@@ -276,6 +357,7 @@ def train_nn(
     max_epochs: int = 100,
     learning_rate: float = 1e-3,
     device: str = "cpu",
+    fit_temperature: bool = True,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict."""
     resolved_db = db or db_path()
@@ -438,6 +520,33 @@ def train_nn(
     }
     log.info("Metrics: %s", metrics)
 
+    # ── Temperature scaling: fit per-bet-type temperature on valid set ────────
+    temperature_scaler: TemperatureScaler | None = None
+    if fit_temperature:
+        if valid_df.empty:
+            log.info("Valid set is empty — skipping temperature scaler fit.")
+        else:
+            log.info("Fitting TemperatureScaler on valid set (NN)…")
+            try:
+                temperature_scaler = _fit_temperature_scaler_nn(
+                    model=race_model,
+                    valid_df=valid_df,
+                    horse_feature_cols=horse_feature_cols,
+                    race_feature_cols=race_feature_cols,
+                    device=torch_device,
+                )
+                log.info(
+                    "TemperatureScaler fitted: T_win=%.3f, T_place=%.3f",
+                    temperature_scaler.T_win,
+                    temperature_scaler.T_place,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "TemperatureScaler fit failed: %s — proceeding without temperature scaling",
+                    exc,
+                )
+                temperature_scaler = None
+
     # Save model
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     model_dir = data_dir() / "models" / f"{timestamp}-nn"
@@ -462,6 +571,13 @@ def train_nn(
         else None
     )
 
+    has_temperature_scaler = temperature_scaler is not None
+    if has_temperature_scaler:
+        with (model_dir / "temperature_scaler.pkl").open("wb") as f:
+            import pickle
+            pickle.dump(temperature_scaler, f)
+        log.info("temperature_scaler.pkl saved to %s", model_dir)
+
     meta_dict = {
         "model_type": "nn",
         "loss_type": loss,
@@ -481,6 +597,7 @@ def train_nn(
         "train_range": train_range,
         "valid_range": valid_range,
         "test_range": test_range,
+        "has_temperature_scaler": has_temperature_scaler,
     }
 
     # Delegate to registry (writes meta.json; model.pt is already in model_dir)
@@ -532,6 +649,15 @@ def _cli() -> None:
         default="cpu",
         help="Training device",
     )
+    parser.add_argument(
+        "--no-fit-temperature",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable TemperatureScaler fitting after training.  Default is to fit "
+            "temperature scaling on the validation set when it is non-empty."
+        ),
+    )
     args = parser.parse_args()
 
     result = train_nn(
@@ -547,6 +673,7 @@ def _cli() -> None:
         max_epochs=args.max_epochs,
         learning_rate=args.learning_rate,
         device=args.device,
+        fit_temperature=not args.no_fit_temperature,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

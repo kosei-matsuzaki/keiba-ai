@@ -305,6 +305,71 @@ def _train_binary_classifier_and_calibrator(
     return binary_model, calibrator, metrics
 
 
+def _fit_temperature_scaler(
+    model: lgb.Booster,
+    valid_df: pd.DataFrame,
+    feature_cols: list[str],
+    loss_type: str = "lambdarank",
+):
+    """Fit a TemperatureScaler on the validation set using payback-maximising grid search.
+
+    Extracts per-race scores, finish_positions, odds_win and payout_place from
+    valid_df, then delegates to TemperatureScaler.fit().
+
+    Returns:
+        Fitted TemperatureScaler.
+    """
+    from keiba_ai.ai.temperature import TemperatureScaler
+
+    scores_per_race: list[np.ndarray] = []
+    finish_positions_per_race: list[np.ndarray] = []
+    odds_win_per_race: list[np.ndarray] = []
+    payout_place_per_race: list = []
+
+    for _race_id, grp in valid_df.groupby("race_id", sort=False):
+        if len(grp) < 2:
+            continue
+
+        X = grp[feature_cols].copy()
+        for col in CATEGORICAL_FEATURES:
+            if col in X.columns:
+                X[col] = X[col].astype("category")
+        scores = model.predict(X)
+
+        finish_pos = grp["finish_position"].values.astype(float)
+        odds_win = (
+            grp["odds_win"].values.astype(float)
+            if "odds_win" in grp.columns
+            else np.full(len(grp), float("nan"))
+        )
+
+        # Parse payout_place JSON for the race (one row per race)
+        payout_map: dict[int, int] | None = None
+        if "payout_place" in grp.columns:
+            raw_val = grp["payout_place"].dropna()
+            if not raw_val.empty:
+                import json
+                try:
+                    raw_dict = json.loads(raw_val.iloc[0])
+                    payout_map = {int(k): int(v) for k, v in raw_dict.items()}
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    payout_map = None
+
+        scores_per_race.append(scores)
+        finish_positions_per_race.append(finish_pos)
+        odds_win_per_race.append(odds_win)
+        payout_place_per_race.append(payout_map)
+
+    scaler = TemperatureScaler()
+    scaler.fit(
+        scores_per_race=scores_per_race,
+        finish_positions_per_race=finish_positions_per_race,
+        odds_win_per_race=odds_win_per_race,
+        payout_place_per_race=payout_place_per_race,
+    )
+    return scaler
+
+
 def _train_single_split(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
@@ -314,10 +379,12 @@ def _train_single_split(
     recency_lambda: float = 0.0,
     loss: str = "lambdarank",
     conditional_calibration: bool = False,
+    fit_temperature: bool = True,
 ) -> tuple[
     lgb.Booster,
     lgb.Booster | None,
     IsotonicCalibrator | ConditionalIsotonicCalibrator | None,
+    object,
     object,
     dict,
 ]:
@@ -330,10 +397,13 @@ def _train_single_split(
     probability).
     When conditional_calibration=True, isotonic / combo calibrators are fit
     per (surface, n_runners_bin) bucket with global fallback.
+    When fit_temperature=True (default) and valid_df is not empty, a TemperatureScaler
+    is fit on the validation set using 1D grid search over payback.
 
     Returns:
-        (model, binary_model, calibrator, combo_calibrators, metrics)
+        (model, binary_model, calibrator, combo_calibrators, temperature_scaler, metrics)
         binary_model and calibrator are None in PL mode.
+        temperature_scaler is None when valid_df is empty or fit_temperature=False.
     """
     if loss not in ("lambdarank", "plackett_luce"):
         raise ValueError(f"Unknown loss type: {loss!r}. Choose 'lambdarank' or 'plackett_luce'.")
@@ -520,7 +590,43 @@ def _train_single_split(
             log.warning("fit_combo_calibrators failed: %s — proceeding without combo cal", exc)
             combo_calibrators = None
 
-    return model, binary_model, calibrator, combo_calibrators, metrics
+    # ── Temperature scaling: fit per-bet-type temperature on valid set ────────
+    # Skipped in lambdarank mode: the binary head + isotonic calibrator already
+    # produces well-calibrated win probabilities (in [0, 1] with sum=1), and
+    # applying softmax(probs / T) on top of that re-normalises a *probability
+    # distribution* rather than a *score vector*, which flattens the top horse
+    # and inflates the EV of mid-tier horses → over-betting → ROI collapse
+    # (empirically observed: lambdarank payback_win 0.951 → 0.556 with T).
+    # Temperature scaling is therefore only fit for plackett_luce mode, where
+    # the model output is a raw log-utility score that needs softmax to become
+    # a probability in the first place.
+    temperature_scaler = None
+    if fit_temperature and not valid_df.empty and loss == "plackett_luce":
+        log.info("Fitting TemperatureScaler on valid set (PL mode)…")
+        from keiba_ai.ai.temperature import TemperatureScaler
+
+        try:
+            temperature_scaler = _fit_temperature_scaler(
+                model=model,
+                valid_df=valid_df,
+                feature_cols=feature_cols,
+                loss_type=loss,
+            )
+            log.info(
+                "TemperatureScaler fitted: T_win=%.3f, T_place=%.3f",
+                temperature_scaler.T_win,
+                temperature_scaler.T_place,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("TemperatureScaler fit failed: %s — proceeding without temperature scaling", exc)
+            temperature_scaler = None
+    elif fit_temperature and loss == "lambdarank":
+        log.info(
+            "Skipping TemperatureScaler fit: lambdarank mode is already calibrated "
+            "by the binary head + isotonic regression."
+        )
+
+    return model, binary_model, calibrator, combo_calibrators, temperature_scaler, metrics
 
 
 def _aggregate_cv_metrics(per_fold: list[dict]) -> tuple[dict, dict]:
@@ -561,6 +667,7 @@ def train(
     recency_lambda: float = 0.0,
     loss: str = "lambdarank",
     conditional_calibration: bool = False,
+    fit_temperature: bool = True,
 ) -> dict:
     """Run the full training pipeline. Returns metrics dict.
 
@@ -630,6 +737,7 @@ def train(
             recency_lambda=recency_lambda,
             loss=loss,
             conditional_calibration=conditional_calibration,
+            fit_temperature=fit_temperature,
         )
 
     # ── Single-split path (cv_folds == 1, original behaviour) ────────────────
@@ -656,10 +764,11 @@ def train(
         # rows into training (that would silently leak test → 1.0 NDCG).
         log.info("Valid set is empty — proceeding without early stopping.")
 
-    model, binary_model, calibrator, combo_calibrators, metrics = _train_single_split(
+    model, binary_model, calibrator, combo_calibrators, temperature_scaler, metrics = _train_single_split(
         train_df, valid_df, test_df, feature_cols, params,
         recency_lambda=recency_lambda, loss=loss,
         conditional_calibration=conditional_calibration,
+        fit_temperature=fit_temperature,
     )
 
     return _save_and_register(
@@ -668,6 +777,7 @@ def train(
         binary_model=binary_model,
         calibrator=calibrator,
         combo_calibrators=combo_calibrators,
+        temperature_scaler=temperature_scaler,
         params=params,
         feature_cols=feature_cols,
         train_df=train_df,
@@ -689,12 +799,13 @@ def _train_with_cv(
     recency_lambda: float = 0.0,
     loss: str = "lambdarank",
     conditional_calibration: bool = False,
+    fit_temperature: bool = True,
 ) -> dict:
     """Rolling-origin CV training.  Saves/registers only the most-recent fold's model."""
     log.info("Starting rolling-origin CV with %d folds.", n_folds)
 
     per_fold_metrics: list[dict] = []
-    last_fold_artifacts: tuple | None = None  # (model, binary, cal, combo, train_df, valid_df)
+    last_fold_artifacts: tuple | None = None  # (model, binary, cal, combo, ts, train_df, valid_df)
 
     for fold_idx, (train_df, valid_df, test_df) in enumerate(
         rolling_origin_splits(frame, n_folds, valid_months, test_months)
@@ -709,17 +820,18 @@ def _train_with_cv(
             len(test_df),
         )
 
-        model, binary_model, calibrator, combo_calibrators, fold_metrics = _train_single_split(
+        model, binary_model, calibrator, combo_calibrators, temperature_scaler, fold_metrics = _train_single_split(
             train_df, valid_df, test_df, feature_cols, params,
             recency_lambda=recency_lambda, loss=loss,
             conditional_calibration=conditional_calibration,
+            fit_temperature=fit_temperature,
         )
         per_fold_metrics.append(fold_metrics)
 
         # Fold 1 (most recent) is used for the final saved model.
         if fold_idx == 0:
             last_fold_artifacts = (
-                model, binary_model, calibrator, combo_calibrators, train_df, valid_df
+                model, binary_model, calibrator, combo_calibrators, temperature_scaler, train_df, valid_df
             )
 
     if not per_fold_metrics:
@@ -733,7 +845,7 @@ def _train_with_cv(
     # (most recent), so downstream consumers that don't understand cv_metrics
     # still get meaningful numbers.
     assert last_fold_artifacts is not None
-    model, binary_model, calibrator, combo_calibrators, train_df, valid_df = last_fold_artifacts
+    model, binary_model, calibrator, combo_calibrators, temperature_scaler, train_df, valid_df = last_fold_artifacts
 
     # Fold-1 metrics are per_fold_metrics[0].
     canonical_metrics = dict(per_fold_metrics[0])
@@ -750,6 +862,7 @@ def _train_with_cv(
         binary_model=binary_model,
         calibrator=calibrator,
         combo_calibrators=combo_calibrators,
+        temperature_scaler=temperature_scaler,
         params=params,
         feature_cols=feature_cols,
         train_df=train_df,
@@ -767,6 +880,7 @@ def _save_and_register(
     binary_model: lgb.Booster | None,
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None,
     combo_calibrators,
+    temperature_scaler=None,
     params: dict,
     feature_cols: list[str],
     train_df: pd.DataFrame,
@@ -800,6 +914,7 @@ def _save_and_register(
         combo_calibrators=combo_calibrators,
         loss_type=loss,
         conditional_calibration=conditional_calibration,
+        temperature_scaler=temperature_scaler,
     )
     log.info("Model saved to %s", model_dir)
 
@@ -883,6 +998,15 @@ def _cli() -> None:
             "False (backward-compatible global isotonic regression)."
         ),
     )
+    parser.add_argument(
+        "--no-fit-temperature",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable TemperatureScaler fitting after training.  Default is to fit "
+            "temperature scaling on the validation set when it is non-empty."
+        ),
+    )
     args = parser.parse_args()
 
     result = train(
@@ -895,6 +1019,7 @@ def _cli() -> None:
         recency_lambda=args.recency_lambda,
         loss=args.loss,
         conditional_calibration=args.conditional_calibration,
+        fit_temperature=not args.no_fit_temperature,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

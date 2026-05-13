@@ -197,3 +197,81 @@ def test_train_nn_small_batch(syn_engine_small, tmp_path, monkeypatch):
 
     assert Path(result["model_dir"]).exists()
     assert (Path(result["model_dir"]) / "model.pt").exists()
+
+
+# ---------------------------------------------------------------------------
+# Temperature scaler integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_train_nn_fits_temperature_scaler(syn_engine_small, tmp_path, monkeypatch):
+    """train_nn() with default fit_temperature=True saves temperature_scaler.pkl
+    and sets has_temperature_scaler=True in meta.json when valid set is non-empty.
+    """
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+        hidden_dim=16,
+        embed_dim=8,
+        n_heads=2,
+        batch_size=4,
+        max_epochs=2,
+        device="cpu",
+        fit_temperature=True,
+    )
+
+    model_dir = Path(result["model_dir"])
+    assert (model_dir / "temperature_scaler.pkl").exists(), (
+        "temperature_scaler.pkl was not saved"
+    )
+
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("has_temperature_scaler") is True, (
+        f"has_temperature_scaler should be True, got: {meta.get('has_temperature_scaler')}"
+    )
+
+    # Verify the pickle loads and has expected attributes
+    import pickle
+    with (model_dir / "temperature_scaler.pkl").open("rb") as f:
+        scaler = pickle.load(f)
+    assert hasattr(scaler, "T_win"), "TemperatureScaler missing T_win"
+    assert hasattr(scaler, "T_place"), "TemperatureScaler missing T_place"
+    assert isinstance(scaler.T_win, float)
+    assert isinstance(scaler.T_place, float)
+
+
+def test_train_nn_no_fit_temperature(syn_engine_small, tmp_path, monkeypatch):
+    """train_nn() with fit_temperature=False skips temperature scaler fitting."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+        hidden_dim=16,
+        embed_dim=8,
+        n_heads=2,
+        batch_size=4,
+        max_epochs=2,
+        device="cpu",
+        fit_temperature=False,
+    )
+
+    model_dir = Path(result["model_dir"])
+    assert not (model_dir / "temperature_scaler.pkl").exists(), (
+        "temperature_scaler.pkl should not exist when fit_temperature=False"
+    )
+
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("has_temperature_scaler") is False, (
+        f"has_temperature_scaler should be False, got: {meta.get('has_temperature_scaler')}"
+    )

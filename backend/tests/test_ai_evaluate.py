@@ -243,3 +243,115 @@ def test_evaluate_persist_merges_into_model_run(trained_scenario):
         # 新しい evaluation キーが merge されている
         for key in ("top1_hit", "place_hit", "payback_win", "payback_place", "n_races"):
             assert key in after, f"{key} should be persisted"
+
+
+# ---------------------------------------------------------------------------
+# kelly_bet_size tests
+# ---------------------------------------------------------------------------
+
+
+class TestKellyBetSize:
+    def test_positive_edge_returns_nonzero(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        # win_prob=0.5, odds=3.0 → edge = 0.5*3.0 - 1 = 0.5 > 0
+        bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000)
+        assert bet > 0
+
+    def test_zero_edge_returns_zero(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        # win_prob=1/3, odds=3.0 → edge = 0 exactly
+        bet = kelly_bet_size(win_prob=1 / 3, odds=3.0, bankroll=100_000)
+        assert bet == 0
+
+    def test_negative_edge_returns_zero(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        # win_prob=0.1, odds=2.0 → edge = 0.1*2 - 1 = -0.8 < 0
+        bet = kelly_bet_size(win_prob=0.1, odds=2.0, bankroll=100_000)
+        assert bet == 0
+
+    def test_odds_one_returns_zero(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        # b = odds - 1 = 0 → zero division guard
+        bet = kelly_bet_size(win_prob=0.9, odds=1.0, bankroll=100_000)
+        assert bet == 0
+
+    def test_rounding_to_min_bet(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        # Choose params that result in a known bet size
+        # kappa=0.25, edge=1.0, b=1.0 → fraction=0.25, raw=25000 → rounded to 25000
+        bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.25, min_bet=100)
+        assert bet % 100 == 0
+
+    def test_below_min_bet_returns_zero(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        # Very small bankroll → raw_size < min_bet → 0
+        bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=10, kappa=0.25, min_bet=100)
+        assert bet == 0
+
+    def test_larger_kappa_gives_larger_bet(self):
+        from keiba_ai.ai.evaluate import kelly_bet_size
+
+        bet_small_kappa = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.1)
+        bet_large_kappa = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.5)
+        assert bet_large_kappa >= bet_small_kappa
+
+
+# ---------------------------------------------------------------------------
+# Kelly vs fixed bet sizing integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_kelly_vs_fixed_invested_differs(trained_scenario):
+    """Kelly sizing should produce a different win_invested than fixed unless
+    all bet sizes are exactly 100 (unlikely for a real model output)."""
+    db_file, model_dir = trained_scenario
+
+    fixed_metrics = evaluate(
+        model_path=model_dir, db=db_file,
+        bet_sizing="fixed",
+    )
+    kelly_metrics = evaluate(
+        model_path=model_dir, db=db_file,
+        bet_sizing="kelly",
+        kelly_kappa=0.25,
+        bankroll=100_000,
+    )
+
+    # Both should complete without error and have the same keys
+    assert "win_bets" in fixed_metrics
+    assert "win_bets" in kelly_metrics
+
+    # bet_sizing recorded in output
+    assert fixed_metrics["bet_sizing"] == "fixed"
+    assert kelly_metrics["bet_sizing"] == "kelly"
+
+    # Kelly-specific params recorded only for kelly mode
+    assert fixed_metrics["kelly_kappa"] is None
+    assert fixed_metrics["bankroll"] is None
+    assert kelly_metrics["kelly_kappa"] == 0.25
+    assert kelly_metrics["bankroll"] == 100_000
+
+
+def test_evaluate_kelly_returns_required_keys(trained_scenario):
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(
+        model_path=model_dir, db=db_file,
+        bet_sizing="kelly", kelly_kappa=0.5, bankroll=50_000,
+    )
+    for key in ("win_bets", "win_invested", "win_gross_payout", "payback_win",
+                "place_bets", "place_invested", "place_gross_payout", "payback_place"):
+        assert key in metrics
+
+
+def test_evaluate_fixed_bet_sizing_recorded(trained_scenario):
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+    assert metrics["bet_sizing"] == "fixed"
+    assert metrics["kelly_kappa"] is None
+    assert metrics["bankroll"] is None

@@ -27,6 +27,7 @@ import lightgbm as lgb
 from sqlalchemy.orm import Session
 
 from keiba_ai.ai.calibrate import ComboCalibrators, IsotonicCalibrator
+from keiba_ai.ai.temperature import TemperatureScaler
 from keiba_ai.core.paths import data_dir
 from keiba_ai.db.models.model_run import ModelRun
 from keiba_ai.features.builder import FEATURE_COLUMNS
@@ -69,6 +70,7 @@ def save_model(
     loss_type: str | None = None,
     conditional_calibration: bool = False,
     model_type: str = "gbdt",
+    temperature_scaler: TemperatureScaler | None = None,
 ) -> Path:
     """Persist model + (optional) binary classifier + calibrator and metadata.
 
@@ -107,6 +109,11 @@ def save_model(
         with (model_dir / "combo_calibrators.pkl").open("wb") as f:
             pickle.dump(combo_calibrators, f)
 
+    has_temperature_scaler = temperature_scaler is not None
+    if has_temperature_scaler:
+        with (model_dir / "temperature_scaler.pkl").open("wb") as f:
+            pickle.dump(temperature_scaler, f)
+
     meta = {
         "model_type": model_type,
         "timestamp": ts,
@@ -124,6 +131,7 @@ def save_model(
         ),
         "loss_type": loss_type,
         "conditional_calibration": conditional_calibration,
+        "has_temperature_scaler": has_temperature_scaler,
     }
     (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
@@ -244,6 +252,8 @@ class ModelBundle:
     nn_model: "torch.nn.Module | None" = None
     nn_horse_feature_cols: list[str] | None = None
     nn_race_feature_cols: list[str] | None = None
+    # 温度スケーリング (GBDT / NN 共通; optional)
+    temperature_scaler: TemperatureScaler | None = None
 
 
 def load_model_full(path: Path) -> ModelBundle:
@@ -296,6 +306,12 @@ def load_model_full(path: Path) -> ModelBundle:
         with combo_cal_path.open("rb") as f:
             combo_calibrators = pickle.load(f)
 
+    temperature_scaler_path = path / "temperature_scaler.pkl"
+    temperature_scaler = None
+    if temperature_scaler_path.exists():
+        with temperature_scaler_path.open("rb") as f:
+            temperature_scaler = pickle.load(f)
+
     return ModelBundle(
         model_type="gbdt",
         model_dir=path,
@@ -305,6 +321,7 @@ def load_model_full(path: Path) -> ModelBundle:
         binary=binary,
         calibrator=calibrator,
         combo_calibrators=combo_calibrators,
+        temperature_scaler=temperature_scaler,
     )
 
 
@@ -340,6 +357,12 @@ def _load_nn_bundle(path: Path, meta: dict, feature_columns: list[str]) -> Model
     race_model.load_state_dict(state_dict)
     race_model.eval()
 
+    temperature_scaler_path = path / "temperature_scaler.pkl"
+    temperature_scaler = None
+    if temperature_scaler_path.exists():
+        with temperature_scaler_path.open("rb") as f:
+            temperature_scaler = pickle.load(f)
+
     return ModelBundle(
         model_type="nn",
         model_dir=path,
@@ -348,6 +371,7 @@ def _load_nn_bundle(path: Path, meta: dict, feature_columns: list[str]) -> Model
         nn_model=race_model,
         nn_horse_feature_cols=horse_feature_cols,
         nn_race_feature_cols=race_feature_cols,
+        temperature_scaler=temperature_scaler,
     )
 
 
