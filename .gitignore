@@ -1,29 +1,44 @@
+# ── Build artifacts ───────────────────────────────────────────────────────────
+build/
+build-*/
+
+# ── Backend (Python) ──────────────────────────────────────────────────────────
 backend/.venv/
+backend/.venv-linux/
 backend/**/__pycache__/
 backend/.pytest_cache/
 backend/.ruff_cache/
 backend/.mypy_cache/
 backend/dist/
-backend/build/
-backend/keiba-ai-backend.spec
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
 frontend/node_modules/
 frontend/dist/
-src-tauri/target/
-src-tauri/binaries/
-src-tauri/gen/
-binaries/
+
+# ── Data (netkeiba ingestion / DB / models / logs) ────────────────────────────
 data/raw/
 data/cache/
 data/logs/
 data/models/
+data/train_logs/
 data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+data/*.db.bak
+data/*.db.corrupt*
 data/*.log
 data/settings.json
 data/lgb_params_prod.json
+data-snapshot/
 
 # 調査用に curl で取得した HTML サンプル（コミット対象外）
 *_sample.html
 *_ped.html
+
+# ── OS / editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/

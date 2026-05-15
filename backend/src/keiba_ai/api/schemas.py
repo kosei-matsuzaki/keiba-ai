@@ -25,9 +25,12 @@ class EntrySummary(BaseModel):
     horse_name: str | None = None
     post_position: int | None
     jockey_id: str | None
+    jockey_name: str | None = None
     trainer_id: str | None
     age: int | None
     sex: str | None
+    horse_weight: int | None = None
+    horse_weight_diff: int | None = None
     odds_win: float | None
     popularity: int | None
     finish_position: int | None
@@ -132,11 +135,16 @@ class ModelMeta(BaseModel):
     id: int
     created_at: str
     model_path: str
+    name: str | None = None
     train_range: str | None
     valid_range: str | None
     params: dict[str, Any] | None
     metrics: dict[str, Any] | None
     is_active: bool
+
+
+class UpdateModelRequest(BaseModel):
+    name: str | None = None
 
 
 # ── Scraper schemas ───────────────────────────────────────────────────────────

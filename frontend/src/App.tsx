@@ -9,8 +9,7 @@ import { fetchHealth } from '@/lib/api';
  * The Outlet renders the current route's component.
  */
 export function App() {
-  // ky API client は lazy 初期化なので最初の fetch で getApiBaseUrl() の
-  // Tauri invoke (10〜100ms) と TLS handshake が同時並行で起きる。
+  // ky API client は lazy 初期化なので最初の fetch で TLS handshake が起きる。
   // App マウント直後に fetchHealth() を fire-and-forget しておくと、
   // 各ページのポーリング群が走る前に client を warm up できる。
   useEffect(() => {

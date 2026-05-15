@@ -14,6 +14,7 @@ from keiba_ai.api.schemas import EntrySummary, RaceDetail, RaceSummary, Upcoming
 from keiba_ai.core.dates import this_weekend_dates
 from keiba_ai.db.models.entry import Entry
 from keiba_ai.db.models.horse import Horse
+from keiba_ai.db.models.jockey import Jockey
 from keiba_ai.db.models.race import Race
 
 router = APIRouter()
@@ -33,7 +34,7 @@ def _race_summary(race: Race) -> RaceSummary:
 
 
 def _build_entry_summaries(entries: list[Entry], session: Session) -> list[EntrySummary]:
-    """Build EntrySummary list with horse_name populated via a single bulk load."""
+    """Build EntrySummary list with horse_name / jockey_name populated via bulk loads."""
     horse_ids = {e.horse_id for e in entries}
     horses: dict[str, str | None] = {}
     if horse_ids:
@@ -42,15 +43,26 @@ def _build_entry_summaries(entries: list[Entry], session: Session) -> list[Entry
         ).all()
         horses = {h.horse_id: h.name for h in horse_rows}
 
+    jockey_ids = {e.jockey_id for e in entries if e.jockey_id is not None}
+    jockeys: dict[str, str | None] = {}
+    if jockey_ids:
+        jockey_rows = session.scalars(
+            select(Jockey).where(Jockey.jockey_id.in_(jockey_ids))
+        ).all()
+        jockeys = {j.jockey_id: j.name for j in jockey_rows}
+
     return [
         EntrySummary(
             horse_id=entry.horse_id,
             horse_name=horses.get(entry.horse_id),
             post_position=entry.post_position,
             jockey_id=entry.jockey_id,
+            jockey_name=jockeys.get(entry.jockey_id) if entry.jockey_id else None,
             trainer_id=entry.trainer_id,
             age=entry.age,
             sex=entry.sex,
+            horse_weight=entry.horse_weight,
+            horse_weight_diff=entry.horse_weight_diff,
             odds_win=entry.odds_win,
             popularity=entry.popularity,
             finish_position=entry.finish_position,

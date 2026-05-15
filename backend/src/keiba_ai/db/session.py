@@ -19,9 +19,23 @@ def make_engine(db_path: Path) -> Engine:
     busy_timeout: 並行する書き込みジョブ (例: 長時間 ingest 中の simulation_runs
     INSERT) で 「database is locked」 になりがちなので、待機を 5 → 30 秒に
     伸ばして安定させる。
+
+    pool sizing: bulk predictions など長時間 1 session を握るハンドラと、
+    auto-shutuba / auto-odds 自動発射などの BackgroundTask が並走すると
+    デフォルト (5+10) では枯渇するため余裕を持たせる。pool_pre_ping で
+    死活確認し、reload 後の腐ったコネクションを掴まないようにする。
+    SQLite + WAL は読み取り並行可能なのでサイズを上げても安全。
     """
     url = f"sqlite:///{db_path}"
-    engine = create_engine(url, echo=False, future=True)
+    engine = create_engine(
+        url,
+        echo=False,
+        future=True,
+        pool_size=20,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
 
     @event.listens_for(engine, "connect")
     def _set_pragmas(dbapi_conn, _connection_record):

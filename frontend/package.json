@@ -9,10 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
-    "format": "prettier --write src",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "format": "prettier --write src"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -23,7 +20,6 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.0",
     "@tanstack/react-query": "^5.59.0",
-    "@tauri-apps/api": "^2.0.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "ky": "^1.7.0",
@@ -40,7 +36,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "^2.0.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.0",

@@ -18,7 +18,6 @@ from keiba_ai.api.jobs import JobRegistry
 from keiba_ai.api.routers import (
     bets,
     health,
-    internal,
     jobs,
     metrics,
     models,
@@ -37,10 +36,7 @@ from keiba_ai.db.session import make_engine
 
 _DEFAULT_ORIGINS = [
     "http://localhost:5173",   # Vite dev server
-    "http://localhost:1420",   # Tauri dev default
-    "tauri://localhost",       # Tauri production WebView (macOS/Linux)
-    "http://tauri.localhost",  # Tauri production WebView (Windows)
-    "https://tauri.localhost", # Tauri production WebView (Windows, https)
+    "http://127.0.0.1:5173",
 ]
 
 
@@ -57,7 +53,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     engine = make_engine(db_path())
     # 既存 DB に未適用のテーブル (alembic を ユーザー手動で apply していない
-    # ケース) を idempotent に作成する。Tauri sidecar 起動時に
+    # ケース) を idempotent に作成する。
     # simulation_runs などの新テーブルが無くても落ちないようにする。
     Base.metadata.create_all(engine)
     app.state.engine = engine
@@ -100,7 +96,6 @@ def create_app() -> FastAPI:
     application.include_router(settings.router, prefix="/api")
     application.include_router(recommendations.router, prefix="/api")
     application.include_router(simulation.router, prefix="/api")
-    application.include_router(internal.router, prefix="/api")
 
     return application
 

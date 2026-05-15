@@ -10,6 +10,8 @@ vi.mock('../lib/api', () => ({
   fetchModels: vi.fn(),
   activateModel: vi.fn(),
   trainModel: vi.fn(),
+  updateModel: vi.fn(),
+  deleteModel: vi.fn(),
 }));
 
 import { fetchModels, activateModel, trainModel } from '../lib/api';
@@ -19,6 +21,7 @@ const mockModels: ModelMeta[] = [
     id: 1,
     created_at: '2026-01-01T12:00:00',
     model_path: 'data/models/20260101-120000',
+    name: null,
     train_range: '2022-01-01/2025-01-01',
     valid_range: '2025-01-01/2025-04-01',
     params: null,
@@ -29,6 +32,7 @@ const mockModels: ModelMeta[] = [
     id: 2,
     created_at: '2026-02-01T12:00:00',
     model_path: 'data/models/20260201-120000',
+    name: null,
     train_range: '2022-01-01/2025-07-01',
     valid_range: '2025-07-01/2025-10-01',
     params: null,

@@ -16,9 +16,12 @@ export interface EntrySummary {
   horse_name: string | null;
   post_position: number | null;
   jockey_id: string | null;
+  jockey_name: string | null;
   trainer_id: string | null;
   age: number | null;
   sex: string | null;
+  horse_weight: number | null;
+  horse_weight_diff: number | null;
   odds_win: number | null;
   popularity: number | null;
   finish_position: number | null;
@@ -124,11 +127,16 @@ export interface ModelMeta {
   id: number;
   created_at: string;
   model_path: string;
+  name: string | null;
   train_range: string | null;
   valid_range: string | null;
   params: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   is_active: boolean;
+}
+
+export interface UpdateModelRequest {
+  name: string | null;
 }
 
 // ── Scraper ───────────────────────────────────────────────────────────────────

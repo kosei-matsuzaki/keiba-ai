@@ -7,15 +7,15 @@ import contextlib
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.registry import set_active_by_id
+from keiba_ai.ai.registry import delete_model_files, renumber_model_ids, set_active_by_id
 from keiba_ai.ai.train import train
 from keiba_ai.api.deps import get_job_registry, get_or_404, get_session
 from keiba_ai.api.jobs import JobRegistry
-from keiba_ai.api.schemas import JobAccepted, ModelMeta, TrainRequest
+from keiba_ai.api.schemas import JobAccepted, ModelMeta, TrainRequest, UpdateModelRequest
 from keiba_ai.db.models.model_run import ModelRun
 
 router = APIRouter()
@@ -36,6 +36,7 @@ def _run_to_schema(run: ModelRun) -> ModelMeta:
         id=run.id,
         created_at=run.created_at,
         model_path=run.model_path,
+        name=run.notes,
         train_range=run.train_range,
         valid_range=run.valid_range,
         params=params,
@@ -75,6 +76,51 @@ def activate_model(
     # Refresh after flush so is_active reflects the change
     session.refresh(run)
     return _run_to_schema(run)
+
+
+@router.patch("/models/{model_id}", response_model=ModelMeta)
+def update_model(
+    model_id: int,
+    body: UpdateModelRequest,
+    session: Annotated[Session, Depends(get_session)],
+) -> ModelMeta:
+    """モデルの名称を更新する。空文字を渡すと名称をクリア (NULL) する。"""
+    run = get_or_404(session, ModelRun, model_id, label="Model")
+    if body.name is not None:
+        run.notes = body.name.strip() or None
+    session.flush()
+    session.refresh(run)
+    return _run_to_schema(run)
+
+
+@router.post("/models/compact", status_code=204)
+def compact_model_ids(
+    session: Annotated[Session, Depends(get_session)],
+) -> None:
+    """ModelRun.id を created_at 昇順で 1..N に詰めて飛び番を解消する。
+
+    削除時は自動で renumber されるが、過去の削除で残った飛び番を一括解消したい
+    ときに手動で叩く。FK 参照されていないので安全。
+    """
+    renumber_model_ids(session)
+
+
+@router.delete("/models/{model_id}", status_code=204)
+def delete_model(
+    model_id: int,
+    session: Annotated[Session, Depends(get_session)],
+) -> None:
+    """モデルを削除する。Active モデルは削除不可 (まず別モデルを activate してから)。"""
+    run = get_or_404(session, ModelRun, model_id, label="Model")
+    if bool(run.is_active):
+        raise HTTPException(
+            status_code=409,
+            detail="Active モデルは削除できません。先に別モデルを activate してください。",
+        )
+    delete_model_files(run.model_path)
+    session.delete(run)
+    session.flush()
+    renumber_model_ids(session)
 
 
 @router.post("/models/train", response_model=JobAccepted)

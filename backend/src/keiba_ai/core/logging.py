@@ -10,7 +10,7 @@ def configure_logging(level: int = logging.INFO) -> None:
     # Windows コンソールはデフォルト cp932 (Shift_JIS 系) で stdout を扱うため
     # em-dash (U+2014) 等の非 ASCII でログ書き込みが UnicodeEncodeError になる。
     # py3.7+ の TextIOWrapper.reconfigure で utf-8 + replace に切り替える。
-    # PyInstaller 配布等で stdout が非 TextIOWrapper の場合は静かにスキップ。
+    # stdout が非 TextIOWrapper の場合（リダイレクト等）は静かにスキップ。
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")

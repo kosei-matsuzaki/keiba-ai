@@ -133,7 +133,10 @@ def save_model(
         "conditional_calibration": conditional_calibration,
         "has_temperature_scaler": has_temperature_scaler,
     }
-    (model_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+    (model_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     return model_dir
 
@@ -175,7 +178,8 @@ def save_nn_model(
     meta_dict.setdefault("model_type", "nn")
 
     (model_dir / "meta.json").write_text(
-        json.dumps(meta_dict, ensure_ascii=False, indent=2)
+        json.dumps(meta_dict, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     return model_dir
 
@@ -188,7 +192,7 @@ def list_models() -> list[ModelMeta]:
         meta_file = candidate / "meta.json"
         if not meta_file.exists():
             continue
-        meta = json.loads(meta_file.read_text())
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
         results.append(
             ModelMeta(
                 path=candidate,
@@ -281,7 +285,7 @@ def load_model_full(path: Path) -> ModelBundle:
         )
 
     meta_path = path / "meta.json"
-    meta: dict = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta: dict = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     model_type = meta.get("model_type", "gbdt")
     feature_columns: list[str] = meta.get("feature_columns", list(FEATURE_COLUMNS))
 
@@ -395,6 +399,64 @@ def set_active_by_id(model_id: int, session: Session) -> None:
     for run in runs:
         run.is_active = 1 if run.id == model_id else 0
     session.flush()
+
+
+def delete_model_files(stored_path: str) -> None:
+    """data/models/<ts>/ ディレクトリを再帰削除する。
+
+    stored_path は ModelRun.model_path の値 (WSL/Windows のいずれで保存されたパスでも可)。
+    _resolve_model_path と同様 basename ベースで現プラットフォーム上に解決し、存在すれば
+    rmtree で消す。存在しなければ no-op。
+    """
+    import shutil
+
+    resolved = _resolve_model_path(stored_path)
+    if resolved.is_dir():
+        shutil.rmtree(resolved)
+
+
+def renumber_model_ids(session: Session) -> None:
+    """ModelRun.id を created_at 昇順で 1, 2, 3, ... に振り直す。
+
+    削除を繰り返すと autoincrement のせいで「モデル 1 個しかないのに id=13」のような
+    飛び番が残りがちなので、削除後に呼んで詰める。他テーブルから ModelRun.id への
+    FK 参照は存在しない (grep 確認済み) ため、安全に振り直せる。
+
+    主キー UPDATE で衝突しないよう、一度全 id を +1_000_000 にオフセットしてから
+    1..N の本番値を割り当てる。AUTOINCREMENT を使うテーブルがある場合は
+    sqlite_sequence の seq も併せて更新して、次回 INSERT が N+1 から始まるようにする。
+    """
+    from sqlalchemy import select, text
+
+    runs = session.scalars(
+        select(ModelRun).order_by(ModelRun.created_at, ModelRun.id)
+    ).all()
+
+    if runs:
+        offset = 1_000_000
+        for r in runs:
+            r.id = r.id + offset
+        session.flush()
+        for new_id, r in enumerate(runs, start=1):
+            r.id = new_id
+        session.flush()
+
+    # sqlite_sequence は AUTOINCREMENT 宣言があるスキーマでのみ存在するため
+    # IF EXISTS 相当のガードを入れる (未使用なら触らない)。
+    has_sequence_table = session.execute(
+        text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'")
+    ).first()
+    if has_sequence_table:
+        if runs:
+            session.execute(
+                text(
+                    "INSERT OR REPLACE INTO sqlite_sequence(name, seq) "
+                    "VALUES('model_runs', :seq)"
+                ),
+                {"seq": len(runs)},
+            )
+        else:
+            session.execute(text("DELETE FROM sqlite_sequence WHERE name='model_runs'"))
 
 
 def _resolve_model_path(stored_path: str) -> Path:

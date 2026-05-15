@@ -701,7 +701,7 @@ def train(
 
     params = dict(DEFAULT_PARAMS)
     if params_json:
-        params.update(json.loads(Path(params_json).read_text()))
+        params.update(json.loads(Path(params_json).read_text(encoding="utf-8")))
 
     # Store recency_lambda in params so it is persisted to meta.json.
     params["recency_lambda"] = recency_lambda

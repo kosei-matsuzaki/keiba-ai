@@ -210,7 +210,7 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
         {/* 実績 vs AI 予想 を視覚的に分離するためのグループ行 */}
         <TableRow>
           <TableHead
-            colSpan={6}
+            colSpan={8}
             className="border-r border-border/50 bg-muted/40 text-center text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400"
           >
             実績データ
@@ -227,6 +227,8 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
           <SortableHeader label="馬番" sortKey="post_position" className="w-12" {...headerProps} />
           <SortableHeader label="馬名" sortKey="horse_name" {...headerProps} />
           <TableHead className="text-center">年齢/性別</TableHead>
+          <TableHead>騎手</TableHead>
+          <TableHead className="text-right">馬体重</TableHead>
           <SortableHeader label="単勝オッズ" sortKey="odds_win" className="text-right" {...headerProps} />
           <SortableHeader label="人気" sortKey="popularity" className="text-right" {...headerProps} />
           <SortableHeader label="着順" sortKey="finish_position" className="border-r border-border/50 text-center" {...headerProps} />
@@ -248,6 +250,21 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             </TableCell>
             <TableCell className="text-center">
               {entry.age ?? '?'}{entry.sex ?? ''}
+            </TableCell>
+            <TableCell>{entry.jockey_name ?? '—'}</TableCell>
+            <TableCell className="text-right">
+              {entry.horse_weight != null ? (
+                <>
+                  {entry.horse_weight}kg
+                  {entry.horse_weight_diff != null && (
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      ({entry.horse_weight_diff > 0 ? '+' : ''}{entry.horse_weight_diff})
+                    </span>
+                  )}
+                </>
+              ) : (
+                '—'
+              )}
             </TableCell>
             <TableCell className="text-right">{formatOdds(entry.odds_win)}</TableCell>
             <TableCell className="text-right">{entry.popularity ?? '—'}</TableCell>

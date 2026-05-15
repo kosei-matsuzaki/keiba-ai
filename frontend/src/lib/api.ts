@@ -1,10 +1,8 @@
 /**
  * API client using ky.
  *
- * The ky instance is lazily initialized on the first call so that the base
- * URL can be resolved asynchronously — either from the Tauri invoke
- * 'get_api_port' command (Tauri runtime) or from the VITE_KEIBA_API_BASE_URL
- * env var (plain browser / dev server).
+ * Base URL is resolved from VITE_KEIBA_API_BASE_URL env var (override) or the
+ * default http://127.0.0.1:8765 (matches scripts/dev.sh).
  *
  * Error handling helpers (`getStatus`, `formatErrorMessage`, `isNotFoundError`,
  * etc.) are exported here so all toast.error / EmptyState callers can
@@ -12,7 +10,7 @@
  */
 import { HTTPError } from 'ky';
 import ky from 'ky';
-import { getApiBaseUrl } from './tauri';
+import { getApiBaseUrl } from './api-base';
 import type {
   BetBreakdown,
   BetRecordIn,
@@ -44,6 +42,7 @@ import type {
   SimulationRunListResponse,
   TrainRequest,
   UpcomingRacesResponse,
+  UpdateModelRequest,
 } from '@/types/api';
 
 // Cache the in-flight construction Promise (not the resolved client) so that
@@ -132,6 +131,18 @@ export function fetchModel(id: number): Promise<ModelMeta> {
 
 export function activateModel(id: number): Promise<ModelMeta> {
   return getClient().then((c) => c.post(`models/${id}/activate`).json<ModelMeta>());
+}
+
+export function updateModel(id: number, body: UpdateModelRequest): Promise<ModelMeta> {
+  return getClient().then((c) => c.patch(`models/${id}`, { json: body }).json<ModelMeta>());
+}
+
+export function deleteModel(id: number): Promise<void> {
+  return getClient().then((c) => c.delete(`models/${id}`).then(() => undefined));
+}
+
+export function compactModelIds(): Promise<void> {
+  return getClient().then((c) => c.post('models/compact').then(() => undefined));
 }
 
 export function trainModel(body: TrainRequest): Promise<JobAccepted> {

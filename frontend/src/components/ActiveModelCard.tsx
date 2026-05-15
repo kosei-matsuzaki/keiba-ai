@@ -43,6 +43,9 @@ export function ActiveModelCard({ model, linkToModels = true }: ActiveModelCardP
         <CardTitle className="flex items-center gap-3 text-sm font-medium text-muted-foreground">
           Active モデル
           <Badge variant="success">ID {model.id}</Badge>
+          {model.name?.trim() && (
+            <span className="text-sm font-normal text-foreground">{model.name}</span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
