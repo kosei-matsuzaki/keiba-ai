@@ -26,7 +26,7 @@ def data_dir() -> Path:
     if env_val:
         d = Path(env_val)
     else:
-        d = _repo_root() / "games" / "keiba-ai" / "data"
+        d = _repo_root() / "data"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

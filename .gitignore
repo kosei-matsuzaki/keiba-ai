@@ -10,6 +10,7 @@ backend/.pytest_cache/
 backend/.ruff_cache/
 backend/.mypy_cache/
 backend/dist/
+backend/build/
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
 frontend/node_modules/
