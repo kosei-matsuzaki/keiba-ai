@@ -10,8 +10,7 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from keiba_ai.ai.cv import rolling_origin_splits
-
+from ai.cv import rolling_origin_splits
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,8 +163,8 @@ def test_folds_with_empty_train_are_skipped():
 
 def test_n_folds_1_consistent_with_time_split():
     """With n_folds=1, rolling_origin_splits should produce the same boundaries
-    as keiba_ai.ai.splits.time_split when train_end is None."""
-    from keiba_ai.ai.splits import time_split
+    as ai.splits.time_split when train_end is None."""
+    from ai.splits import time_split
 
     frame = _make_frame(date(2021, 1, 1), n_days=500)
     valid_months, test_months = 3, 2

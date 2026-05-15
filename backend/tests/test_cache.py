@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from keiba_ai.scraper import cache as cache_module
+from scraper import cache as cache_module
 
 _RACE_URL = "https://db.netkeiba.com/race/202412280101/"
 _MISC_URL = "https://race.netkeiba.com/top/race_list.html?kaisai_date=20241228"
@@ -34,7 +34,7 @@ def test_read_returns_none_on_miss():
 
 def test_cache_path_is_under_yyyy_mm():
     cache_module.write_cache(_RACE_URL, "data")
-    from keiba_ai.scraper.cache import _cache_path
+    from scraper.cache import _cache_path
     path = _cache_path(_RACE_URL)
     # Expect .../2024/12/202412280101.html
     assert path.parts[-3] == "2024"
@@ -44,14 +44,14 @@ def test_cache_path_is_under_yyyy_mm():
 
 def test_misc_url_goes_to_misc_dir():
     cache_module.write_cache(_MISC_URL, "calendar html")
-    from keiba_ai.scraper.cache import _cache_path
+    from scraper.cache import _cache_path
     path = _cache_path(_MISC_URL)
     assert "misc" in path.parts
 
 
 def test_stale_cache_returns_none():
     cache_module.write_cache(_RACE_URL, "stale data")
-    from keiba_ai.scraper.cache import _cache_path
+    from scraper.cache import _cache_path
     path = _cache_path(_RACE_URL)
     # Backdate the file mtime by 25 hours
     old_time = time.time() - 25 * 3600
@@ -63,7 +63,7 @@ def test_stale_cache_returns_none():
 
 def test_no_age_check_returns_stale():
     cache_module.write_cache(_RACE_URL, "stale data")
-    from keiba_ai.scraper.cache import _cache_path
+    from scraper.cache import _cache_path
     path = _cache_path(_RACE_URL)
     old_time = time.time() - 100 * 3600
     import os

@@ -11,13 +11,13 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.calibrate import ConditionalIsotonicCalibrator
-from keiba_ai.ai.predict import predict_race
-from keiba_ai.ai.registry import load_model, load_model_full
-from keiba_ai.ai.train import train
-from keiba_ai.db.models.race import Race
-from keiba_ai.features.builder import build_inference_frame
+import db.models  # noqa: F401
+from ai.calibrate import ConditionalIsotonicCalibrator
+from ai.gbm.train import train
+from ai.predict import predict_race
+from ai.registry import load_model, load_model_full
+from db.models.race import Race
+from features.builder import build_inference_frame
 from tests.synthetic import make_synthetic_db
 
 
@@ -108,7 +108,7 @@ def test_predict_race_pl_model_win_prob_sums_to_one(tmp_path):
     model = load_model(model_dir)
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
-        from keiba_ai.features.builder import build_inference_frame
+        from features.builder import build_inference_frame
         frame = build_inference_frame(session, race_id)
 
     # No binary_model or calibrator; loss_type drives softmax path
@@ -155,14 +155,15 @@ def test_predict_race_with_conditional_calibrator(trained_model):
     if bundle.binary is None:
         pytest.skip("binary model not available in this build")
 
-    from keiba_ai.features.builder import CATEGORICAL_FEATURES, build_training_frame
     from sqlalchemy.orm import Session as _Session
+
+    from features.builder import CATEGORICAL_FEATURES, build_training_frame
 
     # Build a small training frame to get actual binary model raw scores.
     with _Session(engine) as session:
         full_frame = build_training_frame(session)
 
-    from keiba_ai.ai.labels import assign_is_winner
+    from ai.labels import assign_is_winner
 
     feature_cols_binary = list(bundle.binary.feature_name())
     X = full_frame[feature_cols_binary].copy()

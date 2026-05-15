@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from keiba_ai.ai.calibrate import IsotonicCalibrator
+from ai.calibrate import IsotonicCalibrator
 
 
 def test_fit_predict_monotonic():

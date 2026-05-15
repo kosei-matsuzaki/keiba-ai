@@ -13,12 +13,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.race import Race
-from keiba_ai.features.horse_history import (
+import db.models  # noqa: F401
+from db.base import Base
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.race import Race
+from features.horse_history import (
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,
@@ -388,7 +388,7 @@ def test_cache_single_sql_query(rich_engine):
 # ---------------------------------------------------------------------------
 
 
-from keiba_ai.features.horse_history import (
+from features.horse_history import (
     is_high_class,
     race_class_weight,
 )
@@ -510,7 +510,7 @@ def test_class_features_cutoff_excludes_future(class_engine):
 # ---------------------------------------------------------------------------
 
 
-from keiba_ai.features.horse_history import (
+from features.horse_history import (
     parse_margin,
     parse_passing,
 )

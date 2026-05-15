@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.scraper.parsers.shutuba import ParseError, ParsedShutuba, parse_shutuba
+from scraper.parsers.shutuba import ParsedShutuba, ParseError, parse_shutuba
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

@@ -1,4 +1,4 @@
-"""Tests for keiba_ai.ai.nn.dataset (RaceDataset, collate_fn)."""
+"""Tests for ai.nn.dataset (RaceDataset, collate_fn)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from keiba_ai.ai.nn.dataset import RaceDataset, collate_fn
-
+from ai.nn.dataset import RaceDataset, collate_fn
 
 HORSE_FEAT_COLS = ["feat_a", "feat_b", "feat_c"]
 RACE_FEAT_COLS = ["race_dist", "race_surface"]

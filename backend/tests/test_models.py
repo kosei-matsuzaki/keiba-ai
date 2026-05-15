@@ -7,14 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.jockey import Jockey
-from keiba_ai.db.models.model_run import ModelRun
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.scrape_log import ScrapeLog
-from keiba_ai.db.models.trainer import Trainer
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.jockey import Jockey
+from db.models.model_run import ModelRun
+from db.models.payout import Payout
+from db.models.race import Race
+from db.models.scrape_log import ScrapeLog
+from db.models.trainer import Trainer
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

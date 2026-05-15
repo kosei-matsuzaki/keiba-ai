@@ -8,12 +8,12 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.predict import predict_race_with_shap
-from keiba_ai.ai.registry import load_model
-from keiba_ai.ai.train import train
-from keiba_ai.db.models.race import Race
-from keiba_ai.features.builder import FEATURE_COLUMNS, build_inference_frame
+import db.models  # noqa: F401
+from ai.gbm.train import train
+from ai.predict import predict_race_with_shap
+from ai.registry import load_model
+from db.models.race import Race
+from features.builder import FEATURE_COLUMNS, build_inference_frame
 from tests.synthetic import make_synthetic_db
 
 

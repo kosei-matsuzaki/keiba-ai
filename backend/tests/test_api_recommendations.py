@@ -11,14 +11,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from keiba_ai.ai.types import BetCandidate, RecommendationResult
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.live_odds import LiveOdds
-from keiba_ai.db.models.model_run import ModelRun
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
-
+from ai.types import BetCandidate, RecommendationResult
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.live_odds import LiveOdds
+from db.models.model_run import ModelRun
+from db.models.payout import Payout
+from db.models.race import Race
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,8 +162,8 @@ def test_recommendations_race_not_found(
     tmp_path: Path,
 ) -> None:
     """404 when race_id does not exist in DB."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -181,8 +180,8 @@ def test_recommendations_success(
 ) -> None:
     """Happy path: active model + known race → candidates returned."""
     race_id = "REC_RACE1"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -193,11 +192,11 @@ def test_recommendations_success(
     fake_result = _fake_recommendation_result(race_id)
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -223,8 +222,8 @@ def test_recommendations_stake_cap(
     The fake result returns stake=500+200=700, well within cap.
     """
     race_id = "REC_RACE2"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -235,11 +234,11 @@ def test_recommendations_stake_cap(
     fake_result = _fake_recommendation_result(race_id, bankroll=100_000)
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -258,8 +257,8 @@ def test_recommendations_enabled_bet_types_filter(
 ) -> None:
     """enabled_bet_types setting limits which bet types appear in candidates."""
     race_id = "REC_RACE3"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -292,11 +291,11 @@ def test_recommendations_enabled_bet_types_filter(
         return filtered_result
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               side_effect=lambda predictions, combinations_by_type, race_id, bankroll,
               kelly_fraction, max_stake_per_race_pct, top_n_horses, enabled_bet_types:
               _spy_recommend(
@@ -319,8 +318,8 @@ def test_recommendations_top_n_horses_param(
 ) -> None:
     """top_n_horses query param is forwarded to recommend_for_race."""
     race_id = "REC_RACE4"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -341,11 +340,11 @@ def test_recommendations_top_n_horses_param(
         )
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               side_effect=_capture_recommend),
         TestClient(app_with_temp_db) as client,
     ):
@@ -365,8 +364,8 @@ def test_recommendations_candidates_include_zero_stake(
     is the invariant.
     """
     race_id = "REC_RACE_ZS"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -403,11 +402,11 @@ def test_recommendations_candidates_include_zero_stake(
     )
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=mixed_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -428,8 +427,8 @@ def test_recommendations_top_k_param(
 ) -> None:
     """top_k query param is forwarded to predict_race_with_combinations."""
     race_id = "REC_RACE5"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -444,11 +443,11 @@ def test_recommendations_top_k_param(
         return _fake_combinations()
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               side_effect=_spy_combinations),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=RecommendationResult(
                   race_id=race_id, bankroll_at_decision=100_000, candidates=[]
               )),
@@ -466,8 +465,8 @@ def test_recommendations_empty_candidates(
 ) -> None:
     """When recommend_for_race returns no candidates (all EV <= 1.0), response is 200 with empty list."""
     race_id = "REC_RACE6"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -482,11 +481,11 @@ def test_recommendations_empty_candidates(
     )
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=empty_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -503,8 +502,8 @@ def test_recommendations_odds_source_unknown_when_no_odds(
 ) -> None:
     """odds_source='unknown' when no live or past odds are available (today's race)."""
     race_id = "REC_RACE_ODDS_UNKNOWN"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -515,11 +514,11 @@ def test_recommendations_odds_source_unknown_when_no_odds(
     fake_result = _fake_recommendation_result(race_id)
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -537,8 +536,8 @@ def test_recommendations_odds_source_live_when_live_odds_present(
 ) -> None:
     """odds_source='live' when live_odds table has rows for the race."""
     race_id = "REC_RACE_ODDS_LIVE"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -568,11 +567,11 @@ def test_recommendations_odds_source_live_when_live_odds_present(
     fake_result = _fake_recommendation_result(race_id)
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               side_effect=_spy_combinations),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -596,9 +595,9 @@ def test_recommendations_odds_source_past_for_past_race(
     race_id = "REC_RACE_PAST_ODDS"
     past_date = (date.today() - timedelta(days=1)).isoformat()
 
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.models.horse import Horse
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.models.horse import Horse
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -637,11 +636,11 @@ def test_recommendations_odds_source_past_for_past_race(
     fake_result = _fake_recommendation_result(race_id)
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
         TestClient(app_with_temp_db) as client,
     ):
@@ -658,8 +657,8 @@ def test_recommendations_null_est_odds_candidates(
 ) -> None:
     """candidates with est_odds=null and ev=null serialize correctly (no validation error)."""
     race_id = "REC_RACE_NULL_ODDS"
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -670,11 +669,11 @@ def test_recommendations_null_est_odds_candidates(
     null_result = _fake_recommendation_result_with_null_odds(race_id)
 
     with (
-        patch("keiba_ai.api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("keiba_ai.api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.load_model", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
-        patch("keiba_ai.api.routers.recommendations.recommend_for_race",
+        patch("api.routers.recommendations.recommend_for_race",
               return_value=null_result),
         TestClient(app_with_temp_db) as client,
     ):

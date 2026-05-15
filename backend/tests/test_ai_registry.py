@@ -10,11 +10,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.registry import get_active, list_models, load_model, set_active
-from keiba_ai.ai.train import train
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.model_run import ModelRun
+import db.models  # noqa: F401
+from ai.gbm.train import train
+from ai.registry import get_active, list_models, load_model, set_active
+from db.base import Base
+from db.models.model_run import ModelRun
 from tests.synthetic import make_synthetic_db
 
 

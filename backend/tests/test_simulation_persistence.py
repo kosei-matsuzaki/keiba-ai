@@ -10,17 +10,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.simulation import BankrollPoint, GroupStats, SimulationResult
-from keiba_ai.ai.simulation_persistence import (
+import db.models  # noqa: F401
+from ai.simulation import BankrollPoint, GroupStats, SimulationResult
+from ai.simulation_persistence import (
     MAX_SAVED_RUNS,
     delete_simulation_run,
     get_simulation_run,
     list_simulation_runs,
     save_simulation_result,
 )
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.simulation_run import SimulationRun
+from db.base import Base
+from db.models.simulation_run import SimulationRun
 
 
 @pytest.fixture()

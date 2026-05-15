@@ -7,7 +7,7 @@ import os
 import pytest
 from sqlalchemy import create_engine
 
-from keiba_ai.ai.tune import tune
+from ai.gbm.tune import tune
 from tests.synthetic import make_synthetic_db
 
 

@@ -14,17 +14,17 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from keiba_ai.core.config import Settings
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.jockey import Jockey
-from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.scrape_log import ScrapeLog
-from keiba_ai.db.models.trainer import Trainer
-from keiba_ai.jobs.ingest_shutuba import run_ingest_shutuba
-from keiba_ai.scraper.netkeiba import NetkeibaClient
-from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
-from keiba_ai.scraper.robots import RobotsCache
+from core.config import Settings
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.jockey import Jockey
+from db.models.race import Race
+from db.models.scrape_log import ScrapeLog
+from db.models.trainer import Trainer
+from jobs.ingest_shutuba import run_ingest_shutuba
+from scraper.netkeiba import NetkeibaClient
+from scraper.rate_limiter import AsyncRateLimiter
+from scraper.robots import RobotsCache
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -283,7 +283,7 @@ async def test_ingest_shutuba_stops_on_stop_flag(
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("KEIBA_SCRAPER_STOP", "1")
 
-    from keiba_ai.scraper.stop_flag import ScraperStopped
+    from scraper.stop_flag import ScraperStopped
     with pytest.raises(ScraperStopped):
         await run_ingest_shutuba(DATE, mock_client, db_session)
 
@@ -522,6 +522,7 @@ async def test_html_date_not_overwritten_by_today(
       - DB に保存された race.date が 2024-12-22 であること（今日で上書きされない）
     """
     import datetime
+
     import httpx
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
 
@@ -530,7 +531,7 @@ async def test_html_date_not_overwritten_by_today(
     today_str = datetime.date.today().isoformat()
 
     # HTML から HTML_DATE が返るよう ParsedShutuba.date を差し込む
-    from keiba_ai.scraper.parsers.shutuba import ParsedShutuba
+    from scraper.parsers.shutuba import ParsedShutuba
 
     original_parse = None
 
@@ -539,7 +540,7 @@ async def test_html_date_not_overwritten_by_today(
         result.date = HTML_DATE  # HTML が 2024-12-22 を返す想定
         return result
 
-    import keiba_ai.jobs.ingest_shutuba as _shutuba_mod
+    import jobs.ingest_shutuba as _shutuba_mod
     original_parse = _shutuba_mod.parse_shutuba
     monkeypatch.setattr(_shutuba_mod, "parse_shutuba", _patched_parse)
 
@@ -586,8 +587,8 @@ async def test_existing_wrong_date_is_corrected_by_html_date(
     db_session.commit()
 
     # 2. shutuba parse が HTML_DATE を返すよう patch
-    from keiba_ai.scraper.parsers.shutuba import ParsedShutuba
-    import keiba_ai.jobs.ingest_shutuba as _shutuba_mod
+    import jobs.ingest_shutuba as _shutuba_mod
+    from scraper.parsers.shutuba import ParsedShutuba
 
     original_parse = _shutuba_mod.parse_shutuba
 

@@ -10,17 +10,17 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.predict import (
+import db.models  # noqa: F401
+from ai.gbm.train import train
+from ai.predict import (
     CombinationPrediction,
     derive_wide_prob_from_triple,
     predict_race_with_combinations,
 )
-from keiba_ai.ai.registry import load_model
-from keiba_ai.ai.train import train
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.race import Race
-from keiba_ai.features.builder import build_inference_frame
+from ai.registry import load_model
+from db.base import Base
+from db.models.race import Race
+from features.builder import build_inference_frame
 from tests.synthetic import make_synthetic_db
 
 _RNG = np.random.default_rng(0)
@@ -51,7 +51,7 @@ def test_derive_wide_prob_symmetry():
     """wide_matrix must be symmetric."""
     rng = np.random.default_rng(99)
     scores = rng.standard_normal(8)
-    from keiba_ai.ai.calibrate import compute_all_combination_probs
+    from ai.calibrate import compute_all_combination_probs
     probs = compute_all_combination_probs(scores, k=3, n_samples=5_000, rng=rng)
     wide = derive_wide_prob_from_triple(probs["triple"], len(scores))
     np.testing.assert_allclose(wide, wide.T, atol=1e-12, err_msg="wide matrix is not symmetric")
@@ -61,7 +61,7 @@ def test_derive_wide_prob_diagonal_zero():
     """Diagonal of wide matrix must be 0 (horse cannot pair with itself)."""
     rng = np.random.default_rng(77)
     scores = rng.standard_normal(6)
-    from keiba_ai.ai.calibrate import compute_all_combination_probs
+    from ai.calibrate import compute_all_combination_probs
     probs = compute_all_combination_probs(scores, k=3, n_samples=3_000, rng=rng)
     wide = derive_wide_prob_from_triple(probs["triple"], len(scores))
     np.testing.assert_allclose(np.diag(wide), 0.0, atol=1e-12)
@@ -71,7 +71,7 @@ def test_derive_wide_prob_values_in_range():
     """All wide probabilities must be in [0, 1]."""
     rng = np.random.default_rng(55)
     scores = rng.standard_normal(6)
-    from keiba_ai.ai.calibrate import compute_all_combination_probs
+    from ai.calibrate import compute_all_combination_probs
     probs = compute_all_combination_probs(scores, k=3, n_samples=3_000, rng=rng)
     wide = derive_wide_prob_from_triple(probs["triple"], len(scores))
     assert (wide >= 0).all()
@@ -82,7 +82,7 @@ def test_derive_wide_prob_sum_geq_triple_sum():
     """Sum of wide probs >= sum of triple_prob (each triple contributes to 3 pairs)."""
     rng = np.random.default_rng(33)
     scores = rng.standard_normal(7)
-    from keiba_ai.ai.calibrate import compute_all_combination_probs
+    from ai.calibrate import compute_all_combination_probs
     probs = compute_all_combination_probs(scores, k=3, n_samples=5_000, rng=rng)
     wide = derive_wide_prob_from_triple(probs["triple"], len(scores))
     triple_total = sum(probs["triple"].values())

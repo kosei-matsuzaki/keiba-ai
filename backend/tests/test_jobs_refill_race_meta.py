@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from keiba_ai.db.models.race import Race
-from keiba_ai.jobs.refill_race_meta import run_refill_race_meta
+from db.models.race import Race
+from jobs.refill_race_meta import run_refill_race_meta
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

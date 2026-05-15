@@ -61,15 +61,18 @@
 各モジュールの責務を明確に分離し、独立してテスト・置き換えができるようにする。
 
 ```text
-backend/src/keiba_ai/
+backend/src/
 ├── main.py       FastAPI app factory (create_app) + lifespan + CORS + uvicorn __main__
 ├── scraper/      スクレイピング専用。HTML 取得・パース・DB 保存のみ。AI を知らない
 ├── features/     DB から生データを読み取り、学習・推論用の特徴量 DataFrame を生成
 │                 （リーク防止のため「予測時点での情報のみ使用する」制約を徹底管理）
-├── ai/           特徴量を受け取り LightGBM の学習・評価・推論を実行。features を知らない
-│                 ├── trainer.py   学習・ハイパーパラメータ管理
-│                 ├── predictor.py 推論・確率変換（softmax / Plackett-Luce）
-│                 └── evaluator.py NDCG@k・ヒット率・ROI 計算
+├── ai/           特徴量を受け取り GBDT / NN の学習・評価・推論を実行。features を知らない
+│                 ├── gbm/        LightGBM 固有 (train.py / tune.py / pl_loss.py)
+│                 ├── nn/         PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py)
+│                 ├── predict.py  推論ディスパッチャ（GBDT / NN 切替）
+│                 ├── registry.py モデル成果物の保存・ロード（GBDT / NN 両対応）
+│                 ├── evaluate.py NDCG@k・ヒット率・ROI 計算
+│                 └── calibrate.py / temperature.py / bet_*.py / simulation.py …（model 非依存の共有）
 ├── core/         設定（Settings）・ロギング・settings_store（JSON 永続化）
 ├── api/          FastAPI ルーター群（schemas / deps / routers/*）
 │                 ビジネスロジックは持たず、上記モジュールを呼ぶだけ

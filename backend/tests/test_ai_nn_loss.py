@@ -1,11 +1,11 @@
-"""Tests for keiba_ai.ai.nn.loss (plackett_luce_loss, listmle_loss, time_margin_loss)."""
+"""Tests for ai.nn.loss (plackett_luce_loss, listmle_loss, time_margin_loss)."""
 
 from __future__ import annotations
 
-import torch
 import pytest
+import torch
 
-from keiba_ai.ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
+from ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
 
 
 def _make_mask(n: int, total: int) -> torch.Tensor:

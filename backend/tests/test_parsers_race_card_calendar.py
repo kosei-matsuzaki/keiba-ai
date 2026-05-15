@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.scraper.parsers.race_card_calendar import (
+from scraper.parsers.race_card_calendar import (
     ParseError,
     parse_race_ids_from_card_calendar,
 )

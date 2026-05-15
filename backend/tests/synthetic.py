@@ -13,13 +13,13 @@ from datetime import date, timedelta
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401 — populate Base.metadata
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.jockey import Jockey
-from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.trainer import Trainer
+import db.models  # noqa: F401 — populate Base.metadata
+from db.base import Base
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.jockey import Jockey
+from db.models.race import Race
+from db.models.trainer import Trainer
 
 COURSES = ["東京", "中山", "京都"]
 SURFACES = ["芝", "ダ"]

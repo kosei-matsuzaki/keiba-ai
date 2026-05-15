@@ -13,18 +13,18 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from keiba_ai.core.config import Settings
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.jockey import Jockey
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.scrape_log import ScrapeLog
-from keiba_ai.db.models.trainer import Trainer
-from keiba_ai.jobs.ingest import run_ingest
-from keiba_ai.scraper.netkeiba import NetkeibaClient
-from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
-from keiba_ai.scraper.robots import RobotsCache
+from core.config import Settings
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.jockey import Jockey
+from db.models.payout import Payout
+from db.models.race import Race
+from db.models.scrape_log import ScrapeLog
+from db.models.trainer import Trainer
+from jobs.ingest import run_ingest
+from scraper.netkeiba import NetkeibaClient
+from scraper.rate_limiter import AsyncRateLimiter
+from scraper.robots import RobotsCache
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CALENDAR_HTML = (FIXTURES / "race_calendar_20241228.html").read_text(encoding="utf-8")
@@ -117,7 +117,7 @@ async def test_ingest_stops_on_stop_flag(db_session, mock_client, tmp_path, monk
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("KEIBA_SCRAPER_STOP", "1")
 
-    from keiba_ai.scraper.stop_flag import ScraperStopped
+    from scraper.stop_flag import ScraperStopped
     with pytest.raises(ScraperStopped):
         await run_ingest(DATE, mock_client, db_session)
 
@@ -184,8 +184,8 @@ async def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(
     回帰防止: PR-A code-reviewer が「既存 'X' + 新規 None で NULL になる」と
     誤認したため、SQL COALESCE の挙動を直接ロックする。
     """
-    from keiba_ai.jobs.ingest import _ensure_masters
-    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+    from jobs.ingest import _ensure_masters
+    from scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
 
     # 1) 既存馬を name 入りで insert
     db_session.add(Horse(horse_id="HORSE_X", name="ExistingName"))
@@ -211,8 +211,8 @@ async def test_ensure_masters_coalesce_preserves_existing_name_when_new_is_none(
 @pytest.mark.asyncio
 async def test_ensure_masters_coalesce_fills_missing_name(db_session):
     """既存 NULL + 新規 'X' で name が補完される。"""
-    from keiba_ai.jobs.ingest import _ensure_masters
-    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+    from jobs.ingest import _ensure_masters
+    from scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
 
     db_session.add(Horse(horse_id="HORSE_Y", name=None))
     db_session.commit()
@@ -239,8 +239,8 @@ async def test_ensure_masters_coalesce_overwrites_when_both_have_value(db_sessio
     現仕様: netkeiba 側の表記揺れがあった場合、最新を採用する。
     将来「name は一度入ったら不変」に変えたい場合は引数順を反転する。
     """
-    from keiba_ai.jobs.ingest import _ensure_masters
-    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+    from jobs.ingest import _ensure_masters
+    from scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
 
     db_session.add(Horse(horse_id="HORSE_Z", name="OldName"))
     db_session.commit()
@@ -307,8 +307,8 @@ async def test_ingest_skips_horse_detail_when_existing_name_present(db_session):
     """
     import httpx
 
-    from keiba_ai.jobs.ingest import _ensure_masters
-    from keiba_ai.scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
+    from jobs.ingest import _ensure_masters
+    from scraper.parsers.race_result import ParsedEntry, ParsedRaceResult
 
     settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
     rate = AsyncRateLimiter(settings)
@@ -490,7 +490,7 @@ async def test_ingest_payouts_idempotent_on_reingest(
     count_first = db_session.execute(select(Payout)).scalars().all()
 
     # 再 ingest のために scrape_log を消去してスキップを回避
-    from keiba_ai.db.models.scrape_log import ScrapeLog
+    from db.models.scrape_log import ScrapeLog
     db_session.execute(ScrapeLog.__table__.delete())
     db_session.commit()
 

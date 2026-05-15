@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.scraper.parsers.race_result import parse_race_result
+from scraper.parsers.race_result import parse_race_result
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

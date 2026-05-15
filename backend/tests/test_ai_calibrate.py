@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pytest
 
-from keiba_ai.ai.calibrate import (
+from ai.calibrate import (
     compute_all_combination_probs,
     plackett_luce_ordered_pair_prob,
     plackett_luce_ordered_triple_prob,

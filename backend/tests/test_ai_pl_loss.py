@@ -12,12 +12,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from keiba_ai.ai.pl_loss import (
+from ai.gbm.pl_loss import (
     _race_grad_hess,
     plackett_luce_eval_metric,
     plackett_luce_objective,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -259,7 +258,7 @@ class TestLightGBMTraining:
         import os
         os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
 
-        from keiba_ai.ai.train import train
+        from ai.gbm.train import train
         result = train(
             db=db_file,
             train_end=None,

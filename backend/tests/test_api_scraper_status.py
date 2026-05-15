@@ -6,8 +6,8 @@ import datetime
 
 from fastapi.testclient import TestClient
 
-from keiba_ai.db.models.scrape_log import ScrapeLog
-from keiba_ai.scraper import stop_flag
+from db.models.scrape_log import ScrapeLog
+from scraper import stop_flag
 
 
 def _add_ok_log(session, date_str: str, race_suffix: str = "0101") -> None:
@@ -36,8 +36,8 @@ def test_missing_dates_count_with_recent_entries(
     tmp_path,
 ) -> None:
     """5 recent ok log entries should reduce missing_dates_count from 30 to 25."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = datetime.date.today()
@@ -62,8 +62,8 @@ def test_missing_dates_count_custom_range(
     tmp_path,
 ) -> None:
     """?range=7 uses a 7-day window."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = datetime.date.today()
@@ -89,8 +89,8 @@ def test_missing_dates_count_error_logs_dont_count(
     tmp_path,
 ) -> None:
     """Error-status scrape_log entries do not count as completed days."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = datetime.date.today()

@@ -6,8 +6,7 @@ import json
 
 import pytest
 
-from keiba_ai.scraper.parsers.race_result import ParsedRaceResult, parse_race_result
-
+from scraper.parsers.race_result import ParsedRaceResult, parse_race_result
 
 RACE_ID = "202406010101"
 

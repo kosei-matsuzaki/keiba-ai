@@ -12,8 +12,8 @@ uv sync
 ## データ取り込み
 
 ```bash
-uv run python -m keiba_ai.jobs.ingest --date 2024-12-28
-uv run python -m keiba_ai.jobs.ingest --date 2024-12-28 --limit 3   # 先頭 3 レースのみ
+uv run python -m jobs.ingest --date 2024-12-28
+uv run python -m jobs.ingest --date 2024-12-28 --limit 3   # 先頭 3 レースのみ
 ```
 
 ## テスト実行

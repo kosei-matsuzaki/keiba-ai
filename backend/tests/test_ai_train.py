@@ -19,9 +19,9 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.train import _compute_recency_weights, train
-from keiba_ai.db.models.model_run import ModelRun
+import db.models  # noqa: F401
+from ai.gbm.train import _compute_recency_weights, train
+from db.models.model_run import ModelRun
 from tests.synthetic import make_synthetic_db
 
 

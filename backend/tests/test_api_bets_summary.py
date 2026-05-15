@@ -6,9 +6,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from keiba_ai.db.models.bet_record import BetRecord
-from keiba_ai.db.models.race import Race
-
+from db.models.bet_record import BetRecord
+from db.models.race import Race
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,8 +54,8 @@ def _insert_bet(
 
 
 def _get_engine(app_with_temp_db: FastAPI):
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine
+    from core.paths import db_path
+    from db.session import make_engine
     return make_engine(db_path())
 
 
@@ -77,7 +76,7 @@ class TestBetSummary:
     def test_summary_correct_totals(self, app_with_temp_db: FastAPI) -> None:
         """settled bet + unsettled bet の合計集計が正しい。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             # settled: 1000 invested, 2800 payout → 1800 profit
@@ -105,7 +104,7 @@ class TestBetSummary:
 
     def test_summary_filter_by_source(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, source="recommendation", stake=1000,
@@ -126,7 +125,7 @@ class TestBetSummary:
         settled_at が期間内なら created_at が期間外でも含まれる。
         """
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             # created 5月、settled 6月 → settled_at が期間内なので含まれる
@@ -156,7 +155,7 @@ class TestBetSummary:
     def test_summary_filter_by_date_range(self, app_with_temp_db: FastAPI) -> None:
         """settled_at が期間内の bet のみ集計される（settled_at ベース確認）。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             # settled in May — outside the June range
@@ -197,7 +196,7 @@ class TestBetTimeseries:
     def test_cumulative_profit_monotone(self, app_with_temp_db: FastAPI) -> None:
         """cumulative_profit は各点の profit の累積和と一致する。settled_at ベース。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, created_at="2024-06-01T10:00:00+00:00", stake=1000,
@@ -219,7 +218,7 @@ class TestBetTimeseries:
     def test_timeseries_bucket_month(self, app_with_temp_db: FastAPI) -> None:
         """bucket=month でグループ集約が正しい。settled_at ベース。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, created_at="2024-06-01T10:00:00+00:00", stake=500,
@@ -242,7 +241,7 @@ class TestBetTimeseries:
     def test_timeseries_empty_buckets_filled_with_zero(self, app_with_temp_db: FastAPI) -> None:
         """期間内で bet が無い日が 0 で埋められ、cumulative_profit が持ち越される。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             # Jun 1 settled
@@ -276,7 +275,7 @@ class TestBetTimeseries:
     def test_timeseries_cumulative_profit_nondecreasing_with_gaps(self, app_with_temp_db: FastAPI) -> None:
         """空 bucket では cumulative_profit が単調非減少（前 bucket 値を維持）。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, stake=1000,
@@ -305,7 +304,7 @@ class TestBetTimeseries:
     def test_timeseries_excludes_pending_bets(self, app_with_temp_db: FastAPI) -> None:
         """settled_at IS NULL の pending bet は timeseries に含まれない。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, stake=1000,
@@ -328,7 +327,7 @@ class TestBetTimeseries:
 class TestBetBreakdown:
     def test_breakdown_by_bet_type(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, bet_type="単勝", stake=1000,
@@ -352,7 +351,7 @@ class TestBetBreakdown:
 
     def test_breakdown_by_source(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, source="recommendation", stake=1000,
@@ -370,7 +369,7 @@ class TestBetBreakdown:
 
     def test_breakdown_filter_by_source(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, source="recommendation", stake=1000)
@@ -409,7 +408,7 @@ class TestBetExportCsv:
 
     def test_export_correct_columns(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, stake=1000, payout=2500, profit=1500,
@@ -430,7 +429,7 @@ class TestBetExportCsv:
 
     def test_export_filter_by_source(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_bet(session, source="recommendation", stake=1000,
@@ -447,7 +446,7 @@ class TestBetExportCsv:
     def test_export_notes_with_comma(self, app_with_temp_db: FastAPI) -> None:
         """notes にカンマが含まれても CSV エスケープされる。"""
         engine = _get_engine(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             bet = BetRecord(
@@ -467,7 +466,8 @@ class TestBetExportCsv:
             resp = client.get("/api/bets/export.csv")
         body = resp.content.decode("utf-8-sig")
         # csv quoting ensures comma inside notes doesn't break column count
-        import csv, io
+        import csv
+        import io
         reader = csv.DictReader(io.StringIO(body))
         rows = list(reader)
         assert len(rows) == 1

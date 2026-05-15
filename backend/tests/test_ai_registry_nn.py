@@ -12,9 +12,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from keiba_ai.ai.nn.model import RaceModel
-from keiba_ai.ai.registry import ModelBundle, load_model_full, save_nn_model
-
+from ai.nn.model import RaceModel
+from ai.registry import ModelBundle, load_model_full, save_nn_model
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -169,7 +168,8 @@ def test_load_model_full_gbdt_not_affected(tmp_path, monkeypatch):
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
 
     from sqlalchemy import create_engine
-    from keiba_ai.ai.train import train
+
+    from ai.gbm.train import train
     from tests.synthetic import make_synthetic_db
 
     db_file = tmp_path / "test.db"

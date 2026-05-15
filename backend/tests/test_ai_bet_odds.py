@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.bet_odds import (
+import db.models  # noqa: F401
+from ai.bet_odds import (
     _FALLBACK_AMOUNTS,
     compute_baseline_odds,
     compute_baseline_odds_by_class,
@@ -19,12 +19,12 @@ from keiba_ai.ai.bet_odds import (
     compute_race_odds,
     tansho_to_pl_scores,
 )
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.live_odds import LiveOdds
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
+from db.base import Base
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.live_odds import LiveOdds
+from db.models.payout import Payout
+from db.models.race import Race
 
 
 @pytest.fixture()

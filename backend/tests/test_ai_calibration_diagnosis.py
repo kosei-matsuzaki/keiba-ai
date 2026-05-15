@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from keiba_ai.ai.calibration_diagnosis import (
+from ai.calibration_diagnosis import (
     _brier_score,
     _expected_calibration_error,
     _per_rank_bucket,

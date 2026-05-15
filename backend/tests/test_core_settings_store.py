@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.core.settings_store import SettingsStore, _DEFAULTS
+from core.settings_store import _DEFAULTS, SettingsStore
 
 
 class TestSettingsStoreDefaults:
@@ -115,58 +115,64 @@ class TestSettingsApiValidation:
     """Validation of the new fields at the API schema layer (SettingsUpdate)."""
 
     def test_bankroll_ge_100_valid(self) -> None:
-        from keiba_ai.api.schemas import SettingsUpdate
+        from api.schemas import SettingsUpdate
         su = SettingsUpdate(bankroll=100)
         assert su.bankroll == 100
 
     def test_bankroll_lt_100_raises(self) -> None:
         from pydantic import ValidationError
-        from keiba_ai.api.schemas import SettingsUpdate
+
+        from api.schemas import SettingsUpdate
         with pytest.raises(ValidationError, match="bankroll"):
             SettingsUpdate(bankroll=99)
 
     def test_kelly_fraction_zero_raises(self) -> None:
         from pydantic import ValidationError
-        from keiba_ai.api.schemas import SettingsUpdate
+
+        from api.schemas import SettingsUpdate
         with pytest.raises(ValidationError, match="kelly_fraction"):
             SettingsUpdate(kelly_fraction=0.0)
 
     def test_kelly_fraction_gt_1_raises(self) -> None:
         from pydantic import ValidationError
-        from keiba_ai.api.schemas import SettingsUpdate
+
+        from api.schemas import SettingsUpdate
         with pytest.raises(ValidationError, match="kelly_fraction"):
             SettingsUpdate(kelly_fraction=1.01)
 
     def test_kelly_fraction_1_valid(self) -> None:
-        from keiba_ai.api.schemas import SettingsUpdate
+        from api.schemas import SettingsUpdate
         su = SettingsUpdate(kelly_fraction=1.0)
         assert su.kelly_fraction == 1.0
 
     def test_max_stake_zero_raises(self) -> None:
         from pydantic import ValidationError
-        from keiba_ai.api.schemas import SettingsUpdate
+
+        from api.schemas import SettingsUpdate
         with pytest.raises(ValidationError, match="max_stake_per_race_pct"):
             SettingsUpdate(max_stake_per_race_pct=0.0)
 
     def test_max_stake_gt_1_raises(self) -> None:
         from pydantic import ValidationError
-        from keiba_ai.api.schemas import SettingsUpdate
+
+        from api.schemas import SettingsUpdate
         with pytest.raises(ValidationError, match="max_stake_per_race_pct"):
             SettingsUpdate(max_stake_per_race_pct=1.5)
 
     def test_enabled_bet_types_invalid_raises(self) -> None:
         from pydantic import ValidationError
-        from keiba_ai.api.schemas import SettingsUpdate
+
+        from api.schemas import SettingsUpdate
         with pytest.raises(ValidationError, match="Unknown bet types"):
             SettingsUpdate(enabled_bet_types=["単勝", "invalid_type"])
 
     def test_enabled_bet_types_all_valid(self) -> None:
-        from keiba_ai.api.schemas import SettingsUpdate
+        from api.schemas import SettingsUpdate
         su = SettingsUpdate(enabled_bet_types=["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"])
         assert len(su.enabled_bet_types) == 8
 
     def test_none_values_accepted(self) -> None:
-        from keiba_ai.api.schemas import SettingsUpdate
+        from api.schemas import SettingsUpdate
         su = SettingsUpdate(bankroll=None, kelly_fraction=None)
         assert su.bankroll is None
         assert su.kelly_fraction is None

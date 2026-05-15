@@ -1,4 +1,4 @@
-"""Tests for keiba_ai.core.dates.this_weekend_dates."""
+"""Tests for core.dates.this_weekend_dates."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from keiba_ai.core.dates import this_weekend_dates
+from core.dates import this_weekend_dates
 
 
 @pytest.mark.parametrize(

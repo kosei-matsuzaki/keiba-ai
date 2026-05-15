@@ -55,29 +55,31 @@
 ├── backend/                   # FastAPI + AI + スクレイパー（Python）
 │   ├── pyproject.toml         # uv 管理 (Python 依存関係)
 │   ├── src/
-│   │   └── keiba_ai/
-│   │       ├── main.py        # FastAPI app エントリポイント・Uvicorn 起動
-│   │       ├── api/           # ルーター群（races, predictions, models, scraper, settings 等）
-│   │       ├── core/          # 設定（Settings）・ロギング・DB セッション管理
-│   │       ├── db/            # SQLAlchemy モデル定義・Alembic マイグレーション
-│   │       ├── scraper/       # netkeiba スクレイパー実装
-│   │       │   └── parsers/
-│   │       │       ├── race_calendar.py   # 開催日カレンダー
-│   │       │       ├── race_result.py     # レース結果
-│   │       │       ├── payout.py          # 払戻金
-│   │       │       ├── horse_detail.py    # 馬詳細 (name/sex/birth_date)
-│   │       │       └── horse_pedigree.py  # 馬血統 (sire/dam)
-│   │       ├── features/      # 特徴量エンジニアリング
-│   │       │   ├── builder.py         # FEATURE_COLUMNS (38 列) 定義・build_training_frame / build_inference_frame（レース単位バッチ処理）
-│   │       │   ├── course.py          # レース・馬番・馬体重系特徴量
-│   │       │   ├── horse_history.py   # 馬の過去成績（直近平均着順・上がり3F・同コース実績 等 11 列）
-│   │       │   ├── jockey.py          # 騎手成績統計
-│   │       │   ├── odds.py            # オッズ・人気系特徴量
-│   │       │   ├── pedigree.py        # 血統特徴量（父/母の産駒勝率）
-│   │       │   ├── relative_features.py # 同レース内相対特徴量（馬体重 percentile・オッズ順位 等 6 列）
-│   │       │   └── trainer.py         # 調教師成績統計
-│   │       ├── ai/            # LightGBM 学習・推論・SHAP 計算
-│   │       └── jobs/          # APScheduler ジョブ定義（週次取り込み・月次再学習）
+│   │   ├── main.py        # FastAPI app エントリポイント・Uvicorn 起動
+│   │   ├── api/           # ルーター群（races, predictions, models, scraper, settings 等）
+│   │   ├── core/          # 設定（Settings）・ロギング・DB セッション管理
+│   │   ├── db/            # SQLAlchemy モデル定義・Alembic マイグレーション
+│   │   ├── scraper/       # netkeiba スクレイパー実装
+│   │   │   └── parsers/
+│   │   │       ├── race_calendar.py   # 開催日カレンダー
+│   │   │       ├── race_result.py     # レース結果
+│   │   │       ├── payout.py          # 払戻金
+│   │   │       ├── horse_detail.py    # 馬詳細 (name/sex/birth_date)
+│   │   │       └── horse_pedigree.py  # 馬血統 (sire/dam)
+│   │   ├── features/      # 特徴量エンジニアリング
+│   │   │   ├── builder.py         # FEATURE_COLUMNS (38 列) 定義・build_training_frame / build_inference_frame（レース単位バッチ処理）
+│   │   │   ├── course.py          # レース・馬番・馬体重系特徴量
+│   │   │   ├── horse_history.py   # 馬の過去成績（直近平均着順・上がり3F・同コース実績 等 11 列）
+│   │   │   ├── jockey.py          # 騎手成績統計
+│   │   │   ├── odds.py            # オッズ・人気系特徴量
+│   │   │   ├── pedigree.py        # 血統特徴量（父/母の産駒勝率）
+│   │   │   ├── relative_features.py # 同レース内相対特徴量（馬体重 percentile・オッズ順位 等 6 列）
+│   │   │   └── trainer.py         # 調教師成績統計
+│   │   ├── ai/            # GBDT / NN 学習・推論・SHAP 計算
+│   │   │   ├── gbm/       # LightGBM 固有 (train.py / tune.py / pl_loss.py)
+│   │   │   ├── nn/        # PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py)
+│   │   │   └── *.py       # 共有: predict / registry / evaluate / calibrate / temperature / bet_* / simulation 等
+│   │   └── jobs/          # APScheduler ジョブ定義（週次取り込み・月次再学習）
 │   └── tests/                 # pytest テスト群
 │
 ├── frontend/                  # React + Vite + TypeScript
@@ -492,7 +494,7 @@ bash scripts/dev.sh
 # バックエンド
 cd backend
 uv sync
-uv run uvicorn keiba_ai.main:app --host 127.0.0.1 --port 8765 --reload
+uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload
 
 # フロント（別ターミナル）
 cd frontend
@@ -508,12 +510,12 @@ pnpm dev
 |---|---|---|
 | Python | 3.12 以上 | |
 | uv | 0.4 以上 | `uv sync` / `uv run keiba-ingest` が動作すること |
-| FastAPI / uvicorn | pyproject.toml 経由で導入 | `uv run uvicorn keiba_ai.main:app --port 8765` で起動確認 |
+| FastAPI / uvicorn | pyproject.toml 経由で導入 | `uv run uvicorn main:app --port 8765` で起動確認 |
 | LightGBM | 4.x 以上 | `uv sync` で自動導入 |
 | Alembic | pyproject.toml 経由で導入 | `uv run alembic upgrade head` で動作確認 |
 | Node.js | 20 LTS 以上 | フロントエンド実装に必要 |
 | pnpm | 9.x 以上 | `pnpm test`・`pnpm build`・`pnpm lint` が通ること |
-| Optuna | `uv sync` で自動導入 | `python -m keiba_ai.ai.tune` で動作確認 |
+| Optuna | `uv sync` で自動導入 | `python -m ai.gbm.tune` で動作確認 |
 
 ### AI 学習・評価 CLI
 
@@ -521,22 +523,22 @@ pnpm dev
 cd backend
 
 # モデル学習（DB から全データを読み込み、時系列分割して学習）
-uv run python -m keiba_ai.ai.train
+uv run python -m ai.gbm.train
 
 # 学習終了日を指定（学習データの上限を固定する）
-uv run python -m keiba_ai.ai.train --train-end 2025-12-31
+uv run python -m ai.gbm.train --train-end 2025-12-31
 
 # バックテスト評価（学習済みモデルディレクトリを指定）
-uv run python -m keiba_ai.ai.evaluate --model data/models/20260101-120000
+uv run python -m ai.evaluate --model data/models/20260101-120000
 
 # 評価結果を model_runs.metrics_json にマージ保存する（Dashboard MetricCard に反映させる場合は必須）
-uv run python -m keiba_ai.ai.evaluate --model data/models/20260101-120000 --persist
+uv run python -m ai.evaluate --model data/models/20260101-120000 --persist
 
 # 評価期間を絞る
-uv run python -m keiba_ai.ai.evaluate --model data/models/20260101-120000 \
+uv run python -m ai.evaluate --model data/models/20260101-120000 \
     --start 2025-06-01 --end 2025-12-31
 
 # 1 番人気常時投票ベースラインとの比較（{model, baseline_favorite, delta} を出力）
-uv run python -m keiba_ai.ai.evaluate --model data/models/20260101-120000 \
+uv run python -m ai.evaluate --model data/models/20260101-120000 \
     --baseline favorite
 ```

@@ -403,47 +403,47 @@ fold 2: 学習 [..., D-3T] | 検証 [D-3T, D-2T] | テスト [D-2T, D-T]
 
 ```bash
 # 既定（順位学習モード）
-uv run python -m keiba_ai.ai.train
+uv run python -m ai.gbm.train
 
 # Plackett-Luce モード
-uv run python -m keiba_ai.ai.train --loss plackett_luce
+uv run python -m ai.gbm.train --loss plackett_luce
 
 # 古いレースの重みを下げて学習する
-uv run python -m keiba_ai.ai.train --recency-lambda 0.5
+uv run python -m ai.gbm.train --recency-lambda 0.5
 
 # 単勝補正と連系補正をコース × 頭数別に分ける
-uv run python -m keiba_ai.ai.train --conditional-calibration
+uv run python -m ai.gbm.train --conditional-calibration
 
 # 時系列 3 分割の前進検証
-uv run python -m keiba_ai.ai.train --cv-folds 3
+uv run python -m ai.gbm.train --cv-folds 3
 
 # カスタムパラメータ
-uv run python -m keiba_ai.ai.train --params-json backend/configs/production_lgb.json
+uv run python -m ai.gbm.train --params-json backend/configs/production_lgb.json
 
 # 学習期間の指定
-uv run python -m keiba_ai.ai.train --train-end 2025-12-31 --valid-months 6 --test-months 3
+uv run python -m ai.gbm.train --train-end 2025-12-31 --valid-months 6 --test-months 3
 ```
 
 ### NN
 
 ```bash
 # 既定（Plackett-Luce 損失、CPU、3 層 32 次元）
-uv run python -m keiba_ai.ai.nn.train_nn
+uv run python -m ai.nn.train_nn
 
 # 損失関数の切り替え
-uv run python -m keiba_ai.ai.nn.train_nn --loss listmle
-uv run python -m keiba_ai.ai.nn.train_nn --loss time_margin
+uv run python -m ai.nn.train_nn --loss listmle
+uv run python -m ai.nn.train_nn --loss time_margin
 
 # 隠れ層・埋め込み次元・ヘッド数の調整
-uv run python -m keiba_ai.ai.nn.train_nn \
+uv run python -m ai.nn.train_nn \
     --hidden-dim 128 --embed-dim 64 --n-heads 8
 
 # 学習エポック・バッチサイズ・学習率
-uv run python -m keiba_ai.ai.nn.train_nn \
+uv run python -m ai.nn.train_nn \
     --max-epochs 50 --batch-size 64 --learning-rate 5e-4
 
 # GPU
-uv run python -m keiba_ai.ai.nn.train_nn --device cuda
+uv run python -m ai.nn.train_nn --device cuda
 ```
 
 ### 評価
@@ -452,13 +452,13 @@ uv run python -m keiba_ai.ai.nn.train_nn --device cuda
 
 ```bash
 # 学習済みモデルをバックテスト評価する
-uv run python -m keiba_ai.ai.evaluate --model data/models/20260101-120000
+uv run python -m ai.evaluate --model data/models/20260101-120000
 
 # 1 番人気常時投票ベースラインと比較する
-uv run python -m keiba_ai.ai.evaluate --model data/models/... --baseline favorite
+uv run python -m ai.evaluate --model data/models/... --baseline favorite
 
 # 評価結果を model_runs.metrics_json にマージ保存する
-uv run python -m keiba_ai.ai.evaluate --model data/models/... --persist
+uv run python -m ai.evaluate --model data/models/... --persist
 ```
 
 学習完了後、モデルは `data/models/<YYYYMMDD-HHMMSS>/`（GBDT）または `data/models/<YYYYMMDDTHHMMSS>-nn/`（NN）に自動保存され、`model_runs` テーブルに `is_active=0` で登録される。`model_type` カラム（alembic migration 0008）で GBDT / NN を区別する。

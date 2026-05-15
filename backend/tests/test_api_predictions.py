@@ -10,10 +10,10 @@ import pandas as pd
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.model_run import ModelRun
-from keiba_ai.db.models.race import Race
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.model_run import ModelRun
+from db.models.race import Race
 
 
 def _seed_race_and_entries(session, race_id: str, n_horses: int = 4) -> None:
@@ -66,8 +66,8 @@ def test_predictions_race_not_found(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -83,8 +83,8 @@ def test_predictions_success(
     tmp_path: Path,
 ) -> None:
     """Happy path: active model + known race → list of HorsePrediction."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -101,8 +101,8 @@ def test_predictions_success(
 
     # fake_df does not include top_features — router uses list(row.get(...) or []) fallback
     with (
-        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/PRED_RACE1")
@@ -122,8 +122,8 @@ def test_predictions_include_combinations_default(
     tmp_path: Path,
 ) -> None:
     """By default (include_combinations=true), response contains a combinations field."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -138,10 +138,10 @@ def test_predictions_include_combinations_default(
     })
 
     with (
-        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         patch(
-            "keiba_ai.api.routers.predictions.predict_race_with_combinations",
+            "api.routers.predictions.predict_race_with_combinations",
             return_value={
                 "単勝": [], "複勝": [], "馬連": [], "ワイド": [],
                 "馬単": [], "三連複": [], "三連単": [],
@@ -165,8 +165,8 @@ def test_predictions_include_combinations_false(
     tmp_path: Path,
 ) -> None:
     """include_combinations=false skips combination computation (combinations is null)."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -181,8 +181,8 @@ def test_predictions_include_combinations_false(
     })
 
     with (
-        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/COMBO_RACE2?include_combinations=false")
@@ -219,8 +219,8 @@ def test_bulk_predictions_success(
     tmp_path: Path,
 ) -> None:
     """正常系: active モデルあり + entries あり → top_horses が返ること。"""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     RACE_ID = "BULK_RACE1"
 
@@ -238,8 +238,8 @@ def test_bulk_predictions_success(
     })
 
     with (
-        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race", return_value=fake_df.head(3)),
+        patch("api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race", return_value=fake_df.head(3)),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get(f"/api/predictions/bulk?race_ids={RACE_ID}&top_n=3")
