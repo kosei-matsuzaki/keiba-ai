@@ -34,7 +34,10 @@ else
 fi
 
 echo "[dev] Starting FastAPI backend on http://127.0.0.1:8765 ..."
-( cd "$REPO_ROOT/backend" && uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload --reload-dir src ) &
+# WATCHFILES_FORCE_POLLING=true: Windows + Git Bash 環境で uvicorn --reload の
+# multiprocessing 子プロセス起動が WinError 87 で死ぬ問題への回避策。
+# native fs event の代わりにポーリングを使うことでシグナル伝播の不具合を避ける。
+( cd "$REPO_ROOT/backend" && WATCHFILES_FORCE_POLLING=true uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload --reload-dir src ) &
 
 echo "[dev] Starting Vite dev server (browse to http://localhost:5173) ..."
 ( cd "$REPO_ROOT/frontend" && pnpm dev ) &
