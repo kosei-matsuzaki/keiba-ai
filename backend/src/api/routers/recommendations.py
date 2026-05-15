@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ai.bet_odds import compute_race_odds_with_sources
 from ai.bet_strategy import recommend_for_race
-from ai.predict import predict_race_bundle, predict_race_with_combinations_bundle
+from ai.predict import predict_race, predict_race_with_combinations
 from ai.registry import get_active, load_model_full
 from api.deps import build_inference_frame_or_404, get_session, get_settings_store
 from core.logging import get_logger
@@ -106,9 +106,9 @@ def get_recommendations(
     Flow:
     1. Resolve active model (503 if none).
     2. Build inference frame for race_id (404 if not found or empty).
-    3. Run predict_race_bundle (GBDT/NN 自動切替) to get win_prob / place_prob per horse.
+    3. Run predict_race (GBDT/NN 自動切替) to get win_prob / place_prob per horse.
     4. Resolve race odds: live → past → unknown.
-    5. Run predict_race_with_combinations_bundle for combination EVs.
+    5. Run predict_race_with_combinations for combination EVs.
     6. Load Settings (bankroll, kelly_fraction, etc.) and call recommend_for_race.
     7. Return RecommendationsResponse.
     """
@@ -125,10 +125,10 @@ def get_recommendations(
 
     # Step 3: win_prob / place_prob per horse
     # GBDT/NN を bundle.model_type で自動切替 (calibrator / temperature 等は内部で適用)
-    predictions = predict_race_bundle(bundle, frame)
+    predictions = predict_race(bundle, frame)
 
     # Join post_position from frame so recommend_for_race can build top_pps.
-    # predict_race_bundle returns horse_id-indexed rows without post_position.
+    # predict_race returns horse_id-indexed rows without post_position.
     pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
@@ -140,7 +140,7 @@ def get_recommendations(
         )
 
     # Step 5: combination EVs (capped by top_k for performance)
-    combinations_by_type = predict_race_with_combinations_bundle(
+    combinations_by_type = predict_race_with_combinations(
         bundle,
         frame,
         session=session,

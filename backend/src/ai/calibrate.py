@@ -845,22 +845,22 @@ def fit_combo_calibrators(
 ) -> ComboCalibrators:
     """Validation set 上で各 連系 馬券種の (PL_prob, hit) を集めて iso fit する。
 
-    train.py から呼び出される想定。重い処理 (race ごとに predict_race_with_combinations
+    train.py から呼び出される想定。重い処理 (race ごとに predict_race_with_combinations_gbdt
     を回す) を含むので、valid_frame の race 数 (~1000 程度) で 1-2 分。
 
     Args:
         valid_frame: build_training_frame の output から validation 期間を切り出したもの。
             'race_id', 'horse_id', 'post_position', 'finish_position' を含む。
         lambdarank_model / binary_model / single_horse_calibrator: 学習済みモデル一式。
-        n_samples: predict_race_with_combinations の MC samples。fit 時は精度を抑えて速度優先で OK。
+        n_samples: predict_race_with_combinations_gbdt の MC samples。fit 時は精度を抑えて速度優先で OK。
         use_conditional: True のとき、各馬券種の isotonic を ConditionalIsotonicCalibrator
             (surface × n_runners bin 別) で学習する。False (default) は従来の global iso。
 
     Returns:
         ComboCalibrators 5 馬券種分が fit された状態。
     """
-    # NOTE: 循環 import を避けるため、predict_race_with_combinations の import は遅延。
-    from ai.predict import predict_race_with_combinations
+    # NOTE: 循環 import を避けるため、predict_race_with_combinations_gbdt の import は遅延。
+    from ai.predict import predict_race_with_combinations_gbdt
 
     bet_types = list(_RENKEI_BET_TYPES)
     records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
@@ -886,7 +886,7 @@ def fit_combo_calibrators(
             continue
 
         try:
-            combo_map = predict_race_with_combinations(
+            combo_map = predict_race_with_combinations_gbdt(
                 lambdarank_model, race_frame,
                 n_samples=n_samples, rng=rng,
                 binary_model=binary_model,

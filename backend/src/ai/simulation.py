@@ -30,7 +30,7 @@ from ai.bet_odds import (
     compute_race_odds_with_sources,
 )
 from ai.bet_strategy import recommend_for_race
-from ai.predict import predict_race_bundle, predict_race_with_combinations_bundle
+from ai.predict import predict_race, predict_race_with_combinations
 from ai.registry import load_model_full
 from core.logging import get_logger
 from features.builder import build_training_frame
@@ -340,9 +340,9 @@ def simulate_active_model(
 
         # Predictions (GBDT/NN を bundle.model_type で自動切替)
         try:
-            preds = predict_race_bundle(bundle, race_frame)
+            preds = predict_race(bundle, race_frame)
         except Exception as exc:  # noqa: BLE001
-            log.warning("predict_race failed for %s: %s", race_id, exc)
+            log.warning("predict_race_gbdt failed for %s: %s", race_id, exc)
             continue
 
         # Attach post_position (recommend_for_race needs it)
@@ -352,7 +352,7 @@ def simulate_active_model(
         # Combination predictions + odds (with implied fill)
         race_odds, race_odds_sources = compute_race_odds_with_sources(session, race_id)
         try:
-            combos_by_type = predict_race_with_combinations_bundle(
+            combos_by_type = predict_race_with_combinations(
                 bundle,
                 race_frame,
                 session=session,
@@ -360,7 +360,7 @@ def simulate_active_model(
                 race_odds_sources=race_odds_sources,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
+            log.warning("predict_race_with_combinations_gbdt failed for %s: %s", race_id, exc)
             continue
 
         # Apply min_ev filter (strategy preset)

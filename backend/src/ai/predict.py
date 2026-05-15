@@ -1,18 +1,26 @@
 """Single-race and batch inference.
 
-predict_race converts LightGBM raw scores to win_prob and place_prob using
-softmax and a place-probability estimator selected by KEIBA_PLACE_PROB_METHOD.
+API レイヤ:
+  - 公開 (bundle-aware, 推奨):
+      predict_race(bundle, frame)
+      predict_race_with_combinations(bundle, frame, ...)
+      predict_race_with_shap(bundle, frame, top_n=...)
+    bundle.model_type で GBDT / NN を自動切替。呼び出し側が model_type を
+    気にする必要がない。新規コードは原則これを使う。NN モデルで SHAP を
+    要求した場合は top_features=[] が返る (SHAP TreeExplainer は GBDT 限定)。
 
-KEIBA_PLACE_PROB_METHOD:
+  - GBDT 固有 (低レイヤ, 学習時用): predict_race_gbdt /
+    predict_race_with_combinations_gbdt / predict_race_with_shap_gbdt
+    Booster を直接受け取る。train.py / calibrate.py / evaluate.py など
+    bundle 組み立て前の学習パイプラインで使う。
+
+predict_race_gbdt は LightGBM raw scores を softmax + place 推定器で
+win_prob / place_prob に変換する。KEIBA_PLACE_PROB_METHOD で実装を選択:
   plackett_luce  (default) — Plackett-Luce Monte Carlo, per-horse probabilities
   heuristic                — legacy top_k_cumulative_prob approximation
 
-predict_race_with_combinations extends predict_race with EV calculations for
-all combination bet types (馬連, ワイド, 馬単, 三連複, 三連単).
-
-predict_race_bundle / predict_race_with_combinations_bundle are bundle-aware
-wrappers that dispatch to either the GBDT or NN inference path depending on
-ModelBundle.model_type.
+predict_race_with_combinations_gbdt は EV 計算 (馬連 / ワイド / 馬単 /
+三連複 / 三連単) を追加で行う。
 """
 
 from __future__ import annotations
@@ -92,7 +100,7 @@ def _compute_place_prob(scores: np.ndarray, place_temperature: float = 1.0) -> n
     return compute_place_prob(scores, k=3, n_samples=10_000, place_temperature=place_temperature)
 
 
-def predict_race(
+def predict_race_gbdt(
     model: lgb.Booster,
     frame: pd.DataFrame,
     binary_model: lgb.Booster | None = None,
@@ -241,7 +249,7 @@ def derive_wide_prob_from_triple(
     return out
 
 
-def predict_race_with_combinations(
+def predict_race_with_combinations_gbdt(
     model: lgb.Booster,
     frame: pd.DataFrame,
     session: Session | None = None,
@@ -256,9 +264,9 @@ def predict_race_with_combinations(
     loss_type: str | None = None,
     temperature_scaler: "TemperatureScaler | None" = None,
 ) -> dict[str, list[CombinationPrediction]]:
-    """Extend predict_race with EV calculations for all combination bet types.
+    """Extend predict_race_gbdt with EV calculations for all combination bet types.
 
-    Calls predict_race internally (does not modify it) and augments the result
+    Calls predict_race_gbdt internally (does not modify it) and augments the result
     with Plackett-Luce probability estimates for 馬連, ワイド, 馬単, 三連複,
     三連単, plus confirmed odds from race_odds when available.
 
@@ -300,7 +308,7 @@ def predict_race_with_combinations(
             for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
         }
 
-    base_df = predict_race(
+    base_df = predict_race_gbdt(
         model, frame,
         binary_model=binary_model,
         calibrator=calibrator,
@@ -315,7 +323,7 @@ def predict_race_with_combinations(
     )
 
     # Compute all PL combination probs in one MC pass (k=3 for triple support).
-    # predict_race sorts by score, so we re-align probabilities back to frame order via horse_id.
+    # predict_race_gbdt sorts by score, so we re-align probabilities back to frame order via horse_id.
     horse_to_score = dict(zip(base_df["horse_id"].values, base_df["score"].values))
     horse_to_win = dict(zip(base_df["horse_id"].values, base_df["win_prob"].values))
     horse_to_place = dict(zip(base_df["horse_id"].values, base_df["place_prob"].values))
@@ -532,7 +540,7 @@ def predict_race_with_combinations(
     return result
 
 
-def predict_race_with_shap(
+def predict_race_with_shap_gbdt(
     model: lgb.Booster,
     frame: pd.DataFrame,
     top_n: int = 3,
@@ -541,7 +549,7 @@ def predict_race_with_shap(
     loss_type: str | None = None,
     temperature_scaler: "TemperatureScaler | None" = None,
 ) -> pd.DataFrame:
-    """Same as predict_race but adds a 'top_features' column (list[str]).
+    """Same as predict_race_gbdt but adds a 'top_features' column (list[str]).
 
     Uses SHAP TreeExplainer to identify the most influential features for each
     horse. The top_n features by absolute SHAP value are returned per horse.
@@ -550,9 +558,9 @@ def predict_race_with_shap(
         model: Trained LightGBM Booster (lambdarank or Plackett-Luce).
         frame: Feature DataFrame for one race. Must contain FEATURE_COLUMNS.
         top_n: Number of top features to return per horse.
-        binary_model / calibrator: Optional. Forwarded to predict_race so the
+        binary_model / calibrator: Optional. Forwarded to predict_race_gbdt so the
             returned win_prob comes from the calibrated path when available.
-        loss_type: Forwarded to predict_race for win_prob computation branching.
+        loss_type: Forwarded to predict_race_gbdt for win_prob computation branching.
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob, top_features.
@@ -560,7 +568,7 @@ def predict_race_with_shap(
     """
     import shap
 
-    base = predict_race(
+    base = predict_race_gbdt(
         model, frame,
         binary_model=binary_model,
         calibrator=calibrator,
@@ -609,7 +617,7 @@ def predict_race_with_shap(
 # ---------------------------------------------------------------------------
 
 
-def predict_race_bundle(
+def predict_race(
     bundle: "ModelBundle",
     frame: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -630,7 +638,7 @@ def predict_race_bundle(
     if bundle.model_type == "nn":
         return _predict_race_nn(bundle, frame)
 
-    return predict_race(
+    return predict_race_gbdt(
         bundle.lambdarank,
         frame,
         binary_model=bundle.binary,
@@ -645,7 +653,7 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
 
     Builds a single-batch tensor from frame, runs the RaceModel forward pass,
     converts scores to win_prob (softmax) and place_prob (Plackett-Luce MC),
-    and returns a DataFrame with the same schema as predict_race.
+    and returns a DataFrame with the same schema as predict_race_gbdt.
 
     torch は遅延 import — torch が入っていない環境では呼ばれない想定。
     """
@@ -712,7 +720,7 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     return result.sort_values("score", ascending=False).reset_index(drop=True)
 
 
-def predict_race_with_combinations_bundle(
+def predict_race_with_combinations(
     bundle: "ModelBundle",
     frame: pd.DataFrame,
     session: Session | None = None,
@@ -722,11 +730,11 @@ def predict_race_with_combinations_bundle(
     race_odds: dict[str, dict[str, float]] | None = None,
     race_odds_sources: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
-    """Bundle-aware wrapper around predict_race_with_combinations.
+    """Bundle-aware wrapper around predict_race_with_combinations_gbdt.
 
     Dispatches to GBDT or NN inference path depending on bundle.model_type.
     The combination probability computation (Plackett-Luce MC) is shared
-    between both paths — only the base predict_race call differs.
+    between both paths — only the base predict_race_gbdt call differs.
 
     Args:
         bundle:    ModelBundle loaded via registry.load_model_full().
@@ -751,7 +759,7 @@ def predict_race_with_combinations_bundle(
                 for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
             }
         # Build a surrogate frame aligned with base_df for the combination engine.
-        # predict_race_with_combinations expects the original frame (with post_position),
+        # predict_race_with_combinations_gbdt expects the original frame (with post_position),
         # so we use it directly but pass a dummy GBDT model.  Instead, we replicate
         # the core combination logic here using NN scores.
         return _combinations_from_base(
@@ -766,7 +774,7 @@ def predict_race_with_combinations_bundle(
         )
 
     # GBDT 経路: 既存関数に委譲
-    return predict_race_with_combinations(
+    return predict_race_with_combinations_gbdt(
         bundle.lambdarank,
         frame,
         session=session,
@@ -778,6 +786,35 @@ def predict_race_with_combinations_bundle(
         binary_model=bundle.binary,
         calibrator=bundle.calibrator,
         combo_calibrators=bundle.combo_calibrators,
+        loss_type=bundle.meta.get("loss_type"),
+        temperature_scaler=bundle.temperature_scaler,
+    )
+
+
+def predict_race_with_shap(
+    bundle: "ModelBundle",
+    frame: pd.DataFrame,
+    top_n: int = 3,
+) -> pd.DataFrame:
+    """Bundle-aware: predict + SHAP top features.
+
+    SHAP TreeExplainer は GBDT 限定の機能。NN モデルの場合は top_features に
+    空リストを入れて返す (UI 側で「説明なし」表示にできる)。
+
+    Returns:
+        DataFrame with columns: horse_id, score, win_prob, place_prob, top_features.
+    """
+    if bundle.model_type == "nn":
+        result_df = predict_race(bundle, frame)
+        result_df["top_features"] = [[] for _ in range(len(result_df))]
+        return result_df
+
+    return predict_race_with_shap_gbdt(
+        bundle.lambdarank,
+        frame,
+        top_n=top_n,
+        binary_model=bundle.binary,
+        calibrator=bundle.calibrator,
         loss_type=bundle.meta.get("loss_type"),
         temperature_scaler=bundle.temperature_scaler,
     )
@@ -798,7 +835,7 @@ def _combinations_from_base(
     base_df must have columns: horse_id, score, win_prob, place_prob.
     frame must have columns: horse_id, post_position.
 
-    This mirrors the combination logic in predict_race_with_combinations but
+    This mirrors the combination logic in predict_race_with_combinations_gbdt but
     accepts an already-computed base_df instead of a LightGBM model.
     """
     confirmed: dict[str, dict[str, float]] = race_odds if race_odds is not None else {}

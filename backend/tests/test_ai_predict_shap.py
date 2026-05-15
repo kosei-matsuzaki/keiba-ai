@@ -1,4 +1,4 @@
-"""Tests for predict_race_with_shap in ai/predict.py."""
+"""Tests for predict_race_with_shap_gbdt in ai/predict.py."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 import db.models  # noqa: F401
 from ai.gbm.train import train
-from ai.predict import predict_race_with_shap
+from ai.predict import predict_race_with_shap_gbdt
 from ai.registry import load_model
 from db.models.race import Race
 from features.builder import FEATURE_COLUMNS, build_inference_frame
@@ -39,7 +39,7 @@ def test_predict_race_with_shap_has_top_features_column(trained_scenario):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race_with_shap(model, frame)
+    result = predict_race_with_shap_gbdt(model, frame)
 
     assert "top_features" in result.columns
 
@@ -52,7 +52,7 @@ def test_top_features_are_valid_feature_names(trained_scenario):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race_with_shap(model, frame, top_n=3)
+    result = predict_race_with_shap_gbdt(model, frame, top_n=3)
 
     for _, row in result.iterrows():
         features = row["top_features"]
@@ -71,7 +71,7 @@ def test_top_features_length_matches_top_n(trained_scenario):
         frame = build_inference_frame(session, race_id)
 
     for top_n in (1, 3, 5):
-        result = predict_race_with_shap(model, frame, top_n=top_n)
+        result = predict_race_with_shap_gbdt(model, frame, top_n=top_n)
         for _, row in result.iterrows():
             assert len(row["top_features"]) == top_n, (
                 f"Expected {top_n} features, got {len(row['top_features'])}"
@@ -86,7 +86,7 @@ def test_predict_race_with_shap_preserves_score_order(trained_scenario):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race_with_shap(model, frame)
+    result = predict_race_with_shap_gbdt(model, frame)
 
     scores = result["score"].tolist()
     assert scores == sorted(scores, reverse=True)
@@ -99,7 +99,7 @@ def test_predict_race_with_shap_empty_frame(trained_scenario):
     model = load_model(model_dir)
 
     empty_frame = pd.DataFrame(columns=["horse_id"] + FEATURE_COLUMNS)
-    result = predict_race_with_shap(model, empty_frame)
+    result = predict_race_with_shap_gbdt(model, empty_frame)
 
     assert result.empty
     assert "top_features" in result.columns

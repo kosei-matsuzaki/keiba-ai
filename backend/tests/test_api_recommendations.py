@@ -193,8 +193,8 @@ def test_recommendations_success(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
@@ -235,8 +235,8 @@ def test_recommendations_stake_cap(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
@@ -292,8 +292,8 @@ def test_recommendations_enabled_bet_types_filter(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               side_effect=lambda predictions, combinations_by_type, race_id, bankroll,
@@ -341,8 +341,8 @@ def test_recommendations_top_n_horses_param(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               side_effect=_capture_recommend),
@@ -403,8 +403,8 @@ def test_recommendations_candidates_include_zero_stake(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=mixed_result),
@@ -425,7 +425,7 @@ def test_recommendations_top_k_param(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """top_k query param is forwarded to predict_race_with_combinations."""
+    """top_k query param is forwarded to predict_race_with_combinations_gbdt."""
     race_id = "REC_RACE5"
     from core.paths import db_path
     from db.session import make_engine, session_scope
@@ -444,8 +444,8 @@ def test_recommendations_top_k_param(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               side_effect=_spy_combinations),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=RecommendationResult(
@@ -482,8 +482,8 @@ def test_recommendations_empty_candidates(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=empty_result),
@@ -515,8 +515,8 @@ def test_recommendations_odds_source_unknown_when_no_odds(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
@@ -557,7 +557,7 @@ def test_recommendations_odds_source_live_when_live_odds_present(
 
     fake_df = _fake_predictions_df(race_id, n=4)
 
-    # predict_race_with_combinations spy: verifies race_odds is passed
+    # predict_race_with_combinations_gbdt spy: verifies race_odds is passed
     captured_race_odds: dict = {}
 
     def _spy_combinations(model, frame, session, top_k_combinations=None, race_odds=None):
@@ -568,8 +568,8 @@ def test_recommendations_odds_source_live_when_live_odds_present(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               side_effect=_spy_combinations),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
@@ -580,7 +580,7 @@ def test_recommendations_odds_source_live_when_live_odds_present(
     assert resp.status_code == 200
     data = resp.json()
     assert data["odds_source"] == "live"
-    # race_odds dict was passed to predict_race_with_combinations
+    # race_odds dict was passed to predict_race_with_combinations_gbdt
     assert captured_race_odds["value"] is not None
     assert "馬連" in captured_race_odds["value"]
     assert captured_race_odds["value"]["馬連"]["1-2"] == pytest.approx(30.5)
@@ -637,8 +637,8 @@ def test_recommendations_odds_source_past_for_past_race(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=fake_result),
@@ -670,8 +670,8 @@ def test_recommendations_null_est_odds_candidates(
 
     with (
         patch("api.routers.recommendations.load_model", return_value=MagicMock()),
-        patch("api.routers.recommendations.predict_race", return_value=fake_df),
-        patch("api.routers.recommendations.predict_race_with_combinations",
+        patch("api.routers.recommendations.predict_race_gbdt", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations_gbdt",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=null_result),

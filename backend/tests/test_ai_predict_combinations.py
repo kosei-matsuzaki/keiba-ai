@@ -1,4 +1,4 @@
-"""Tests for predict_race_with_combinations and derive_wide_prob_from_triple."""
+"""Tests for predict_race_with_combinations_gbdt and derive_wide_prob_from_triple."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from ai.gbm.train import train
 from ai.predict import (
     CombinationPrediction,
     derive_wide_prob_from_triple,
-    predict_race_with_combinations,
+    predict_race_with_combinations_gbdt,
 )
 from ai.registry import load_model
 from db.base import Base
@@ -92,7 +92,7 @@ def test_derive_wide_prob_sum_geq_triple_sum():
 
 
 # ---------------------------------------------------------------------------
-# predict_race_with_combinations output schema
+# predict_race_with_combinations_gbdt output schema
 # ---------------------------------------------------------------------------
 
 def test_predict_combinations_output_keys(trained_combo_model):
@@ -103,7 +103,7 @@ def test_predict_combinations_output_keys(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(1)
         )
 
@@ -122,7 +122,7 @@ def test_predict_combinations_items_are_dataclass(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(2)
         )
 
@@ -147,7 +147,7 @@ def test_predict_combinations_ev_equals_prob_times_odds(trained_combo_model):
         frame = build_inference_frame(session, race_id)
         # Provide synthetic race_odds so some combos have confirmed odds
         race_odds = {"単勝": {"1": 5.0, "2": 8.0, "3": 12.0}}
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(3),
             race_odds=race_odds,
         )
@@ -172,7 +172,7 @@ def test_predict_combinations_probs_in_range(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(4)
         )
 
@@ -189,7 +189,7 @@ def test_predict_combinations_tansho_probs_sum_to_one(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(5)
         )
 
@@ -205,7 +205,7 @@ def test_predict_combinations_umaren_prob_sum_approx(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(6)
         )
 
@@ -221,7 +221,7 @@ def test_predict_combinations_sanrenpuku_prob_sum_approx(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(7)
         )
 
@@ -242,12 +242,12 @@ def test_predict_combinations_sorted_ev_none_last(trained_combo_model):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
         # All combos get None ev when no race_odds provided
-        result_no_odds = predict_race_with_combinations(
+        result_no_odds = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(8)
         )
         # With race_odds: 単勝 gets confirmed odds, others are None
         race_odds = {"単勝": {str(i + 1): float(5 + i) for i in range(len(frame))}}
-        result_with_odds = predict_race_with_combinations(
+        result_with_odds = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(8),
             race_odds=race_odds,
         )
@@ -277,7 +277,7 @@ def test_predict_combinations_top_k(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES,
             rng=np.random.default_rng(9), top_k_combinations=5,
         )
@@ -294,7 +294,7 @@ def test_predict_combinations_combo_format_umaren(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(10)
         )
 
@@ -314,7 +314,7 @@ def test_predict_combinations_combo_format_umatan(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(11)
         )
 
@@ -333,7 +333,7 @@ def test_predict_combinations_combo_format_sanrentan(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES,
             rng=np.random.default_rng(12), top_k_combinations=20,
         )
@@ -345,7 +345,7 @@ def test_predict_combinations_combo_format_sanrentan(trained_combo_model):
 
 
 def test_predict_combinations_performance(trained_combo_model, monkeypatch):
-    """Full predict_race_with_combinations (10k samples, 8 horses) must complete within 200ms."""
+    """Full predict_race_with_combinations_gbdt (10k samples, 8 horses) must complete within 200ms."""
     engine, db_file, model_dir = trained_combo_model
     model = load_model(model_dir)
 
@@ -356,17 +356,17 @@ def test_predict_combinations_performance(trained_combo_model, monkeypatch):
         frame = build_inference_frame(session, race_id)
 
     # Warm-up to exclude first-call overhead
-    predict_race_with_combinations(
+    predict_race_with_combinations_gbdt(
         model, frame, n_samples=100, rng=np.random.default_rng(0)
     )
 
     start = time.perf_counter()
-    predict_race_with_combinations(
+    predict_race_with_combinations_gbdt(
         model, frame, n_samples=10_000, rng=np.random.default_rng(0)
     )
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    assert elapsed_ms < 200, f"predict_race_with_combinations took {elapsed_ms:.1f} ms, expected < 200 ms"
+    assert elapsed_ms < 200, f"predict_race_with_combinations_gbdt took {elapsed_ms:.1f} ms, expected < 200 ms"
 
 
 def test_predict_combinations_wide_greater_or_equal_pair(trained_combo_model):
@@ -377,7 +377,7 @@ def test_predict_combinations_wide_greater_or_equal_pair(trained_combo_model):
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=5_000, rng=np.random.default_rng(13)
         )
 
@@ -407,7 +407,7 @@ def test_predict_combinations_tansho_combo_is_post_position(trained_combo_model)
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(14)
         )
 
@@ -435,7 +435,7 @@ def test_predict_combinations_fukusho_combo_is_post_position(trained_combo_model
     with Session(engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
-        result = predict_race_with_combinations(
+        result = predict_race_with_combinations_gbdt(
             model, frame, session=session, n_samples=_N_SAMPLES, rng=np.random.default_rng(15)
         )
 

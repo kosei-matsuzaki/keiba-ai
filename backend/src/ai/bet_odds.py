@@ -123,7 +123,7 @@ def _normalize_combo(combo: str) -> str:
 
     netkeiba HTML から来た combo は ``10 - 14`` / ``14 → 10`` のように
     区切り文字の前後に **半角/全角空白** が入っていることがある一方、
-    predict_race_with_combinations は空白なし (``10-14`` / ``14→10``) を生成する。
+    predict_race_with_combinations_gbdt は空白なし (``10-14`` / ``14→10``) を生成する。
     そのままだと _settle_candidates の dict ルックアップで全部 miss して
     連系 (馬連/ワイド/馬単/三連複/三連単) の payback_rate が常に 0% になる。
 

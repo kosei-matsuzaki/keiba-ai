@@ -1,7 +1,7 @@
 """連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の確率 calibration 診断。
 
 仕組み:
-  - 期間内の各 race で predict_race_with_combinations を回し、
+  - 期間内の各 race で predict_race_with_combinations_gbdt を回し、
     各 combo の (predicted prob, actual hit) を集める
   - 馬券種ごとに predicted-prob 10 等分位 bucket で actual_rate と比較
   - mean_pred / actual_rate の ratio が 1x から大きく外れる bucket を可視化
@@ -27,7 +27,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import select
 
-from ai.predict import predict_race_with_combinations
+from ai.predict import predict_race_with_combinations_gbdt
 from ai.registry import load_model_full
 from core.logging import get_logger
 from core.paths import db_path
@@ -127,14 +127,14 @@ def diagnose_combo_calibration(
                 n_skipped_no_top3 += 1
                 continue
             try:
-                combo_map = predict_race_with_combinations(
+                combo_map = predict_race_with_combinations_gbdt(
                     model, race_frame,
                     binary_model=bundle.binary,
                     calibrator=bundle.calibrator,
                     combo_calibrators=bundle.combo_calibrators,
                 )
             except Exception as exc:
-                log.warning("predict_race_with_combinations failed for %s: %s",
+                log.warning("predict_race_with_combinations_gbdt failed for %s: %s",
                             race_id, exc)
                 continue
 

@@ -36,7 +36,7 @@ from sklearn.metrics import ndcg_score
 from sqlalchemy import select
 
 from ai.labels import assign_relevance
-from ai.predict import predict_race
+from ai.predict import predict_race_gbdt
 from ai.registry import load_model_full
 from core.paths import db_path
 from db.models import ModelRun  # noqa: F401
@@ -352,7 +352,7 @@ def evaluate(
         if len(race_frame) < 2:
             continue
 
-        preds = predict_race(
+        preds = predict_race_gbdt(
             model, race_frame,
             binary_model=bundle.binary,
             calibrator=bundle.calibrator,
