@@ -34,7 +34,7 @@ else
 fi
 
 echo "[dev] Starting FastAPI backend on http://127.0.0.1:8765 ..."
-( cd "$REPO_ROOT/backend" && uv run uvicorn keiba_ai.main:app --host 127.0.0.1 --port 8765 --reload --reload-dir src ) &
+( cd "$REPO_ROOT/backend" && uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload --reload-dir src ) &
 
 echo "[dev] Starting Vite dev server (browse to http://localhost:5173) ..."
 ( cd "$REPO_ROOT/frontend" && pnpm dev ) &
