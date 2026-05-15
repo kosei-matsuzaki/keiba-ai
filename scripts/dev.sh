@@ -14,8 +14,11 @@ REPO_ROOT="$SCRIPT_DIR/.."
 
 trap 'kill 0' EXIT
 
-echo "[dev] Syncing backend dependencies (uv sync)..."
-( cd "$REPO_ROOT/backend" && uv sync )
+echo "[dev] Syncing backend dependencies (uv sync --extra nn)..."
+# --extra nn: NN モデル (PyTorch) を active にしている場合に registry.py の
+# _load_nn_bundle が torch を必要とするため。active が GBDT のみでも
+# import 経路の取り違えで不便なため、開発環境では常に同期しておく。
+( cd "$REPO_ROOT/backend" && uv sync --extra nn )
 
 echo "[dev] Applying database migrations (alembic upgrade head)..."
 ( cd "$REPO_ROOT/backend" && uv run alembic upgrade head )
