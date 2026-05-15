@@ -30,7 +30,7 @@ from ai.bet_odds import (
     compute_race_odds_with_sources,
 )
 from ai.bet_strategy import recommend_for_race
-from ai.predict import predict_race, predict_race_with_combinations
+from ai.predict import predict_race_bundle, predict_race_with_combinations_bundle
 from ai.registry import load_model_full
 from core.logging import get_logger
 from features.builder import build_training_frame
@@ -338,12 +338,9 @@ def simulate_active_model(
         if race_frame.empty or len(race_frame) < 2:
             continue
 
-        # Predictions (calibrated when bundle has binary + calibrator)
+        # Predictions (GBDT/NN を bundle.model_type で自動切替)
         try:
-            preds = predict_race(
-                bundle.lambdarank, race_frame,
-                binary_model=bundle.binary, calibrator=bundle.calibrator,
-            )
+            preds = predict_race_bundle(bundle, race_frame)
         except Exception as exc:  # noqa: BLE001
             log.warning("predict_race failed for %s: %s", race_id, exc)
             continue
@@ -355,14 +352,12 @@ def simulate_active_model(
         # Combination predictions + odds (with implied fill)
         race_odds, race_odds_sources = compute_race_odds_with_sources(session, race_id)
         try:
-            combos_by_type = predict_race_with_combinations(
-                bundle.lambdarank, race_frame,
+            combos_by_type = predict_race_with_combinations_bundle(
+                bundle,
+                race_frame,
                 session=session,
                 race_odds=race_odds,
                 race_odds_sources=race_odds_sources,
-                binary_model=bundle.binary,
-                calibrator=bundle.calibrator,
-                combo_calibrators=bundle.combo_calibrators,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
