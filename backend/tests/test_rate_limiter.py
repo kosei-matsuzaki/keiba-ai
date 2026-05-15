@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from keiba_ai.core.config import Settings
-from keiba_ai.scraper.rate_limiter import AsyncRateLimiter, _is_night_jst
+from core.config import Settings
+from scraper.rate_limiter import AsyncRateLimiter, _is_night_jst
 
 
 @pytest.mark.asyncio
@@ -51,7 +51,7 @@ async def test_night_min_seconds_applied():
     from zoneinfo import ZoneInfo
     fake_now = datetime(2024, 12, 28, 23, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 
-    with patch("keiba_ai.scraper.rate_limiter.datetime") as mock_dt:
+    with patch("scraper.rate_limiter.datetime") as mock_dt:
         mock_dt.now.return_value = fake_now
         # First acquire to record last_request_time
         await limiter.acquire()
@@ -69,7 +69,7 @@ def test_is_night_jst_daytime():
     from datetime import datetime
     from zoneinfo import ZoneInfo
     daytime = datetime(2024, 12, 28, 12, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-    with patch("keiba_ai.scraper.rate_limiter.datetime") as mock_dt:
+    with patch("scraper.rate_limiter.datetime") as mock_dt:
         mock_dt.now.return_value = daytime
         assert _is_night_jst() is False
 
@@ -78,7 +78,7 @@ def test_is_night_jst_night():
     from datetime import datetime
     from zoneinfo import ZoneInfo
     night = datetime(2024, 12, 28, 23, 30, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-    with patch("keiba_ai.scraper.rate_limiter.datetime") as mock_dt:
+    with patch("scraper.rate_limiter.datetime") as mock_dt:
         mock_dt.now.return_value = night
         assert _is_night_jst() is True
 
@@ -87,6 +87,6 @@ def test_is_night_jst_early_morning():
     from datetime import datetime
     from zoneinfo import ZoneInfo
     early = datetime(2024, 12, 28, 3, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-    with patch("keiba_ai.scraper.rate_limiter.datetime") as mock_dt:
+    with patch("scraper.rate_limiter.datetime") as mock_dt:
         mock_dt.now.return_value = early
         assert _is_night_jst() is True

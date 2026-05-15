@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine
 
-from keiba_ai.db.base import Base
-from keiba_ai.db.session import session_scope
-from keiba_ai.features.builder import (
+from db.base import Base
+from db.session import session_scope
+from features.builder import (
     FEATURE_COLUMNS,
     HIGH_CARDINALITY_ID_FEATURES,
     ODDS_FEATURE_COLUMNS,
@@ -74,7 +74,7 @@ def test_build_training_frame_date_filter(syn_engine):
 def test_build_inference_frame_no_finish_position(syn_engine):
     from sqlalchemy import select
 
-    from keiba_ai.db.models.race import Race
+    from db.models.race import Race
 
     with session_scope(syn_engine) as session:
         race_id = session.scalars(select(Race.race_id).limit(1)).first()

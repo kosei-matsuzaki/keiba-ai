@@ -18,8 +18,8 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, event, inspect
 
-import keiba_ai.db.models  # noqa: F401  (populate Base.metadata)
-from keiba_ai.db.base import Base
+import db.models  # noqa: F401  (populate Base.metadata)
+from db.base import Base
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"

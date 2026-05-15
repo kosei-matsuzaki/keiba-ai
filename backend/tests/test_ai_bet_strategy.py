@@ -9,7 +9,7 @@ from itertools import combinations, permutations
 import pandas as pd
 import pytest
 
-from keiba_ai.ai.bet_strategy import (
+from ai.bet_strategy import (
     assign_stakes,
     generate_box,
     generate_formation,
@@ -17,8 +17,7 @@ from keiba_ai.ai.bet_strategy import (
     kelly_stake,
     recommend_for_race,
 )
-from keiba_ai.ai.types import BetCandidate, CombinationPrediction
-
+from ai.types import BetCandidate, CombinationPrediction
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -523,7 +522,7 @@ class TestRecommendForRace:
         return pd.DataFrame(rows)
 
     def test_returns_recommendation_result(self):
-        from keiba_ai.ai.types import RecommendationResult
+        from ai.types import RecommendationResult
         preds = self._build_predictions(8)
         combos = {
             "馬連": _umaren_combos(8, odds=50.0),

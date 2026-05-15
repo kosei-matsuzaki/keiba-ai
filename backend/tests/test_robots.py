@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from keiba_ai.scraper.robots import RobotsCache
+from scraper.robots import RobotsCache
 
 _ROBOTS_TXT = """\
 User-agent: *
@@ -23,8 +23,8 @@ def _make_cache_with_mock_fetch(robots_content: str, user_agent: str = "TestAgen
     cache = RobotsCache(user_agent=user_agent)
 
     def fake_load(robots_url: str):
-        from urllib.robotparser import RobotFileParser
         from io import StringIO
+        from urllib.robotparser import RobotFileParser
         rp = RobotFileParser()
         rp.set_url(robots_url)
         rp.parse(robots_content.splitlines())

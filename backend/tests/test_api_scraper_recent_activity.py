@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from keiba_ai.db.models.scrape_log import ScrapeLog
+from db.models.scrape_log import ScrapeLog
 
 
 def _add_log(session, fetched_at: datetime, race_id: str, status: str = "ok") -> None:
@@ -40,8 +40,8 @@ def test_recent_activity_counts_status_breakdown(
     tmp_path,
 ) -> None:
     """ok / error / skipped が正しく分類される。"""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     now = datetime.now(UTC)
@@ -70,8 +70,8 @@ def test_recent_activity_excludes_old_entries(
     tmp_path,
 ) -> None:
     """ウィンドウ外 (cutoff より古い) のログはカウントしない。"""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     now = datetime.now(UTC)
@@ -92,8 +92,8 @@ def test_recent_activity_extracts_latest_race_id(
     tmp_path,
 ) -> None:
     """latest_race_id は最新 fetched_at の URL の race_id を返す。"""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     now = datetime.now(UTC)
@@ -127,8 +127,8 @@ def test_recent_activity_caps_rows_to_avoid_full_scan(
     が効いて応答時間が爆発しないことを確認する。Phase 2 ingest のピーク
     模擬。集計値は LIMIT 後の行に対する集計なので 2000 を超えない。
     """
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     now = datetime.now(UTC)

@@ -7,17 +7,16 @@ import json
 import pytest
 from sqlalchemy.orm import Session
 
-from keiba_ai.db.models.bet_record import BetRecord
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
-from keiba_ai.services.bet_settlement import (
+from db.models.bet_record import BetRecord
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.payout import Payout
+from db.models.race import Race
+from services.bet_settlement import (
     settle_all_pending,
     settle_bet,
     settle_bets_for_race,
 )
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

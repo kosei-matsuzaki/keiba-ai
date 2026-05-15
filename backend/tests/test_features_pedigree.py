@@ -11,12 +11,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.race import Race
-from keiba_ai.features.pedigree import (
+import db.models  # noqa: F401
+from db.base import Base
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.race import Race
+from features.pedigree import (
     build_pedigree_cache,
     compute_pedigree_features,
     compute_pedigree_features_from_cache,

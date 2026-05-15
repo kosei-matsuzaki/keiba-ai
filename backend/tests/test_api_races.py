@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.race import Race
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.race import Race
 
 
 def _insert_race(session: Session, race_id: str, race_date: str, n_horses: int = 3) -> None:
@@ -54,8 +54,8 @@ def test_upcoming_races_filters_past(
     tmp_path: Path,
 ) -> None:
     """Past races are excluded; only future races appear."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = date.today()
@@ -83,8 +83,8 @@ def test_race_detail_found(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -112,8 +112,8 @@ def test_recent_races_within_window(
     tmp_path: Path,
 ) -> None:
     """Only races within the days window (exclusive of today) are returned."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = date.today()
@@ -144,8 +144,8 @@ def test_recent_races_descending_order(
     tmp_path: Path,
 ) -> None:
     """Results are sorted by date descending (most recent first)."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = date.today()
@@ -172,8 +172,8 @@ def test_recent_races_limit(
     tmp_path: Path,
 ) -> None:
     """limit parameter caps the number of returned races."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     today = date.today()
@@ -195,8 +195,8 @@ def test_recent_races_explicit_date_range(
     tmp_path: Path,
 ) -> None:
     """from/to date range overrides days mode; bounds are inclusive."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -257,8 +257,8 @@ def test_by_date_returns_matching_races(
     app_with_temp_db: FastAPI,
 ) -> None:
     """Races on the target date are returned; other dates are excluded."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     target = "2024-06-01"
@@ -293,9 +293,9 @@ def test_this_weekend_returns_only_weekend_races(
     """土・日のレースのみ返り、他日付のレースは除外される。"""
     from datetime import timedelta
 
-    from keiba_ai.core.dates import this_weekend_dates
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.dates import this_weekend_dates
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     sat, sun = this_weekend_dates()
@@ -326,9 +326,9 @@ def test_by_date_entry_summary_includes_horse_name(
     app_with_temp_db: FastAPI,
 ) -> None:
     """horse_name is populated via bulk Horse lookup in /races/{race_id}."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
-    from keiba_ai.db.models.horse import Horse as HorseModel
+    from core.paths import db_path
+    from db.models.horse import Horse as HorseModel
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     target_date = "2024-06-15"

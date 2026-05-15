@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.scraper.parsers.payout import PayoutRow, parse_payout, parse_payouts
+from scraper.parsers.payout import PayoutRow, parse_payout, parse_payouts
 
 FIXTURES = Path(__file__).parent / "fixtures"
 RESULT_HTML = (FIXTURES / "race_result_202406010101.html").read_text(encoding="utf-8")
@@ -248,7 +248,7 @@ def test_parse_payouts_mismatch_combos_amounts_returns_empty_and_warns(caplog):
     """
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="keiba_ai.scraper.parsers.payout"):
+    with caplog.at_level(logging.WARNING, logger="scraper.parsers.payout"):
         rows = parse_payouts(html)
 
     # 不一致の bet_type は skip されるため rows は空

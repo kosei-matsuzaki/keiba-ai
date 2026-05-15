@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.scraper.parsers.odds import (
+from scraper.parsers.odds import (
     LiveOddsRow,
     _parse_odds_text,
     _parse_range_odds,

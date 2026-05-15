@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from keiba_ai.scraper import stop_flag
+from scraper import stop_flag
 
 
 def test_run_shutuba_returns_job_accepted(api_client: TestClient) -> None:
@@ -16,7 +16,7 @@ def test_run_shutuba_returns_job_accepted(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.ingest_shutuba.run_ingest_shutuba", new=_noop):
+    with patch("jobs.ingest_shutuba.run_ingest_shutuba", new=_noop):
         resp = api_client.post(
             "/api/scraper/run_shutuba",
             json={"date": "2025-05-05", "limit": 1},
@@ -43,7 +43,7 @@ def test_run_shutuba_without_limit(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.ingest_shutuba.run_ingest_shutuba", new=_noop):
+    with patch("jobs.ingest_shutuba.run_ingest_shutuba", new=_noop):
         resp = api_client.post(
             "/api/scraper/run_shutuba",
             json={"date": "2025-05-05"},
@@ -63,7 +63,7 @@ def test_run_shutuba_race_ids_path(api_client: TestClient) -> None:
         called_with["limit"] = limit
         return {"fetched": 1, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
+    with patch("jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
         resp = api_client.post(
             "/api/scraper/run_shutuba",
             json={"race_ids": ["202506050911", "202506050912"]},
@@ -85,7 +85,7 @@ def test_run_shutuba_race_ids_and_date_race_ids_wins(api_client: TestClient) -> 
         called_with["race_ids"] = race_ids
         return {"fetched": 1, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
+    with patch("jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
         resp = api_client.post(
             "/api/scraper/run_shutuba",
             json={"date": "2025-05-05", "race_ids": ["202506050911"]},
@@ -123,7 +123,7 @@ def test_run_shutuba_race_ids_without_date_passes_none_date_str(api_client: Test
         called_with["race_ids"] = race_ids
         return {"fetched": 1, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
+    with patch("jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
         resp = api_client.post(
             "/api/scraper/run_shutuba",
             json={"race_ids": ["202506050911"]},

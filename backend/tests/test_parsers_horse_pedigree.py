@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from keiba_ai.scraper.parsers.horse_pedigree import ParsedPedigree, parse_horse_pedigree
+from scraper.parsers.horse_pedigree import ParsedPedigree, parse_horse_pedigree
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HORSE_ID = "2022104732"

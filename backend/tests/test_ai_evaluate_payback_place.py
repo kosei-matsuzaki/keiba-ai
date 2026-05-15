@@ -10,9 +10,9 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from keiba_ai.ai.evaluate import _parse_payout_place, evaluate
-from keiba_ai.ai.train import train
-from keiba_ai.db.models.race import Race
+from ai.evaluate import _parse_payout_place, evaluate
+from ai.gbm.train import train
+from db.models.race import Race
 from tests.synthetic import make_synthetic_db
 
 

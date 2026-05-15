@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from keiba_ai.ai.labels import assign_relevance
+from ai.labels import assign_relevance
 
 
 @pytest.mark.parametrize(

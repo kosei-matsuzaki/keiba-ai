@@ -24,10 +24,10 @@ def test_get_job_returns_job_info(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    from keiba_ai.scraper import stop_flag
+    from scraper import stop_flag
     stop_flag.clear_stopped()
 
-    with patch("keiba_ai.jobs.ingest.run_ingest", new=_noop):
+    with patch("jobs.ingest.run_ingest", new=_noop):
         run_resp = api_client.post(
             "/api/scraper/run",
             json={"date": "2025-01-01", "limit": 1},
@@ -49,10 +49,10 @@ def test_list_jobs_after_start(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    from keiba_ai.scraper import stop_flag
+    from scraper import stop_flag
     stop_flag.clear_stopped()
 
-    with patch("keiba_ai.jobs.ingest.run_ingest", new=_noop):
+    with patch("jobs.ingest.run_ingest", new=_noop):
         api_client.post(
             "/api/scraper/run",
             json={"date": "2025-02-01", "limit": 1},
@@ -71,10 +71,10 @@ def test_job_info_schema_fields(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    from keiba_ai.scraper import stop_flag
+    from scraper import stop_flag
     stop_flag.clear_stopped()
 
-    with patch("keiba_ai.jobs.ingest.run_ingest", new=_noop):
+    with patch("jobs.ingest.run_ingest", new=_noop):
         run_resp = api_client.post(
             "/api/scraper/run",
             json={"date": "2025-03-01", "limit": 1},

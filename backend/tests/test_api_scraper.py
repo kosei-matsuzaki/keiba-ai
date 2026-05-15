@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from keiba_ai.scraper import stop_flag
+from scraper import stop_flag
 
 
 def test_scraper_status_defaults(api_client: TestClient) -> None:
@@ -50,7 +50,7 @@ def test_scraper_run_returns_job_accepted(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.ingest.run_ingest", new=_noop):
+    with patch("jobs.ingest.run_ingest", new=_noop):
         resp = api_client.post(
             "/api/scraper/run",
             json={"date": "2025-01-01", "limit": 1},
@@ -70,7 +70,7 @@ def test_fetch_live_odds_returns_job_accepted(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.fetch_live_odds.run_fetch_live_odds", new=_noop):
+    with patch("jobs.fetch_live_odds.run_fetch_live_odds", new=_noop):
         resp = api_client.post(
             "/api/scraper/fetch_live_odds",
             json={"race_id": "202506050911"},
@@ -88,7 +88,7 @@ def test_fetch_live_odds_with_types(api_client: TestClient) -> None:
     async def _noop(*args, **kwargs) -> dict:
         return {"fetched": 0, "skipped": 0, "errors": 0}
 
-    with patch("keiba_ai.jobs.fetch_live_odds.run_fetch_live_odds", new=_noop):
+    with patch("jobs.fetch_live_odds.run_fetch_live_odds", new=_noop):
         resp = api_client.post(
             "/api/scraper/fetch_live_odds",
             json={"race_id": "202506050911", "types": ["b1", "b4"]},

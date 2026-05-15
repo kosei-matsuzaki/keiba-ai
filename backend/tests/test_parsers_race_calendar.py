@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from keiba_ai.scraper.parsers.race_calendar import ParseError, parse_race_ids_from_calendar
+from scraper.parsers.race_calendar import ParseError, parse_race_ids_from_calendar
 
 
 def test_extracts_race_ids(calendar_html):

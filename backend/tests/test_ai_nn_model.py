@@ -1,12 +1,11 @@
-"""Tests for keiba_ai.ai.nn.model (HorseEncoder, RaceModel)."""
+"""Tests for ai.nn.model (HorseEncoder, RaceModel)."""
 
 from __future__ import annotations
 
-import torch
 import pytest
+import torch
 
-from keiba_ai.ai.nn.model import HorseEncoder, RaceModel
-
+from ai.nn.model import HorseEncoder, RaceModel
 
 BATCH = 2
 MAX_HORSES = 8

@@ -6,11 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from keiba_ai.ai.calibrate import (
+from ai.calibrate import (
     ConditionalIsotonicCalibrator,
     _n_runners_bin,
 )
-
 
 # ---------------------------------------------------------------------------
 # _n_runners_bin helper
@@ -229,7 +228,7 @@ def test_conditional_better_than_global_on_biased_data():
 def test_combo_calibrators_use_conditional_fit_and_predict():
     """ComboCalibrators with use_conditional=True should store
     ConditionalIsotonicCalibrator and accept conditions in predict."""
-    from keiba_ai.ai.calibrate import ComboCalibrators, ConditionalIsotonicCalibrator
+    from ai.calibrate import ComboCalibrators, ConditionalIsotonicCalibrator
 
     rng = np.random.default_rng(10)
     n = 300
@@ -254,7 +253,7 @@ def test_combo_calibrators_use_conditional_fit_and_predict():
 def test_combo_calibrators_default_backward_compat():
     """ComboCalibrators with default use_conditional=False should behave
     identically to the pre-extension version (no conditions needed)."""
-    from keiba_ai.ai.calibrate import ComboCalibrators
+    from ai.calibrate import ComboCalibrators
 
     rng = np.random.default_rng(11)
     n = 300
@@ -271,7 +270,7 @@ def test_combo_calibrators_default_backward_compat():
 
 def test_combo_calibrators_use_conditional_raises_without_conditions():
     """predict with conditional calibrator must raise if conditions not passed."""
-    from keiba_ai.ai.calibrate import ComboCalibrators
+    from ai.calibrate import ComboCalibrators
 
     rng = np.random.default_rng(12)
     n = 300

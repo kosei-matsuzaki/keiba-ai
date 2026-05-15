@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
-from keiba_ai.jobs.refill_payouts import _collect_cache_files, run_refill
+from db.models.payout import Payout
+from db.models.race import Race
+from jobs.refill_payouts import _collect_cache_files, run_refill
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ALL_PAYOUT_HTML = (FIXTURES / "race_result_all_payout_types.html").read_text(encoding="utf-8")

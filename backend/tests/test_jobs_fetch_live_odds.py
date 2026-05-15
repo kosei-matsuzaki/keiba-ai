@@ -8,16 +8,16 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401 (populate Base.metadata)
-from keiba_ai.core.config import Settings
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.live_odds import LiveOdds
-from keiba_ai.db.models.race import Race
-from keiba_ai.jobs.fetch_live_odds import fetch_odds_for_race, run_fetch_live_odds
-from keiba_ai.scraper.netkeiba import NetkeibaClient
-from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
-from keiba_ai.scraper.robots import RobotsCache
-from keiba_ai.scraper.stop_flag import ScraperStopped
+import db.models  # noqa: F401 (populate Base.metadata)
+from core.config import Settings
+from db.base import Base
+from db.models.live_odds import LiveOdds
+from db.models.race import Race
+from jobs.fetch_live_odds import fetch_odds_for_race, run_fetch_live_odds
+from scraper.netkeiba import NetkeibaClient
+from scraper.rate_limiter import AsyncRateLimiter
+from scraper.robots import RobotsCache
+from scraper.stop_flag import ScraperStopped
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -200,7 +200,7 @@ async def test_run_fetch_live_odds_multiple_races(engine):
 @pytest.mark.asyncio
 async def test_fetch_stops_on_stop_flag(session, monkeypatch):
     """stop_flag が立っている場合は ScraperStopped を送出する。"""
-    import keiba_ai.scraper.stop_flag as sf
+    import scraper.stop_flag as sf
     monkeypatch.setattr(sf, "_internal_stop", True)
 
     client = _build_mock_client({"b1": TAN_FUKU_HTML})

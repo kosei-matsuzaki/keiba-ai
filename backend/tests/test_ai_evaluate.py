@@ -9,9 +9,9 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.ai.evaluate import evaluate
-from keiba_ai.ai.train import train
+import db.models  # noqa: F401
+from ai.evaluate import evaluate
+from ai.gbm.train import train
 from tests.synthetic import make_synthetic_db
 
 
@@ -142,7 +142,7 @@ def test_evaluate_betting_filter_params_recorded(trained_scenario):
 
 def test_evaluate_default_filter_params_match_constants(trained_scenario):
     """フィルタ未指定時は既存挙動 (= 後方互換) になっている。"""
-    from keiba_ai.ai.evaluate import PLACE_EV_THRESHOLD, WIN_EV_THRESHOLD
+    from ai.evaluate import PLACE_EV_THRESHOLD, WIN_EV_THRESHOLD
 
     db_file, model_dir = trained_scenario
     metrics = evaluate(model_path=model_dir, db=db_file)
@@ -218,7 +218,7 @@ def test_evaluate_persist_merges_into_model_run(trained_scenario):
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
-    from keiba_ai.db.models.model_run import ModelRun
+    from db.models.model_run import ModelRun
 
     db_file, model_dir = trained_scenario
 
@@ -252,35 +252,35 @@ def test_evaluate_persist_merges_into_model_run(trained_scenario):
 
 class TestKellyBetSize:
     def test_positive_edge_returns_nonzero(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         # win_prob=0.5, odds=3.0 → edge = 0.5*3.0 - 1 = 0.5 > 0
         bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000)
         assert bet > 0
 
     def test_zero_edge_returns_zero(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         # win_prob=1/3, odds=3.0 → edge = 0 exactly
         bet = kelly_bet_size(win_prob=1 / 3, odds=3.0, bankroll=100_000)
         assert bet == 0
 
     def test_negative_edge_returns_zero(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         # win_prob=0.1, odds=2.0 → edge = 0.1*2 - 1 = -0.8 < 0
         bet = kelly_bet_size(win_prob=0.1, odds=2.0, bankroll=100_000)
         assert bet == 0
 
     def test_odds_one_returns_zero(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         # b = odds - 1 = 0 → zero division guard
         bet = kelly_bet_size(win_prob=0.9, odds=1.0, bankroll=100_000)
         assert bet == 0
 
     def test_rounding_to_min_bet(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         # Choose params that result in a known bet size
         # kappa=0.25, edge=1.0, b=1.0 → fraction=0.25, raw=25000 → rounded to 25000
@@ -288,14 +288,14 @@ class TestKellyBetSize:
         assert bet % 100 == 0
 
     def test_below_min_bet_returns_zero(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         # Very small bankroll → raw_size < min_bet → 0
         bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=10, kappa=0.25, min_bet=100)
         assert bet == 0
 
     def test_larger_kappa_gives_larger_bet(self):
-        from keiba_ai.ai.evaluate import kelly_bet_size
+        from ai.evaluate import kelly_bet_size
 
         bet_small_kappa = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.1)
         bet_large_kappa = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.5)

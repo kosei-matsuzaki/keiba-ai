@@ -10,11 +10,11 @@ import pandas as pd
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.model_run import ModelRun
-from keiba_ai.db.models.race import Race
-from keiba_ai.features.builder import FEATURE_COLUMNS
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.model_run import ModelRun
+from db.models.race import Race
+from features.builder import FEATURE_COLUMNS
 
 
 def _seed_race_and_entries(session, race_id: str, n_horses: int = 4) -> None:
@@ -63,8 +63,8 @@ def test_predictions_top_features_non_empty(
     tmp_path: Path,
 ) -> None:
     """top_features should be a non-empty list of valid FEATURE_COLUMNS strings."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -85,8 +85,8 @@ def test_predictions_top_features_non_empty(
     })
 
     with (
-        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/TF_RACE1")
@@ -110,8 +110,8 @@ def test_predictions_top_features_empty_fallback(
     tmp_path: Path,
 ) -> None:
     """If predict_race_with_shap returns None/empty top_features, response is empty list."""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -128,8 +128,8 @@ def test_predictions_top_features_empty_fallback(
     })
 
     with (
-        patch("keiba_ai.api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("keiba_ai.api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.load_model", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/TF_RACE2")

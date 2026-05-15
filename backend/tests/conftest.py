@@ -10,8 +10,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 # Import all models so Base.metadata is fully populated
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.db.base import Base
+import db.models  # noqa: F401
+from db.base import Base
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -71,11 +71,11 @@ def app_with_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("KEIBA_DATA_DIR", str(data_dir))
 
     # Ensure a fresh engine is built from the patched env inside create_app()
-    import keiba_ai.core.paths as _paths
+    import core.paths as _paths
     monkeypatch.setattr(_paths, "data_dir", lambda: data_dir)
 
-    from keiba_ai.core.paths import db_path as _db_path
-    from keiba_ai.db.session import make_engine
+    from core.paths import db_path as _db_path
+    from db.session import make_engine
 
     engine = make_engine(_db_path())
     Base.metadata.create_all(engine)
@@ -84,7 +84,7 @@ def app_with_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Reimport main so the lifespan sees the monkeypatched paths
     import importlib
 
-    import keiba_ai.main as _main_mod
+    import main as _main_mod
 
     importlib.reload(_main_mod)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from keiba_ai.scraper.parsers.horse_detail import ParsedHorseDetail, parse_horse_detail
+from scraper.parsers.horse_detail import ParsedHorseDetail, parse_horse_detail
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HORSE_ID = "2022104732"

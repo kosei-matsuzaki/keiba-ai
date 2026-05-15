@@ -7,12 +7,12 @@ import datetime
 import pytest
 from sqlalchemy import select
 
-from keiba_ai.core.config import Settings
-from keiba_ai.db.models.scrape_log import ScrapeLog
-from keiba_ai.jobs.ingest_range import is_date_completed, run_range
-from keiba_ai.scraper.netkeiba import NetkeibaClient
-from keiba_ai.scraper.rate_limiter import AsyncRateLimiter
-from keiba_ai.scraper.robots import RobotsCache
+from core.config import Settings
+from db.models.scrape_log import ScrapeLog
+from jobs.ingest_range import is_date_completed, run_range
+from scraper.netkeiba import NetkeibaClient
+from scraper.rate_limiter import AsyncRateLimiter
+from scraper.robots import RobotsCache
 from tests.conftest import FIXTURES_DIR
 
 CALENDAR_HTML = (FIXTURES_DIR / "race_calendar_20241228.html").read_text(encoding="utf-8")
@@ -100,7 +100,7 @@ async def test_run_range_clears_misc_cache_after_each_day(
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("KEIBA_KEEP_MISC_CACHE", raising=False)
 
-    from keiba_ai.scraper import cache as cache_module
+    from scraper import cache as cache_module
 
     # 事前に misc/ にダミーファイルを置いておく (前回 ingest の残骸を模擬)
     cache_module.write_cache("https://db.netkeiba.com/horse/2019105293/", "leftover")
@@ -126,7 +126,7 @@ async def test_run_range_keeps_misc_cache_when_opt_out(
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("KEIBA_KEEP_MISC_CACHE", "1")
 
-    from keiba_ai.scraper import cache as cache_module
+    from scraper import cache as cache_module
 
     cache_module.write_cache("https://db.netkeiba.com/horse/2019105293/", "keep me")
     misc_dir = tmp_path / "raw" / "misc"

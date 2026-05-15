@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from keiba_ai.scraper.parsers.race_info_top import (
+from scraper.parsers.race_info_top import (
     ParseError,
     extract_jra_race_ids_with_kaisai_groups,
     parse_race_ids,

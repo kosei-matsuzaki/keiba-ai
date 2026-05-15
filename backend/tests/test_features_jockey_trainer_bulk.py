@@ -13,19 +13,19 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-import keiba_ai.db.models  # noqa: F401
-from keiba_ai.db.base import Base
-from keiba_ai.db.models.entry import Entry
-from keiba_ai.db.models.horse import Horse
-from keiba_ai.db.models.jockey import Jockey
-from keiba_ai.db.models.race import Race
-from keiba_ai.db.models.trainer import Trainer
-from keiba_ai.features.jockey import (
+import db.models  # noqa: F401
+from db.base import Base
+from db.models.entry import Entry
+from db.models.horse import Horse
+from db.models.jockey import Jockey
+from db.models.race import Race
+from db.models.trainer import Trainer
+from features.jockey import (
     build_jockey_history_cache,
     compute_jockey_stats,
     compute_jockey_stats_from_cache,
 )
-from keiba_ai.features.trainer import (
+from features.trainer import (
     build_trainer_history_cache,
     compute_trainer_stats,
     compute_trainer_stats_from_cache,

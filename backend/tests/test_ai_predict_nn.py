@@ -12,10 +12,9 @@ import pandas as pd
 import pytest
 import torch
 
-from keiba_ai.ai.nn.model import RaceModel
-from keiba_ai.ai.predict import predict_race_bundle, predict_race_with_combinations_bundle
-from keiba_ai.ai.registry import ModelBundle, load_model_full, save_nn_model
-
+from ai.nn.model import RaceModel
+from ai.predict import predict_race_bundle, predict_race_with_combinations_bundle
+from ai.registry import ModelBundle, load_model_full, save_nn_model
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,7 +162,7 @@ def test_predict_race_with_combinations_bundle_nn_tansho_count(tmp_path):
 
 
 def test_predict_race_with_combinations_bundle_nn_combination_prediction_fields(tmp_path):
-    from keiba_ai.ai.types import CombinationPrediction
+    from ai.types import CombinationPrediction
     bundle = _make_bundle(tmp_path)
     frame = _make_race_frame(4)
     result = predict_race_with_combinations_bundle(bundle, frame)
@@ -184,7 +183,8 @@ def test_predict_race_bundle_gbdt_path(tmp_path, monkeypatch):
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
 
     from sqlalchemy import create_engine
-    from keiba_ai.ai.train import train
+
+    from ai.gbm.train import train
     from tests.synthetic import make_synthetic_db
 
     db_file = tmp_path / "test.db"
@@ -200,8 +200,9 @@ def test_predict_race_bundle_gbdt_path(tmp_path, monkeypatch):
     assert bundle.lambdarank is not None
 
     import lightgbm as lgb
-    from keiba_ai.features.builder import FEATURE_COLUMNS, build_training_frame
-    from keiba_ai.db.session import make_engine, session_scope
+
+    from db.session import make_engine, session_scope
+    from features.builder import FEATURE_COLUMNS, build_training_frame
 
     engine2 = make_engine(db_file)
     with session_scope(engine2) as session:

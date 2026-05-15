@@ -1,6 +1,6 @@
 """Alembic environment configuration.
 
-- Resolves the DB URL from keiba_ai.core.paths.db_path() so that the
+- Resolves the DB URL from core.paths.db_path() so that the
   same path logic used at runtime is reused here.
 - render_as_batch=True is required for SQLite ALTER TABLE limitations.
 - compare_type=True ensures column type changes are detected by autogen.
@@ -15,15 +15,15 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Ensure the src directory is on sys.path so keiba_ai can be imported
+# Ensure the src directory is on sys.path so app packages can be imported
 _backend_dir = Path(__file__).resolve().parent.parent
 _src_dir = _backend_dir / "src"
 if str(_src_dir) not in sys.path:
     sys.path.insert(0, str(_src_dir))
 
 # Import Base and all models so metadata is fully populated
-import keiba_ai.db.models  # noqa: E402, F401  (side-effect import to register all mappers)
-from keiba_ai.db.base import Base  # noqa: E402
+import db.models  # noqa: E402, F401  (side-effect import to register all mappers)
+from db.base import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
@@ -35,7 +35,7 @@ alembic_config = context.config
 _current_url = alembic_config.get_main_option("sqlalchemy.url", "")
 if not _current_url or "placeholder" in _current_url:
     try:
-        from keiba_ai.core.paths import db_path
+        from core.paths import db_path
 
         alembic_config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path()}")
     except Exception:

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from keiba_ai.db.models.model_run import ModelRun
+from db.models.model_run import ModelRun
 
 
 def _seed_runs(session, tmp_path: Path) -> list[int]:
@@ -41,8 +41,8 @@ def test_list_models(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -63,8 +63,8 @@ def test_get_model_detail(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -87,8 +87,8 @@ def test_activate_model(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -117,7 +117,7 @@ def test_train_endpoint_returns_job_accepted(
         return {}
 
     with (
-        patch("keiba_ai.api.routers.models.train", return_value={}),
+        patch("api.routers.models.train", return_value={}),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.post("/api/models/train", json={})

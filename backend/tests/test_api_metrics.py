@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from keiba_ai.db.models.model_run import ModelRun
+from db.models.model_run import ModelRun
 
 
 def _seed_model_runs(session) -> None:
@@ -38,8 +38,8 @@ def test_metrics_summary_with_models(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -65,8 +65,8 @@ def test_metrics_timeseries_with_runs(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -90,8 +90,8 @@ def test_metrics_summary_falls_back_to_test_when_valid_is_nan(
     その場合は test_ndcg* に fallback して何かしら値が出ることを確認する
     (Phase 1 で全 MetricCard が「—」表示になっていた回帰の防止)。
     """
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
@@ -130,8 +130,8 @@ def test_metrics_summary_picks_persisted_evaluation_keys(
 ) -> None:
     """evaluate.py --persist で merge された top1_hit / payback_win 等が
     Dashboard 用 endpoint に反映されることを確認する。"""
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:

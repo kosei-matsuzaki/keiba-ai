@@ -6,9 +6,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from keiba_ai.db.models.bet_record import BetRecord
-from keiba_ai.db.models.payout import Payout
-from keiba_ai.db.models.race import Race
+from db.models.bet_record import BetRecord
+from db.models.payout import Payout
+from db.models.race import Race
 
 
 def _insert_race(session: Session, race_id: str = "202406010101") -> Race:
@@ -54,8 +54,8 @@ def _insert_settled_bet(session: Session, race_id: str = "202406010101") -> BetR
 
 
 def _get_engine_and_session(app_with_temp_db):
-    from keiba_ai.core.paths import db_path
-    from keiba_ai.db.session import make_engine, session_scope
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
     engine = make_engine(db_path())
     return engine
 
@@ -65,7 +65,7 @@ def _get_engine_and_session(app_with_temp_db):
 class TestCreateBet:
     def test_create_bet_201(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
 
@@ -87,7 +87,7 @@ class TestCreateBet:
     def test_create_bet_immediately_settled(self, app_with_temp_db: FastAPI) -> None:
         """payouts が既に存在する場合は POST と同時に確定する。"""
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_payout(session, "202406010101", "単勝", "5", 280)
@@ -121,7 +121,7 @@ class TestCreateBet:
     def test_create_bet_invalid_bet_type_422(self, app_with_temp_db: FastAPI) -> None:
         """bet_type が Literal 外なら 422 を返す。"""
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
 
@@ -137,7 +137,7 @@ class TestCreateBet:
 
     def test_create_bet_invalid_source_422(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
 
@@ -165,7 +165,7 @@ class TestListBets:
 
     def test_list_all(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             for combo in ("3", "7"):
@@ -186,7 +186,7 @@ class TestListBets:
 
     def test_filter_by_race_id(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session, "202406010101")
             _insert_race(session, "202406010201")
@@ -211,7 +211,7 @@ class TestListBets:
 
     def test_filter_settled_true(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_settled_bet(session)
@@ -229,7 +229,7 @@ class TestListBets:
 
     def test_filter_settled_false(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             _insert_settled_bet(session)
@@ -247,7 +247,7 @@ class TestListBets:
 
     def test_filter_by_source(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             session.add(BetRecord(
@@ -273,7 +273,7 @@ class TestListBets:
 class TestGetBet:
     def test_get_existing(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             bet = BetRecord(
@@ -301,7 +301,7 @@ class TestGetBet:
 class TestUpdateBet:
     def test_update_notes(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             bet = BetRecord(
@@ -321,7 +321,7 @@ class TestUpdateBet:
     def test_update_settled_bet_409(self, app_with_temp_db: FastAPI) -> None:
         """settled な bet の更新は 409。"""
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             bet = _insert_settled_bet(session)
@@ -342,7 +342,7 @@ class TestUpdateBet:
 class TestDeleteBet:
     def test_delete_204(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             bet = BetRecord(
@@ -366,7 +366,7 @@ class TestDeleteBet:
     def test_delete_settled_409(self, app_with_temp_db: FastAPI) -> None:
         """settled な bet の削除は 409。"""
         engine = _get_engine_and_session(app_with_temp_db)
-        from keiba_ai.db.session import session_scope
+        from db.session import session_scope
         with session_scope(engine) as session:
             _insert_race(session)
             bet = _insert_settled_bet(session)

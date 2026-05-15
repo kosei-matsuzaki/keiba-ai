@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from keiba_ai.db.models.bet_record import BetRecord
-from keiba_ai.db.models.race import Race
+from db.models.bet_record import BetRecord
+from db.models.race import Race
 
 
 def _add_race(session: Session, race_id: str = "202406010101") -> Race:
