@@ -36,6 +36,28 @@ if TYPE_CHECKING:
     import torch.nn
 
 
+class _LegacyUnpickler(pickle.Unpickler):
+    """`keiba_ai.*` 旧パスで pickle 化された artifact を、refactor 後の新パスへ
+    透過的にリマップする Unpickler。再学習なしで旧 .pkl を読めるようにする。
+
+    対象は calibrator.pkl / combo_calibrators.pkl / temperature_scaler.pkl 等。
+    GBM 固有 (train/tune/pl_loss) はクラスを pickle しないので keiba_ai.ai → ai
+    の単純な prefix 除去で十分。
+    """
+
+    def find_class(self, module: str, name: str):
+        if module.startswith("keiba_ai."):
+            module = module[len("keiba_ai."):]
+        elif module == "keiba_ai":
+            raise ImportError("keiba_ai は廃止済みパッケージです")
+        return super().find_class(module, name)
+
+
+def _pickle_load(fp) -> object:
+    """旧 keiba_ai.* パス対応の pickle.load ラッパー。"""
+    return _LegacyUnpickler(fp).load()
+
+
 @dataclass
 class ModelMeta:
     path: Path
@@ -302,19 +324,19 @@ def load_model_full(path: Path) -> ModelBundle:
     calibrator = None
     if calibrator_path.exists():
         with calibrator_path.open("rb") as f:
-            calibrator = pickle.load(f)
+            calibrator = _pickle_load(f)
 
     combo_cal_path = path / "combo_calibrators.pkl"
     combo_calibrators = None
     if combo_cal_path.exists():
         with combo_cal_path.open("rb") as f:
-            combo_calibrators = pickle.load(f)
+            combo_calibrators = _pickle_load(f)
 
     temperature_scaler_path = path / "temperature_scaler.pkl"
     temperature_scaler = None
     if temperature_scaler_path.exists():
         with temperature_scaler_path.open("rb") as f:
-            temperature_scaler = pickle.load(f)
+            temperature_scaler = _pickle_load(f)
 
     return ModelBundle(
         model_type="gbdt",
@@ -365,7 +387,7 @@ def _load_nn_bundle(path: Path, meta: dict, feature_columns: list[str]) -> Model
     temperature_scaler = None
     if temperature_scaler_path.exists():
         with temperature_scaler_path.open("rb") as f:
-            temperature_scaler = pickle.load(f)
+            temperature_scaler = _pickle_load(f)
 
     return ModelBundle(
         model_type="nn",
