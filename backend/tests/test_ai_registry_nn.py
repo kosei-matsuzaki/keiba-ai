@@ -162,6 +162,125 @@ def test_load_model_full_nn_weights_preserved(tmp_path):
         assert torch.allclose(p1, p2), f"Weight mismatch for {n1}"
 
 
+def test_load_model_full_nn_loads_preprocessor_when_present(tmp_path):
+    """If preprocessor.pkl exists in the model dir, ModelBundle.nn_preprocessor is populated."""
+    import pandas as pd
+
+    from ai.nn.preprocess import NNPreprocessor
+
+    horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
+    race_cols = ["course", "distance"]
+    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
+
+    train_df = pd.DataFrame(
+        {
+            "feat_a": [0.0, 1.0, 2.0],
+            "feat_b": [1.0, 2.0, 3.0],
+            "feat_c": [0.5, 0.5, 0.5],
+            "feat_d": [-1.0, 0.0, 1.0],
+            "course": ["東京", "中山", "東京"],
+            "distance": [1600.0, 2000.0, 1800.0],
+        }
+    )
+    pp = NNPreprocessor.fit(train_df, horse_cols, race_cols)
+    pp.save(model_dir / "preprocessor.pkl")
+
+    bundle = load_model_full(model_dir)
+
+    assert bundle.nn_preprocessor is not None
+    assert isinstance(bundle.nn_preprocessor, NNPreprocessor)
+    assert bundle.nn_preprocessor.categorical_maps == pp.categorical_maps
+
+
+def test_load_model_full_nn_preprocessor_none_when_absent(tmp_path):
+    """Legacy NN models without preprocessor.pkl get nn_preprocessor=None."""
+    horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
+    race_cols = ["course", "distance"]
+    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
+    # no preprocessor.pkl written
+
+    bundle = load_model_full(model_dir)
+
+    assert bundle.nn_preprocessor is None
+
+
+def test_load_model_full_nn_arch_v2(tmp_path):
+    """arch_version=2 → registry instantiates RaceTransformerModel with cat metadata."""
+    import pandas as pd
+
+    from ai.nn.model import RaceTransformerModel
+    from ai.nn.preprocess import NNPreprocessor
+
+    horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
+    race_cols = ["course", "distance"]
+
+    horse_cat_positions: list[int] = []
+    horse_cat_cardinalities: list[int] = []
+    race_cat_positions = [0]
+    race_cat_cardinalities = [3]
+
+    model = RaceTransformerModel(
+        horse_feat_dim=len(horse_cols),
+        race_feat_dim=len(race_cols),
+        embed_dim=8,
+        hidden_dim=16,
+        n_heads=2,
+        horse_cat_positions=horse_cat_positions,
+        horse_cat_cardinalities=horse_cat_cardinalities,
+        race_cat_positions=race_cat_positions,
+        race_cat_cardinalities=race_cat_cardinalities,
+        cat_embed_dim=4,
+        n_transformer_layers=2,
+    )
+
+    model_dir = tmp_path / "test-nn-v2"
+    model_dir.mkdir()
+    torch.save(model.state_dict(), model_dir / "model.pt")
+
+    meta = {
+        "model_type": "nn",
+        "arch_version": 2,
+        "loss_type": "plackett_luce",
+        "params": {
+            "hidden_dim": 16,
+            "embed_dim": 8,
+            "n_heads": 2,
+            "n_transformer_layers": 2,
+            "cat_embed_dim": 4,
+        },
+        "metrics": {"ndcg1": 0.5},
+        "feature_columns": horse_cols + race_cols,
+        "horse_feature_cols": horse_cols,
+        "race_feature_cols": race_cols,
+        "cat_metadata": {
+            "horse_cat_positions": horse_cat_positions,
+            "horse_cat_cardinalities": horse_cat_cardinalities,
+            "race_cat_positions": race_cat_positions,
+            "race_cat_cardinalities": race_cat_cardinalities,
+        },
+    }
+    save_nn_model(model_dir / "model.pt", meta)
+
+    train_df = pd.DataFrame(
+        {
+            "feat_a": [0.0, 1.0, 2.0],
+            "feat_b": [1.0, 2.0, 3.0],
+            "feat_c": [0.5, 0.5, 0.5],
+            "feat_d": [-1.0, 0.0, 1.0],
+            "course": ["東京", "中山", "京都"],
+            "distance": [1600.0, 2000.0, 1800.0],
+        }
+    )
+    NNPreprocessor.fit(train_df, horse_cols, race_cols).save(model_dir / "preprocessor.pkl")
+
+    bundle = load_model_full(model_dir)
+
+    assert bundle.model_type == "nn"
+    assert isinstance(bundle.nn_model, RaceTransformerModel)
+
+
 def test_load_model_full_gbdt_not_affected(tmp_path, monkeypatch):
     """load_model_full on a GBDT dir still returns GBDT ModelBundle."""
     import os

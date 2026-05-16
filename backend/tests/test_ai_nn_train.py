@@ -32,7 +32,7 @@ def syn_engine_small(tmp_path):
 
 
 def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
-    """train_nn() creates model_dir with model.pt and meta.json."""
+    """train_nn() creates model_dir with model.pt, meta.json, preprocessor.pkl."""
     engine, db_file = syn_engine_small
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
 
@@ -55,6 +55,10 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
     assert model_dir.exists(), "model_dir does not exist"
     assert (model_dir / "model.pt").exists(), "model.pt not found"
     assert (model_dir / "meta.json").exists(), "meta.json not found"
+    assert (model_dir / "preprocessor.pkl").exists(), "preprocessor.pkl not found"
+
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("has_preprocessor") is True
 
 
 def test_train_nn_meta_json_structure(syn_engine_small, tmp_path, monkeypatch):
@@ -86,6 +90,12 @@ def test_train_nn_meta_json_structure(syn_engine_small, tmp_path, monkeypatch):
     assert "race_feature_cols" in meta
     assert "loss_type" in meta
     assert meta["loss_type"] == "plackett_luce"
+
+    # arch v2: cat metadata + new optimizer params present in meta
+    assert meta.get("arch_version") == 2
+    assert "cat_metadata" in meta
+    assert "n_transformer_layers" in meta["params"]
+    assert "weight_decay" in meta["params"]
 
     # metrics must contain NDCG keys
     metrics = meta["metrics"]

@@ -36,6 +36,8 @@ from features.builder import FEATURE_COLUMNS
 if TYPE_CHECKING:
     import torch.nn
 
+    from ai.nn.preprocess import NNPreprocessor
+
 
 @dataclass
 class ModelMeta:
@@ -211,6 +213,8 @@ class ModelBundle:
         nn_model:              RaceModel インスタンス (eval 済み)
         nn_horse_feature_cols: 馬ごとの特徴量列
         nn_race_feature_cols:  レースレベルの特徴量列
+        nn_preprocessor:       カテゴリ map + 数値標準化 (train で fit 済み)。
+                               旧モデルでは None (推論側で legacy fallback)。
 
     共通:
         model_type:     "gbdt" or "nn"
@@ -232,6 +236,7 @@ class ModelBundle:
     nn_model: "torch.nn.Module | None" = None
     nn_horse_feature_cols: list[str] | None = None
     nn_race_feature_cols: list[str] | None = None
+    nn_preprocessor: NNPreprocessor | None = None
     # 温度スケーリング (GBDT / NN 共通; optional)
     temperature_scaler: TemperatureScaler | None = None
 
@@ -275,6 +280,7 @@ def load_model_full(path: Path) -> ModelBundle:
             nn_model=nn_artifacts["nn_model"],
             nn_horse_feature_cols=nn_artifacts["nn_horse_feature_cols"],
             nn_race_feature_cols=nn_artifacts["nn_race_feature_cols"],
+            nn_preprocessor=nn_artifacts["nn_preprocessor"],
             temperature_scaler=nn_artifacts["temperature_scaler"],
         )
 

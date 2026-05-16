@@ -31,14 +31,13 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
     """Read NN artifact files from a model directory.
 
     Returns:
-        {nn_model, nn_horse_feature_cols, nn_race_feature_cols, temperature_scaler}
+        {nn_model, nn_horse_feature_cols, nn_race_feature_cols,
+         nn_preprocessor, temperature_scaler}
 
     Raises:
         ImportError: torch がインストールされていない環境では発生する。
     """
     import torch  # noqa: PLC0415 — intentional lazy import
-
-    from ai.nn.model import RaceModel  # noqa: PLC0415
 
     params = meta.get("params", {})
     horse_feature_cols: list[str] = meta.get("horse_feature_cols", [])
@@ -51,13 +50,34 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
     embed_dim: int = params.get("embed_dim", 32)
     n_heads: int = params.get("n_heads", 4)
 
-    race_model = RaceModel(
-        horse_feat_dim=horse_feat_dim,
-        race_feat_dim=race_feat_dim,
-        embed_dim=embed_dim,
-        hidden_dim=hidden_dim,
-        n_heads=n_heads,
-    )
+    arch_version = int(meta.get("arch_version", 1))
+    if arch_version >= 2:
+        from ai.nn.model import RaceTransformerModel  # noqa: PLC0415
+
+        cat_meta: dict = meta.get("cat_metadata", {}) or {}
+        race_model: torch.nn.Module = RaceTransformerModel(
+            horse_feat_dim=horse_feat_dim,
+            race_feat_dim=race_feat_dim,
+            embed_dim=embed_dim,
+            hidden_dim=hidden_dim,
+            n_heads=n_heads,
+            horse_cat_positions=list(cat_meta.get("horse_cat_positions", [])),
+            horse_cat_cardinalities=list(cat_meta.get("horse_cat_cardinalities", [])),
+            race_cat_positions=list(cat_meta.get("race_cat_positions", [])),
+            race_cat_cardinalities=list(cat_meta.get("race_cat_cardinalities", [])),
+            cat_embed_dim=int(params.get("cat_embed_dim", 4)),
+            n_transformer_layers=int(params.get("n_transformer_layers", 2)),
+        )
+    else:
+        from ai.nn.model import RaceModel  # noqa: PLC0415
+
+        race_model = RaceModel(
+            horse_feat_dim=horse_feat_dim,
+            race_feat_dim=race_feat_dim,
+            embed_dim=embed_dim,
+            hidden_dim=hidden_dim,
+            n_heads=n_heads,
+        )
 
     state_dict = torch.load(path / "model.pt", map_location="cpu", weights_only=True)
     race_model.load_state_dict(state_dict)
@@ -69,9 +89,16 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         with temperature_scaler_path.open("rb") as f:
             temperature_scaler = _pickle_load(f)
 
+    nn_preprocessor = None
+    preprocessor_path = path / "preprocessor.pkl"
+    if preprocessor_path.exists():
+        from ai.nn.preprocess import NNPreprocessor  # noqa: PLC0415
+        nn_preprocessor = NNPreprocessor.load(preprocessor_path)
+
     return {
         "nn_model": race_model,
         "nn_horse_feature_cols": horse_feature_cols,
         "nn_race_feature_cols": race_feature_cols,
+        "nn_preprocessor": nn_preprocessor,
         "temperature_scaler": temperature_scaler,
     }

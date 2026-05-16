@@ -29,7 +29,8 @@ from torch.utils.data import DataLoader
 from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
-from ai.nn.model import RaceModel
+from ai.nn.model import RaceTransformerModel
+from ai.nn.preprocess import NNPreprocessor
 from ai.registry import save_nn_model
 from ai.splits import time_split
 from ai.temperature import TemperatureScaler
@@ -71,21 +72,15 @@ def _split_feature_cols(all_feature_cols: list[str]) -> tuple[list[str], list[st
 
 
 def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    """Label-encode categorical string columns in-place so they become float32-compatible.
+    """Legacy: label-encode categoricals + numeric coercion, fitting on the frame itself.
 
-    Each unique string value is mapped to a consecutive integer.  NaN is mapped to -1.
-    Numeric columns are coerced to float32 and NaN-filled with 0.
+    **Bugged when called separately on train/valid/test** — each split produces its
+    own mapping (e.g. course=Tokyo could be 5.0 in train and 2.0 in valid).
+    Use :class:`NNPreprocessor` instead, which fits on train and applies the same
+    mapping to all splits + inference.
 
-    This is intentionally simple: the model treats these as ordinary continuous inputs.
-    For production quality, learned embeddings would be preferable, but label-encoding
-    is sufficient for the initial training pipeline.
-
-    Args:
-        frame: DataFrame containing at least the columns listed in feature_cols.
-        feature_cols: Columns to ensure are numeric.
-
-    Returns:
-        A copy of frame with the listed columns converted to float32.
+    Retained only as a fallback for inference against legacy NN models saved
+    before preprocessor.pkl was introduced.
     """
     frame = frame.copy()
     cat_set = set(CATEGORICAL_FEATURES)
@@ -95,7 +90,6 @@ def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.Dat
             frame[col] = 0.0
             continue
         if col in cat_set or frame[col].dtype == object:
-            # Label-encode: NaN → -1, unique values → 0, 1, 2, ...
             unique_vals = [v for v in frame[col].dropna().unique()]
             mapping = {v: float(i) for i, v in enumerate(sorted(unique_vals, key=str))}
             frame[col] = frame[col].map(mapping).fillna(-1.0)
@@ -106,7 +100,7 @@ def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.Dat
 
 
 def _compute_ndcg_nn(
-    model: RaceModel,
+    model: torch.nn.Module,
     frame: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
@@ -152,7 +146,7 @@ def _compute_ndcg_nn(
 
 
 def _fit_temperature_scaler_nn(
-    model: RaceModel,
+    model: torch.nn.Module,
     valid_df: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
@@ -232,7 +226,7 @@ def _fit_temperature_scaler_nn(
 
 
 def _compute_loss_on_dataset(
-    model: RaceModel,
+    model: torch.nn.Module,
     frame: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
@@ -289,25 +283,31 @@ def _build_loss_fn(loss_name: str):
 
 
 class RaceLitModule(pl.LightningModule):
-    """Lightning wrapper around RaceModel.
+    """Lightning wrapper around RaceModel / RaceTransformerModel.
 
     Args:
-        model: RaceModel instance
+        model: torch.nn.Module exposing (horse_features, race_features, mask) -> scores
         loss_fn_name: one of "plackett_luce", "listmle", "time_margin"
-        learning_rate: Adam optimizer learning rate
+        learning_rate: AdamW initial learning rate (cosine-annealed to 0)
+        weight_decay: AdamW weight decay (set 0 to disable)
+        max_epochs: total epochs — used as the cosine schedule period
     """
 
     def __init__(
         self,
-        model: RaceModel,
+        model: torch.nn.Module,
         loss_fn_name: str,
         learning_rate: float,
+        weight_decay: float = 0.0,
+        max_epochs: int = 100,
     ) -> None:
         super().__init__()
         self.model = model
         self.loss_fn_name = loss_fn_name
         self.loss_fn = _build_loss_fn(loss_fn_name)
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.max_epochs = max_epochs
 
     def _compute_loss(self, batch: dict) -> torch.Tensor:
         scores = self.model(
@@ -340,7 +340,50 @@ class RaceLitModule(pl.LightningModule):
             self.log("valid_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, self.max_epochs)
+        )
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+
+
+class _NDCG3Callback(pl.Callback):
+    """Compute NDCG@3 on the validation frame at end of each validation epoch.
+
+    The scalar is logged as ``valid_ndcg3`` so EarlyStopping can monitor a
+    ranking metric directly (PL loss and NDCG often peak at different epochs).
+    """
+
+    def __init__(
+        self,
+        valid_df: pd.DataFrame,
+        horse_feature_cols: list[str],
+        race_feature_cols: list[str],
+        device: torch.device,
+    ) -> None:
+        self.valid_df = valid_df
+        self.horse_feature_cols = horse_feature_cols
+        self.race_feature_cols = race_feature_cols
+        self.device = device
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if self.valid_df.empty:
+            return
+        ndcg3 = _compute_ndcg_nn(
+            pl_module.model,
+            self.valid_df,
+            self.horse_feature_cols,
+            self.race_feature_cols,
+            at=3,
+            device=self.device,
+        )
+        if math.isnan(ndcg3):
+            return
+        pl_module.log("valid_ndcg3", ndcg3, prog_bar=True)
 
 
 def train_nn(
@@ -357,6 +400,11 @@ def train_nn(
     learning_rate: float = 1e-3,
     device: str = "cpu",
     fit_temperature: bool = True,
+    n_transformer_layers: int = 2,
+    cat_embed_dim: int = 4,
+    weight_decay: float = 1e-4,
+    gradient_clip_val: float = 1.0,
+    early_stopping_patience: int = 10,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict."""
     resolved_db = db or db_path()
@@ -400,14 +448,18 @@ def train_nn(
         len(race_feature_cols),
     )
 
-    # Encode categorical string columns to numeric so torch.tensor() can consume them.
-    # Encoding is computed from the train set to avoid leakage, then applied to all splits.
-    all_feat_for_encoding = horse_feature_cols + race_feature_cols
-    train_df = _encode_categoricals(train_df, all_feat_for_encoding)
+    # Fit preprocessor on train only — categorical maps and numeric mean/std
+    # are computed once and applied identically to train/valid/test (and later
+    # at inference via bundle.nn_preprocessor).  Calling _encode_categoricals
+    # per-split was the previous behavior and produced inconsistent mappings.
+    preprocessor = NNPreprocessor.fit(
+        train_df, horse_feature_cols, race_feature_cols
+    )
+    train_df = preprocessor.transform(train_df)
     if not valid_df.empty:
-        valid_df = _encode_categoricals(valid_df, all_feat_for_encoding)
+        valid_df = preprocessor.transform(valid_df)
     if not test_df.empty:
-        test_df = _encode_categoricals(test_df, all_feat_for_encoding)
+        test_df = preprocessor.transform(test_df)
 
     horse_feat_dim = len(horse_feature_cols)
     race_feat_dim = len(race_feature_cols)
@@ -444,24 +496,58 @@ def train_nn(
             effective_n_heads,
         )
 
-    race_model = RaceModel(
+    horse_cat_positions, horse_cat_cardinalities = preprocessor.horse_cat_metadata()
+    race_cat_positions, race_cat_cardinalities = preprocessor.race_cat_metadata()
+    log.info(
+        "Categorical embeddings — horse: %d cols, race: %d cols (cat_embed_dim=%d, n_transformer_layers=%d)",
+        len(horse_cat_positions),
+        len(race_cat_positions),
+        cat_embed_dim,
+        n_transformer_layers,
+    )
+
+    race_model = RaceTransformerModel(
         horse_feat_dim=horse_feat_dim,
         race_feat_dim=race_feat_dim,
         embed_dim=embed_dim,
         hidden_dim=hidden_dim,
         n_heads=effective_n_heads,
+        horse_cat_positions=horse_cat_positions,
+        horse_cat_cardinalities=horse_cat_cardinalities,
+        race_cat_positions=race_cat_positions,
+        race_cat_cardinalities=race_cat_cardinalities,
+        cat_embed_dim=cat_embed_dim,
+        n_transformer_layers=n_transformer_layers,
     )
 
     lit_module = RaceLitModule(
         model=race_model,
         loss_fn_name=loss,
         learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        max_epochs=max_epochs,
     )
 
     # Trainer callbacks
-    callbacks = []
-    if val_loader is not None:
-        callbacks.append(EarlyStopping(monitor="valid_loss", patience=10, mode="min"))
+    callbacks: list[pl.Callback] = []
+    if val_loader is not None and not valid_df.empty:
+        # Compute NDCG@3 every validation epoch so EarlyStopping monitors the
+        # ranking metric directly rather than the PL loss proxy.
+        callbacks.append(
+            _NDCG3Callback(
+                valid_df=valid_df,
+                horse_feature_cols=horse_feature_cols,
+                race_feature_cols=race_feature_cols,
+                device=torch.device(device),
+            )
+        )
+        callbacks.append(
+            EarlyStopping(
+                monitor="valid_ndcg3",
+                patience=early_stopping_patience,
+                mode="max",
+            )
+        )
 
     torch_device = torch.device(device)
     accelerator = "gpu" if device.startswith("cuda") else "cpu"
@@ -474,6 +560,7 @@ def train_nn(
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=False,
+        gradient_clip_val=gradient_clip_val,
     )
 
     log.info("Starting NN training (loss=%s, max_epochs=%d)…", loss, max_epochs)
@@ -577,26 +664,41 @@ def train_nn(
             pickle.dump(temperature_scaler, f)
         log.info("temperature_scaler.pkl saved to %s", model_dir)
 
+    preprocessor.save(model_dir / "preprocessor.pkl")
+    log.info("preprocessor.pkl saved to %s", model_dir)
+
     meta_dict = {
         "model_type": "nn",
+        "arch_version": 2,
         "loss_type": loss,
         "params": {
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
             "n_heads": effective_n_heads,
+            "n_transformer_layers": n_transformer_layers,
+            "cat_embed_dim": cat_embed_dim,
             "batch_size": batch_size,
             "max_epochs": max_epochs,
             "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "gradient_clip_val": gradient_clip_val,
             "device": device,
         },
         "metrics": metrics,
         "feature_columns": all_feature_cols,
         "horse_feature_cols": horse_feature_cols,
         "race_feature_cols": race_feature_cols,
+        "cat_metadata": {
+            "horse_cat_positions": horse_cat_positions,
+            "horse_cat_cardinalities": horse_cat_cardinalities,
+            "race_cat_positions": race_cat_positions,
+            "race_cat_cardinalities": race_cat_cardinalities,
+        },
         "train_range": train_range,
         "valid_range": valid_range,
         "test_range": test_range,
         "has_temperature_scaler": has_temperature_scaler,
+        "has_preprocessor": True,
     }
 
     # Delegate to registry (writes meta.json; model.pt is already in model_dir)
@@ -639,9 +741,39 @@ def _cli() -> None:
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
     parser.add_argument("--embed-dim", type=int, default=32, help="Embedding dimension")
     parser.add_argument("--n-heads", type=int, default=4, help="Number of attention heads")
+    parser.add_argument(
+        "--n-transformer-layers",
+        type=int,
+        default=2,
+        help="Number of stacked TransformerEncoderLayer blocks (default: 2)",
+    )
+    parser.add_argument(
+        "--cat-embed-dim",
+        type=int,
+        default=4,
+        help="Embedding size for each categorical column (default: 4)",
+    )
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size (races per batch)")
     parser.add_argument("--max-epochs", type=int, default=100, help="Maximum training epochs")
-    parser.add_argument("--learning-rate", type=float, default=1e-3, help="Adam learning rate")
+    parser.add_argument("--learning-rate", type=float, default=1e-3, help="AdamW learning rate")
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=1e-4,
+        help="AdamW weight decay (default: 1e-4)",
+    )
+    parser.add_argument(
+        "--gradient-clip-val",
+        type=float,
+        default=1.0,
+        help="Gradient norm clipping value (default: 1.0; set 0 to disable)",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=10,
+        help="EarlyStopping patience (epochs) on valid_ndcg3",
+    )
     parser.add_argument(
         "--device",
         choices=["cpu", "cuda"],
@@ -673,6 +805,11 @@ def _cli() -> None:
         learning_rate=args.learning_rate,
         device=args.device,
         fit_temperature=not args.no_fit_temperature,
+        n_transformer_layers=args.n_transformer_layers,
+        cat_embed_dim=args.cat_embed_dim,
+        weight_decay=args.weight_decay,
+        gradient_clip_val=args.gradient_clip_val,
+        early_stopping_patience=args.early_stopping_patience,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

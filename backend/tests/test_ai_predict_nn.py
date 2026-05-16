@@ -174,6 +174,45 @@ def test_predict_race_with_combinations_bundle_nn_combination_prediction_fields(
 
 
 # ---------------------------------------------------------------------------
+# Preprocessor integration
+# ---------------------------------------------------------------------------
+
+
+def test_predict_race_bundle_nn_uses_preprocessor_when_present(tmp_path):
+    """When preprocessor.pkl is in the model dir, predict_race uses it (not legacy encode)."""
+    from ai.nn.preprocess import NNPreprocessor
+
+    bundle = _make_bundle(tmp_path)
+    # Fit and save a preprocessor next to the model
+    train_like = pd.DataFrame(
+        {
+            "feat_a": [0.0, 1.0, 2.0, 3.0],
+            "feat_b": [1.0, 2.0, 3.0, 4.0],
+            "feat_c": [0.5, 0.5, 0.5, 0.5],
+            "feat_d": [-1.0, 0.0, 1.0, 2.0],
+            "course": ["東京", "中山", "京都", "東京"],
+            "distance": [1600.0, 2000.0, 1200.0, 1800.0],
+        }
+    )
+    pp = NNPreprocessor.fit(train_like, _HORSE_COLS, _RACE_COLS)
+    pp.save(bundle.model_dir / "preprocessor.pkl")
+
+    # Reload so bundle picks up the preprocessor
+    from ai.registry import load_model_full
+    bundle = load_model_full(bundle.model_dir)
+    assert bundle.nn_preprocessor is not None
+
+    frame = _make_race_frame(6)
+    # course=0.0 in _make_race_frame would NOT be a known category for the
+    # fitted preprocessor, so the preprocessor maps it to -1.  The point of
+    # this test is just to confirm inference runs without error and uses the
+    # bundled preprocessor (not the legacy per-frame encoder).
+    result = predict_race(bundle, frame)
+    assert set(result.columns) >= {"horse_id", "score", "win_prob", "place_prob"}
+    assert abs(result["win_prob"].sum() - 1.0) < 1e-4
+
+
+# ---------------------------------------------------------------------------
 # Bundle dispatch: GBDT path still works after registry refactor
 # ---------------------------------------------------------------------------
 

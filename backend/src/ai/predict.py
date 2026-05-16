@@ -659,8 +659,6 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     """
     import torch  # noqa: PLC0415 — intentional lazy import
 
-    from ai.nn.train_nn import _encode_categoricals  # noqa: PLC0415
-
     if frame.empty:
         return pd.DataFrame(columns=["horse_id", "score", "win_prob", "place_prob"])
 
@@ -668,7 +666,14 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     race_feature_cols: list[str] = bundle.nn_race_feature_cols or []
     all_feat_cols = horse_feature_cols + race_feature_cols
 
-    encoded = _encode_categoricals(frame, all_feat_cols)
+    if bundle.nn_preprocessor is not None:
+        encoded = bundle.nn_preprocessor.transform(frame)
+    else:
+        # Legacy fallback: NN models saved before preprocessor.pkl was introduced.
+        # The mapping is computed from the single race only, which means the
+        # categorical encoding will not match what the model was trained with.
+        from ai.nn.train_nn import _encode_categoricals  # noqa: PLC0415
+        encoded = _encode_categoricals(frame, all_feat_cols)
 
     n_horses = len(encoded)
 
