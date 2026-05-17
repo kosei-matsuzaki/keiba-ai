@@ -1,7 +1,7 @@
 """連系 馬券 (馬連 / ワイド / 馬単 / 三連複 / 三連単) の確率 calibration 診断。
 
 仕組み:
-  - 期間内の各 race で predict_race_with_combinations_gbdt を回し、
+  - 期間内の各 race で predict_race_with_combinations を回し、
     各 combo の (predicted prob, actual hit) を集める
   - 馬券種ごとに predicted-prob 10 等分位 bucket で actual_rate と比較
   - mean_pred / actual_rate の ratio が 1x から大きく外れる bucket を可視化
@@ -11,6 +11,9 @@ Goal:
   Plackett-Luce 由来の連系 combo 確率がどれだけズレているかを定量化する。
   ratio >> 1x が低 prob 帯で続くなら、連系 EV 計算に系統的バイアス
   (= 過大評価) が乗っており、payback < 1.0 の根本原因として強く示唆される。
+
+Supports both GBDT and NN models — dispatch happens inside
+`predict_race_with_combinations(bundle, ...)` via bundle.model_type.
 
 CLI:
   uv run python -m ai.combo_calibration_diagnosis \
@@ -27,7 +30,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import select
 
-from ai.predict import predict_race_with_combinations_gbdt
+from ai.predict import predict_race_with_combinations
 from ai.registry import load_model_full
 from core.logging import get_logger
 from core.paths import db_path
@@ -98,7 +101,10 @@ def diagnose_combo_calibration(
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
     bundle = load_model_full(model_path)
-    model = bundle.lambdarank
+    log.info(
+        "Diagnosing %s combo calibration (model_type=%s)",
+        bundle.model_type, bundle.model_type,
+    )
 
     log.info("Building evaluation frame %s..%s", start, end)
     with session_scope(engine) as session:
@@ -127,14 +133,10 @@ def diagnose_combo_calibration(
                 n_skipped_no_top3 += 1
                 continue
             try:
-                combo_map = predict_race_with_combinations_gbdt(
-                    model, race_frame,
-                    binary_model=bundle.binary,
-                    calibrator=bundle.calibrator,
-                    combo_calibrators=bundle.combo_calibrators,
-                )
+                # Bundle-aware: GBDT / NN は内部 dispatch
+                combo_map = predict_race_with_combinations(bundle, race_frame)
             except Exception as exc:
-                log.warning("predict_race_with_combinations_gbdt failed for %s: %s",
+                log.warning("predict_race_with_combinations failed for %s: %s",
                             race_id, exc)
                 continue
 

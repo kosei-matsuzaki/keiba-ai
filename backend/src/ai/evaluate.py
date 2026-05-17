@@ -49,6 +49,10 @@ log = logging.getLogger(__name__)
 WIN_EV_THRESHOLD = 1.1   # Expected value threshold for win bet
 PLACE_EV_THRESHOLD = 1.05  # Expected value threshold for place bet
 
+# Bootstrap CI metrics — keys listed here get `_ci_low` / `_ci_high` companions
+# in the returned metrics dict when bootstrap is enabled.
+_BOOTSTRAP_METRIC_KEYS = ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place")
+
 
 def kelly_bet_size(
     win_prob: float,
@@ -128,7 +132,86 @@ def _parse_payout_place(json_str: str | None) -> dict[int, int]:
         return {}
 
 
-def _evaluate_favorite_baseline(frame: pd.DataFrame) -> dict:
+def _bootstrap_ci(
+    per_race: dict[str, np.ndarray],
+    iters: int,
+    seed: int,
+    ci: float = 0.95,
+) -> dict[str, tuple[float, float]]:
+    """Race-level bootstrap CI for ndcg / hit-rate / payback metrics.
+
+    Per-race resampling preserves the natural noise unit (one race = one
+    independent draw). For payback metrics, the resampled payback is
+    `sum(payout) / sum(invested)` across the resampled races so that the
+    CI accounts for both the rate and the bet-volume variance.
+
+    Args:
+        per_race: dict with arrays of equal length N (one entry per race):
+            ndcg1, ndcg3, top1_hit, place_hit,
+            win_invested, win_payout, place_invested, place_payout.
+        iters: bootstrap iteration count. Must be > 0.
+        seed: RNG seed for reproducibility.
+        ci: confidence level in (0, 1). Default 0.95 → 2.5%/97.5% percentiles.
+
+    Returns:
+        dict mapping metric key → (lower, upper). When all resampled
+        iterations yield NaN (e.g. invested==0 in every bootstrap sample),
+        the bounds are NaN.
+    """
+    n = len(per_race["ndcg1"])
+    if n == 0 or iters <= 0:
+        return {k: (float("nan"), float("nan")) for k in _BOOTSTRAP_METRIC_KEYS}
+
+    rng = np.random.default_rng(seed)
+    # idx: shape (iters, n) — each row is a bootstrap sample of race indices
+    idx = rng.integers(0, n, size=(iters, n))
+
+    samples: dict[str, np.ndarray] = {}
+    # Mean-style metrics: average over the resampled races
+    for key in ("ndcg1", "ndcg3", "top1_hit", "place_hit"):
+        vals = per_race[key]  # shape (n,)
+        # vals[idx] → shape (iters, n); mean across axis=1 → shape (iters,)
+        samples[key] = vals[idx].mean(axis=1)
+
+    # Payback metrics: sum(payout) / sum(invested) over the resampled races,
+    # NaN when sum(invested) == 0.
+    for kind in ("win", "place"):
+        invested = per_race[f"{kind}_invested"][idx].sum(axis=1)
+        payout = per_race[f"{kind}_payout"][idx].sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            samples[f"payback_{kind}"] = np.where(invested > 0, payout / invested, np.nan)
+
+    alpha = (1.0 - ci) / 2.0
+    lo_p, hi_p = alpha * 100.0, (1.0 - alpha) * 100.0
+    out: dict[str, tuple[float, float]] = {}
+    for key, vals in samples.items():
+        if np.all(np.isnan(vals)):
+            out[key] = (float("nan"), float("nan"))
+        else:
+            out[key] = (
+                float(np.nanpercentile(vals, lo_p)),
+                float(np.nanpercentile(vals, hi_p)),
+            )
+    return out
+
+
+def _add_ci_fields(metrics: dict, ci_map: dict[str, tuple[float, float]]) -> None:
+    """Merge bootstrap CI bounds into a flat metrics dict.
+
+    For each metric key, adds `<key>_ci_low` and `<key>_ci_high` fields.
+    Easier to consume from the Dashboard / persisted JSON than a nested dict.
+    """
+    for key, (lo, hi) in ci_map.items():
+        metrics[f"{key}_ci_low"] = lo
+        metrics[f"{key}_ci_high"] = hi
+
+
+def _evaluate_favorite_baseline(
+    frame: pd.DataFrame,
+    *,
+    bootstrap_iters: int = 0,
+    bootstrap_seed: int = 42,
+) -> dict:
     """Evaluate the 'always bet on the lowest-odds horse' baseline.
 
     Strategy: per race, identify the horse with the lowest odds_win and bet
@@ -141,6 +224,14 @@ def _evaluate_favorite_baseline(frame: pd.DataFrame) -> dict:
     ndcg3_list: list[float] = []
     top1_hits: list[int] = []
     place_hits: list[int] = []
+
+    # Per-race accumulators (each entry = one race's stake/payout for the
+    # favorite bet). Kept alongside the running totals so bootstrap can
+    # resample by race.
+    per_race_win_invested: list[float] = []
+    per_race_win_payout: list[float] = []
+    per_race_place_invested: list[float] = []
+    per_race_place_payout: list[float] = []
 
     win_bets = 0
     win_invested = 0.0
@@ -185,8 +276,12 @@ def _evaluate_favorite_baseline(frame: pd.DataFrame) -> dict:
         # Always bet 100 on win on the favourite
         win_bets += 1
         win_invested += 100
-        if fav_finish_int == 1:
-            win_gross_payout += float(favourite["odds_win"]) * 100
+        race_win_payout = (
+            float(favourite["odds_win"]) * 100 if fav_finish_int == 1 else 0.0
+        )
+        win_gross_payout += race_win_payout
+        per_race_win_invested.append(100.0)
+        per_race_win_payout.append(race_win_payout)
 
         # Always bet 100 on place on the favourite (when payout_place is known)
         payout_place_raw: str | None = None
@@ -198,11 +293,21 @@ def _evaluate_favorite_baseline(frame: pd.DataFrame) -> dict:
         if payout_place_map:
             place_bets += 1
             place_invested += 100
-            if fav_finish_int in payout_place_map:
-                place_gross_payout += payout_place_map[fav_finish_int]
+            race_place_payout = (
+                float(payout_place_map[fav_finish_int])
+                if fav_finish_int in payout_place_map
+                else 0.0
+            )
+            place_gross_payout += race_place_payout
+            per_race_place_invested.append(100.0)
+            per_race_place_payout.append(race_place_payout)
+        else:
+            # No place data → no bet, but keep arrays aligned for bootstrap.
+            per_race_place_invested.append(0.0)
+            per_race_place_payout.append(0.0)
 
     n_races = len(ndcg1_list)
-    return {
+    out = {
         "n_races": n_races,
         "ndcg1": float(np.mean(ndcg1_list)) if ndcg1_list else float("nan"),
         "ndcg3": float(np.mean(ndcg3_list)) if ndcg3_list else float("nan"),
@@ -219,6 +324,23 @@ def _evaluate_favorite_baseline(frame: pd.DataFrame) -> dict:
             (place_gross_payout / place_invested) if place_invested > 0 else float("nan")
         ),
     }
+
+    if bootstrap_iters > 0 and n_races > 0:
+        per_race_arr = {
+            "ndcg1": np.asarray(ndcg1_list, dtype=np.float64),
+            "ndcg3": np.asarray(ndcg3_list, dtype=np.float64),
+            "top1_hit": np.asarray(top1_hits, dtype=np.float64),
+            "place_hit": np.asarray(place_hits, dtype=np.float64),
+            "win_invested": np.asarray(per_race_win_invested, dtype=np.float64),
+            "win_payout": np.asarray(per_race_win_payout, dtype=np.float64),
+            "place_invested": np.asarray(per_race_place_invested, dtype=np.float64),
+            "place_payout": np.asarray(per_race_place_payout, dtype=np.float64),
+        }
+        ci_map = _bootstrap_ci(per_race_arr, bootstrap_iters, bootstrap_seed)
+        _add_ci_fields(out, ci_map)
+        out["bootstrap_iters"] = int(bootstrap_iters)
+
+    return out
 
 
 def _delta_metrics(model: dict, baseline: dict) -> dict:
@@ -296,6 +418,8 @@ def evaluate(
     bet_sizing: str = "fixed",
     kelly_kappa: float = 0.25,
     bankroll: float = 100_000.0,
+    bootstrap_iters: int = 0,
+    bootstrap_seed: int = 42,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
@@ -311,6 +435,14 @@ def evaluate(
         (analyze_place_bets で本命 rank 1 が payback 0.10 と判明したため)
       - `min_popularity=K` / `max_popularity=K` → 人気が K 番より下/上を除外
         (1 = 1 番人気)。NaN popularity はフィルタ有効時に常に除外
+
+    Bootstrap CI (`bootstrap_iters > 0`):
+      - race 単位の置換抽出で ndcg1 / ndcg3 / top1_hit / place_hit /
+        payback_win / payback_place の 95% 信頼区間を計算し、
+        `<metric>_ci_low` / `<metric>_ci_high` キーで返す。
+      - `bootstrap_seed` で再現可能 (default 42)。
+      - `baseline='favorite'` 指定時は baseline 側にも同じ iter/seed で
+        CI を付与する (左右対称な比較のため)。
     """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
@@ -334,6 +466,15 @@ def evaluate(
     top1_hits: list[int] = []
     place_hits: list[int] = []
 
+    # Per-race stake/payout (one entry per *evaluated* race, same length as the
+    # ndcg lists). Bootstrap CI resamples on this axis. Races with no triggered
+    # bet contribute 0 invested / 0 payout — required so the resampled index
+    # stays aligned across all per-race arrays.
+    per_race_win_invested: list[float] = []
+    per_race_win_payout: list[float] = []
+    per_race_place_invested: list[float] = []
+    per_race_place_payout: list[float] = []
+
     # Betting simulation — payback rate convention (回収率): gross_payout / invested
     # 1.00 = break-even, 1.10 = 10% profit, 0.80 = 20% loss
     win_bets = 0
@@ -350,6 +491,13 @@ def evaluate(
         race_frame = frame[frame["race_id"] == race_id].copy()
         if len(race_frame) < 2:
             continue
+
+        # Per-race stake/payout accumulators (added to the global running
+        # totals AND to the per-race arrays for bootstrap).
+        race_win_invested = 0.0
+        race_win_payout = 0.0
+        race_place_invested = 0.0
+        race_place_payout = 0.0
 
         # bundle.model_type で GBDT / NN を自動切替
         preds = predict_race(bundle, race_frame)
@@ -400,8 +548,10 @@ def evaluate(
                     bet_size = 100
                 win_bets += 1
                 win_invested += bet_size
+                race_win_invested += bet_size
                 if row.get("finish_position") == 1:
                     win_gross_payout += odds * bet_size
+                    race_win_payout += odds * bet_size
 
         # Place betting (複勝): requires payout_place data on the race frame
         # race_frame may carry payout_place if the training frame includes it.
@@ -438,6 +588,7 @@ def evaluate(
                         place_bet_size = 100
                     place_bets += 1
                     place_invested += place_bet_size
+                    race_place_invested += place_bet_size
                     finish_pos = row.get("finish_position")
                     # 同着（finish_position が小数 = 1.5/2.5 等）は日本競馬で複勝対象外（返還）
                     # のため整数着順のみカウントし、複勝 ROI を過大評価しないようにする。
@@ -447,7 +598,14 @@ def evaluate(
                         and float(finish_pos) == int(finish_pos)
                         and int(finish_pos) in payout_place_map
                     ):
-                        place_gross_payout += payout_place_map[int(finish_pos)] * (place_bet_size / 100)
+                        race_payout = payout_place_map[int(finish_pos)] * (place_bet_size / 100)
+                        place_gross_payout += race_payout
+                        race_place_payout += race_payout
+
+        per_race_win_invested.append(race_win_invested)
+        per_race_win_payout.append(race_win_payout)
+        per_race_place_invested.append(race_place_invested)
+        per_race_place_payout.append(race_place_payout)
 
     n_races = len(ndcg1_list)
     metrics = {
@@ -481,6 +639,22 @@ def evaluate(
         "bankroll": float(bankroll) if use_kelly else None,
     }
 
+    if bootstrap_iters > 0 and n_races > 0:
+        per_race_arr = {
+            "ndcg1": np.asarray(ndcg1_list, dtype=np.float64),
+            "ndcg3": np.asarray(ndcg3_list, dtype=np.float64),
+            "top1_hit": np.asarray(top1_hits, dtype=np.float64),
+            "place_hit": np.asarray(place_hits, dtype=np.float64),
+            "win_invested": np.asarray(per_race_win_invested, dtype=np.float64),
+            "win_payout": np.asarray(per_race_win_payout, dtype=np.float64),
+            "place_invested": np.asarray(per_race_place_invested, dtype=np.float64),
+            "place_payout": np.asarray(per_race_place_payout, dtype=np.float64),
+        }
+        ci_map = _bootstrap_ci(per_race_arr, bootstrap_iters, bootstrap_seed)
+        _add_ci_fields(metrics, ci_map)
+        metrics["bootstrap_iters"] = int(bootstrap_iters)
+        metrics["bootstrap_seed"] = int(bootstrap_seed)
+
     log.info("Evaluation metrics: %s", metrics)
 
     if persist:
@@ -490,7 +664,11 @@ def evaluate(
         _persist_metrics_to_model_run(engine, model_path, metrics)
 
     if baseline == "favorite":
-        baseline_metrics = _evaluate_favorite_baseline(frame)
+        baseline_metrics = _evaluate_favorite_baseline(
+            frame,
+            bootstrap_iters=bootstrap_iters,
+            bootstrap_seed=bootstrap_seed,
+        )
         log.info("Baseline (favorite) metrics: %s", baseline_metrics)
         return {
             "model": metrics,
@@ -575,6 +753,22 @@ def _cli() -> None:
         default=100_000.0,
         help="Starting bankroll in yen for Kelly bet sizing. Default 100000.",
     )
+    parser.add_argument(
+        "--bootstrap-iters",
+        type=int,
+        default=0,
+        help=(
+            "Race-level bootstrap iteration count for 95%% CI on ndcg / hit / "
+            "payback metrics. 0 (default) = no CI. 1000 is a reasonable choice "
+            "for production reports."
+        ),
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=42,
+        help="RNG seed for bootstrap resampling. Default 42 (reproducible).",
+    )
     args = parser.parse_args()
 
     metrics = evaluate(
@@ -592,6 +786,8 @@ def _cli() -> None:
         bet_sizing=args.bet_sizing,
         kelly_kappa=args.kelly_kappa,
         bankroll=args.bankroll,
+        bootstrap_iters=args.bootstrap_iters,
+        bootstrap_seed=args.bootstrap_seed,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 

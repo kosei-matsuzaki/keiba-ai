@@ -135,3 +135,48 @@ def test_ece_empty_input():
     df = pd.DataFrame({"win_prob": [], "finish_position": []})
     ece = _expected_calibration_error(df)
     assert math.isnan(ece)
+
+
+# ---------------------------------------------------------------------------
+# Integration smoke test (bundle-first, GBDT path)
+# ---------------------------------------------------------------------------
+
+
+def test_diagnose_calibration_runs_via_bundle_on_gbdt(tmp_path):
+    """End-to-end: train a tiny GBDT model on synthetic data, then run
+    diagnose_calibration through the bundle-aware predict_race path.
+
+    Guards the bundle-first refactor — confirms _score_all_races dispatches
+    correctly and the returned dict has the expected shape.
+    """
+    import os
+    from pathlib import Path
+
+    from sqlalchemy import create_engine
+
+    import db.models  # noqa: F401
+    from ai.calibration_diagnosis import diagnose_calibration
+    from ai.gbm.train import train
+    from tests.synthetic import make_synthetic_db
+
+    db_file = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_file}", future=True)
+    make_synthetic_db(engine, n_races=30, n_horses_per_race=10, days_back=180, seed=99)
+
+    os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
+    result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
+    model_dir = Path(result["model_dir"])
+
+    diag = diagnose_calibration(model_path=model_dir, db=db_file)
+
+    assert "n_races" in diag
+    assert "n_entries" in diag
+    assert "rank_buckets" in diag
+    assert "brier_score" in diag
+    assert "ece" in diag
+    assert diag["n_races"] > 0
+    # Brier on synthetic data should be a finite, sane number
+    assert 0.0 <= diag["brier_score"] <= 1.0
+    assert 0.0 <= diag["ece"] <= 1.0
+    # rank_buckets non-empty when entries exist
+    assert len(diag["rank_buckets"]) > 0

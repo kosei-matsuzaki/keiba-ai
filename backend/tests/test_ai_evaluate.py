@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine
@@ -355,3 +356,131 @@ def test_evaluate_fixed_bet_sizing_recorded(trained_scenario):
     assert metrics["bet_sizing"] == "fixed"
     assert metrics["kelly_kappa"] is None
     assert metrics["bankroll"] is None
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap CI tests
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_bootstrap_disabled_by_default(trained_scenario):
+    """bootstrap_iters のデフォルト 0 で CI フィールドは付かない (後方互換)。"""
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+    assert "ndcg1_ci_low" not in metrics
+    assert "payback_win_ci_low" not in metrics
+    assert "bootstrap_iters" not in metrics
+
+
+def test_evaluate_bootstrap_adds_ci_fields(trained_scenario):
+    """bootstrap_iters > 0 で _ci_low / _ci_high が全主要メトリクスに付く。"""
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file, bootstrap_iters=200)
+
+    for key in ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place"):
+        assert f"{key}_ci_low" in metrics, f"missing {key}_ci_low"
+        assert f"{key}_ci_high" in metrics, f"missing {key}_ci_high"
+
+    assert metrics["bootstrap_iters"] == 200
+    assert metrics["bootstrap_seed"] == 42
+
+
+def test_evaluate_bootstrap_ci_brackets_point_estimate(trained_scenario):
+    """点推定が概ね CI 内に収まる (NaN 以外のメトリクスについて)。"""
+    import math
+
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file, bootstrap_iters=500)
+
+    for key in ("ndcg1", "ndcg3", "top1_hit", "place_hit"):
+        point = metrics[key]
+        lo = metrics[f"{key}_ci_low"]
+        hi = metrics[f"{key}_ci_high"]
+        if math.isnan(point) or math.isnan(lo) or math.isnan(hi):
+            continue
+        # 同一データに対する bootstrap CI は概ね点推定を含む。
+        # 端で外れる稀ケースを考慮して 1e-6 のマージンを取る。
+        assert lo - 1e-6 <= point <= hi + 1e-6, (
+            f"{key}: point={point} not in [{lo}, {hi}]"
+        )
+
+
+def test_evaluate_bootstrap_seed_reproducibility(trained_scenario):
+    """同じ seed で 2 度 bootstrap を回すと同じ CI が返る。"""
+    db_file, model_dir = trained_scenario
+    m1 = evaluate(model_path=model_dir, db=db_file, bootstrap_iters=200, bootstrap_seed=7)
+    m2 = evaluate(model_path=model_dir, db=db_file, bootstrap_iters=200, bootstrap_seed=7)
+    for key in ("ndcg1", "top1_hit", "place_hit"):
+        assert m1[f"{key}_ci_low"] == m2[f"{key}_ci_low"]
+        assert m1[f"{key}_ci_high"] == m2[f"{key}_ci_high"]
+
+
+def test_evaluate_bootstrap_with_baseline_attaches_ci_to_both_sides(trained_scenario):
+    """baseline='favorite' + bootstrap で model / baseline_favorite 両方に CI が付く。"""
+    db_file, model_dir = trained_scenario
+    out = evaluate(
+        model_path=model_dir,
+        db=db_file,
+        baseline="favorite",
+        bootstrap_iters=100,
+    )
+    for side in ("model", "baseline_favorite"):
+        assert "ndcg1_ci_low" in out[side], f"{side} missing CI"
+        assert "payback_win_ci_low" in out[side]
+        assert out[side]["bootstrap_iters"] == 100
+
+
+def test_bootstrap_ci_helper_handles_zero_invested():
+    """payback CI: bet が一切発生しないレースだけ resample すると NaN になる。"""
+    from ai.evaluate import _bootstrap_ci
+
+    per_race = {
+        "ndcg1": np.array([0.5, 0.7]),
+        "ndcg3": np.array([0.6, 0.6]),
+        "top1_hit": np.array([1.0, 0.0]),
+        "place_hit": np.array([1.0, 1.0]),
+        "win_invested": np.array([0.0, 0.0]),
+        "win_payout": np.array([0.0, 0.0]),
+        "place_invested": np.array([0.0, 0.0]),
+        "place_payout": np.array([0.0, 0.0]),
+    }
+    ci = _bootstrap_ci(per_race, iters=50, seed=1)
+    import math
+    assert math.isnan(ci["payback_win"][0]) and math.isnan(ci["payback_win"][1])
+    assert math.isnan(ci["payback_place"][0]) and math.isnan(ci["payback_place"][1])
+    # ndcg1 CI should still be finite
+    assert not math.isnan(ci["ndcg1"][0])
+    assert not math.isnan(ci["ndcg1"][1])
+
+
+def test_bootstrap_ci_helper_zero_iters_returns_nan():
+    from ai.evaluate import _bootstrap_ci
+
+    per_race = {
+        "ndcg1": np.array([0.5]),
+        "ndcg3": np.array([0.5]),
+        "top1_hit": np.array([1.0]),
+        "place_hit": np.array([1.0]),
+        "win_invested": np.array([100.0]),
+        "win_payout": np.array([200.0]),
+        "place_invested": np.array([100.0]),
+        "place_payout": np.array([150.0]),
+    }
+    ci = _bootstrap_ci(per_race, iters=0, seed=1)
+    import math
+    for key in ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place"):
+        assert math.isnan(ci[key][0]) and math.isnan(ci[key][1])
+
+
+def test_bootstrap_ci_helper_empty_arrays_returns_nan():
+    """N=0 で安全に NaN を返す。"""
+    from ai.evaluate import _bootstrap_ci
+
+    per_race = {k: np.array([]) for k in (
+        "ndcg1", "ndcg3", "top1_hit", "place_hit",
+        "win_invested", "win_payout", "place_invested", "place_payout",
+    )}
+    ci = _bootstrap_ci(per_race, iters=100, seed=1)
+    import math
+    for key in ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place"):
+        assert math.isnan(ci[key][0]) and math.isnan(ci[key][1])

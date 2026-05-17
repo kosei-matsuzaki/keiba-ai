@@ -18,6 +18,9 @@ CLI:
   uv run python -m ai.calibration_diagnosis \
       --model data/models/<timestamp> \
       --start 2024-10-01 --end 2024-12-31
+
+Supports both GBDT and NN models — dispatch happens inside
+`predict_race(bundle, ...)` via bundle.model_type.
 """
 
 from __future__ import annotations
@@ -26,22 +29,29 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from ai.predict import predict_race_gbdt
+from ai.predict import predict_race
 from ai.registry import load_model_full
 from core.logging import get_logger
 from core.paths import db_path
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
 
+if TYPE_CHECKING:
+    from ai.registry import ModelBundle
+
 log = get_logger(__name__)
 
 
 def _per_rank_bucket(scored: pd.DataFrame) -> list[dict]:
     """Bucket scored entries by predicted-rank (1..max_runners) and return stats."""
+    # groupby on an empty / column-less DataFrame raises KeyError, so guard explicitly.
+    if scored.empty or "pred_rank" not in scored.columns:
+        return []
     buckets: list[dict] = []
     grouped = scored.groupby("pred_rank")
     for rank, group in grouped:
@@ -97,12 +107,13 @@ def _expected_calibration_error(scored: pd.DataFrame, n_bins: int = 10) -> float
 
 
 def _score_all_races(
-    model,
+    bundle: ModelBundle,
     frame: pd.DataFrame,
-    binary_model=None,
-    calibrator=None,
 ) -> pd.DataFrame:
-    """Run predict_race_gbdt per race and return combined long DataFrame.
+    """Run predict_race per race and return combined long DataFrame.
+
+    Bundle-aware: GBDT/NN dispatch happens inside predict_race. The output
+    schema is identical for both backends.
 
     Output columns: race_id, horse_id, pred_rank (1=top by score), win_prob,
                     finish_position.
@@ -111,10 +122,8 @@ def _score_all_races(
     for race_id, race_frame in frame.groupby("race_id"):
         if len(race_frame) < 2:
             continue
-        preds = predict_race_gbdt(
-            model, race_frame, binary_model=binary_model, calibrator=calibrator
-        )
-        # predict_race_gbdt sorts by score desc -> add pred_rank
+        preds = predict_race(bundle, race_frame)
+        # predict_race sorts by score desc -> add pred_rank
         preds = preds.reset_index(drop=True)
         preds["pred_rank"] = preds.index + 1
         # Merge actual finish position
@@ -157,11 +166,15 @@ def diagnose_calibration(
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
     bundle = load_model_full(model_path)
-    model = bundle.lambdarank
-    if bundle.binary is not None and bundle.calibrator is not None:
-        log.info("Using binary classifier + isotonic calibrator for win_prob")
-    else:
-        log.info("Using softmax(lambdarank) for win_prob (legacy / uncalibrated model)")
+    log.info(
+        "Diagnosing %s model (model_type=%s)",
+        bundle.model_type, bundle.model_type,
+    )
+    if bundle.model_type == "gbdt":
+        if bundle.binary is not None and bundle.calibrator is not None:
+            log.info("Using binary classifier + isotonic calibrator for win_prob")
+        else:
+            log.info("Using softmax(lambdarank) for win_prob (legacy / uncalibrated model)")
 
     log.info(
         "Building evaluation frame from %s in window %s..%s",
@@ -183,9 +196,7 @@ def diagnose_calibration(
         }
 
     log.info("Scoring %d entries across %d races...", len(frame), frame["race_id"].nunique())
-    scored = _score_all_races(
-        model, frame, binary_model=bundle.binary, calibrator=bundle.calibrator
-    )
+    scored = _score_all_races(bundle, frame)
 
     if scored.empty:
         log.warning("Scored frame empty.")
