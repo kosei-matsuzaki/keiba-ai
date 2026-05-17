@@ -247,6 +247,11 @@ class ModelBundle:
     # Ranking score stays as the NN's, so ordering doesn't change.
     nn_ensemble_gbdt_bundle: "ModelBundle | None" = None
     nn_ensemble_weight: float = 1.0
+    # Post-hoc isotonic calibrator for NN win_prob. Applied after the temperature
+    # scaler / softmax to fix systematic over-confidence on longshots. None for
+    # GBDT bundles (GBDT uses `calibrator` above) and for NN models trained
+    # before the calibrator path was introduced.
+    nn_calibrator: IsotonicCalibrator | None = None
     # 温度スケーリング (GBDT / NN 共通; optional)
     temperature_scaler: TemperatureScaler | None = None
 
@@ -294,6 +299,7 @@ def load_model_full(path: Path) -> ModelBundle:
             nn_gbdt_bundle=nn_artifacts["nn_gbdt_bundle"],
             temperature_scaler=nn_artifacts["temperature_scaler"],
             combo_calibrators=nn_artifacts["combo_calibrators"],
+            nn_calibrator=nn_artifacts.get("nn_calibrator"),
         )
 
     gbdt_artifacts = load_gbdt_artifacts(path)

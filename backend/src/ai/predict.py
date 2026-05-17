@@ -717,6 +717,12 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     else:
         win_probs = softmax_within_race(scores)
 
+    # Post-hoc isotonic calibration on win_prob (fixes NN over-confidence on
+    # longshots / under-confidence on top picks). predict() re-normalises per
+    # race so the output is still a valid distribution.
+    if bundle.nn_calibrator is not None:
+        win_probs = bundle.nn_calibrator.predict(win_probs, normalise=True)
+
     place_temperature = ts.T_place if ts is not None else 1.0
     place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
 

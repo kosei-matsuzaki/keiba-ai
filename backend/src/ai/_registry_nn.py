@@ -101,6 +101,14 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         with combo_cal_path.open("rb") as f:
             combo_calibrators = _pickle_load(f)
 
+    # Post-hoc IsotonicCalibrator for NN win_prob. Optional — older NN models
+    # were saved without it; older bundles continue to work uncalibrated.
+    nn_calibrator = None
+    nn_cal_path = path / "nn_calibrator.pkl"
+    if nn_cal_path.exists():
+        with nn_cal_path.open("rb") as f:
+            nn_calibrator = _pickle_load(f)
+
     # GBDT stacking: if the NN was trained with --gbdt-model-path, load that
     # GBDT bundle so the inference path can augment incoming frames with the
     # same gbdt_* columns the NN saw at train time.
@@ -120,4 +128,5 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         "temperature_scaler": temperature_scaler,
         "combo_calibrators": combo_calibrators,
         "nn_gbdt_bundle": nn_gbdt_bundle,
+        "nn_calibrator": nn_calibrator,
     }
