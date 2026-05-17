@@ -666,6 +666,12 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     race_feature_cols: list[str] = bundle.nn_race_feature_cols or []
     all_feat_cols = horse_feature_cols + race_feature_cols
 
+    # GBDT stacking: apply the same augmentation the NN saw at training time
+    # BEFORE the preprocessor (which was fit on augmented frames).
+    if bundle.nn_gbdt_bundle is not None:
+        from ai.nn.stacking import augment_frame_with_gbdt  # noqa: PLC0415
+        frame = augment_frame_with_gbdt(frame, bundle.nn_gbdt_bundle)
+
     if bundle.nn_preprocessor is not None:
         encoded = bundle.nn_preprocessor.transform(frame)
     else:

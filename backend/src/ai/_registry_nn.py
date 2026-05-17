@@ -32,7 +32,7 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
 
     Returns:
         {nn_model, nn_horse_feature_cols, nn_race_feature_cols,
-         nn_preprocessor, temperature_scaler}
+         nn_preprocessor, temperature_scaler, combo_calibrators}
 
     Raises:
         ImportError: torch がインストールされていない環境では発生する。
@@ -95,10 +95,29 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         from ai.nn.preprocess import NNPreprocessor  # noqa: PLC0415
         nn_preprocessor = NNPreprocessor.load(preprocessor_path)
 
+    combo_calibrators = None
+    combo_cal_path = path / "combo_calibrators.pkl"
+    if combo_cal_path.exists():
+        with combo_cal_path.open("rb") as f:
+            combo_calibrators = _pickle_load(f)
+
+    # GBDT stacking: if the NN was trained with --gbdt-model-path, load that
+    # GBDT bundle so the inference path can augment incoming frames with the
+    # same gbdt_* columns the NN saw at train time.
+    nn_gbdt_bundle = None
+    gbdt_path_str = meta.get("gbdt_model_path")
+    if gbdt_path_str:
+        gbdt_path = Path(gbdt_path_str)
+        if gbdt_path.exists():
+            from ai.registry import load_model_full  # noqa: PLC0415 — lazy to break cycle
+            nn_gbdt_bundle = load_model_full(gbdt_path)
+
     return {
         "nn_model": race_model,
         "nn_horse_feature_cols": horse_feature_cols,
         "nn_race_feature_cols": race_feature_cols,
         "nn_preprocessor": nn_preprocessor,
         "temperature_scaler": temperature_scaler,
+        "combo_calibrators": combo_calibrators,
+        "nn_gbdt_bundle": nn_gbdt_bundle,
     }

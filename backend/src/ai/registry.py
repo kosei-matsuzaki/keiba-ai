@@ -237,6 +237,10 @@ class ModelBundle:
     nn_horse_feature_cols: list[str] | None = None
     nn_race_feature_cols: list[str] | None = None
     nn_preprocessor: NNPreprocessor | None = None
+    # GBDT stacking: NN was trained on features augmented with this GBDT
+    # bundle's predictions.  Inference must apply the same augmentation
+    # before calling the NN.
+    nn_gbdt_bundle: "ModelBundle | None" = None
     # 温度スケーリング (GBDT / NN 共通; optional)
     temperature_scaler: TemperatureScaler | None = None
 
@@ -281,7 +285,9 @@ def load_model_full(path: Path) -> ModelBundle:
             nn_horse_feature_cols=nn_artifacts["nn_horse_feature_cols"],
             nn_race_feature_cols=nn_artifacts["nn_race_feature_cols"],
             nn_preprocessor=nn_artifacts["nn_preprocessor"],
+            nn_gbdt_bundle=nn_artifacts["nn_gbdt_bundle"],
             temperature_scaler=nn_artifacts["temperature_scaler"],
+            combo_calibrators=nn_artifacts["combo_calibrators"],
         )
 
     gbdt_artifacts = load_gbdt_artifacts(path)

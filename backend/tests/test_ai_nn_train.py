@@ -49,6 +49,9 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
         max_epochs=2,
         learning_rate=1e-3,
         device="cpu",
+        # Combo calibrators need >=100 samples per bet type, which the tiny
+        # synthetic DB cannot provide.  Disable to keep the test fast.
+        fit_combo_calibrators=False,
     )
 
     model_dir = Path(result["model_dir"])
@@ -59,6 +62,8 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
 
     meta = json.loads((model_dir / "meta.json").read_text())
     assert meta.get("has_preprocessor") is True
+    # has_combo_calibrators key always present in meta (may be False when disabled)
+    assert "has_combo_calibrators" in meta
 
 
 def test_train_nn_meta_json_structure(syn_engine_small, tmp_path, monkeypatch):

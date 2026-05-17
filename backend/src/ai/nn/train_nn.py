@@ -26,12 +26,14 @@ import torch
 from lightning.pytorch.callbacks import EarlyStopping
 from torch.utils.data import DataLoader
 
+from ai.calibrate import ComboCalibrators, fit_combo_calibrators_bundle
 from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
 from ai.nn.model import RaceTransformerModel
 from ai.nn.preprocess import NNPreprocessor
-from ai.registry import save_nn_model
+from ai.nn.stacking import GBDT_FEATURE_COLUMNS, augment_frame_with_gbdt
+from ai.registry import ModelBundle, load_model_full, save_nn_model
 from ai.splits import time_split
 from ai.temperature import TemperatureScaler
 from core.paths import data_dir, db_path
@@ -405,6 +407,9 @@ def train_nn(
     weight_decay: float = 1e-4,
     gradient_clip_val: float = 1.0,
     early_stopping_patience: int = 10,
+    fit_combo_calibrators: bool = True,
+    combo_calibrators_n_samples: int = 5_000,
+    gbdt_model_path: Path | None = None,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict."""
     resolved_db = db or db_path()
@@ -418,6 +423,28 @@ def train_nn(
         raise RuntimeError("No training data found in the database.")
 
     log.info("Total rows: %d | Races: %d", len(frame), frame["race_id"].nunique())
+
+    # ── GBDT stacking: prepend GBDT preds to feature frame BEFORE split ───────
+    # Caller passes a GBDT bundle path; we run it race-by-race over the entire
+    # frame and write gbdt_score / gbdt_win_prob / gbdt_place_prob columns.
+    # Done before split so the same augmented columns flow to train/valid/test
+    # AND through the preprocessor fit (which captures their train mean/std).
+    gbdt_bundle = None
+    if gbdt_model_path is not None:
+        log.info("Loading GBDT bundle for stacking from %s", gbdt_model_path)
+        gbdt_bundle = load_model_full(gbdt_model_path)
+        if gbdt_bundle.model_type != "gbdt":
+            raise ValueError(
+                f"gbdt_model_path points to a {gbdt_bundle.model_type!r} bundle, expected gbdt"
+            )
+        log.info("Augmenting feature frame with GBDT predictions…")
+        frame = augment_frame_with_gbdt(frame, gbdt_bundle)
+        log.info(
+            "GBDT stacking columns added: %s (non-null=%d/%d)",
+            GBDT_FEATURE_COLUMNS,
+            int(frame["gbdt_score"].notna().sum()),
+            len(frame),
+        )
 
     train_df, valid_df, test_df = time_split(frame, train_end, valid_months, test_months)
     log.info(
@@ -441,6 +468,14 @@ def train_nn(
     # Only keep cols that are actually present in the frame
     horse_feature_cols = [c for c in horse_feature_cols if c in frame.columns]
     race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
+
+    # If GBDT stacking is active, append the stacked columns to the horse-level
+    # feature list (they vary per horse within a race, so are not race-level).
+    if gbdt_bundle is not None:
+        for col in GBDT_FEATURE_COLUMNS:
+            if col in frame.columns and col not in horse_feature_cols:
+                horse_feature_cols.append(col)
+        all_feature_cols = list(horse_feature_cols) + list(race_feature_cols)
 
     log.info(
         "Features — horse: %d, race: %d",
@@ -633,6 +668,48 @@ def train_nn(
                 )
                 temperature_scaler = None
 
+    # ── Combo calibration: fit per-bet-type iso on raw PL joint probs ─────────
+    # The temperature scaler above only corrects the per-horse marginal
+    # (win / place) distributions.  Renkei bet types (馬連 / ワイド / 馬単 /
+    # 三連複 / 三連単) consume joint probabilities derived via PL Monte Carlo
+    # from the NN scores; these are uncalibrated and tend to overestimate
+    # low-probability pairs/triples, which produced losing bets in the
+    # by-bet-type backtest.  Mirroring the GBDT pipeline, we fit an iso
+    # calibrator per bet type on the validation set.
+    combo_calibrators_obj: ComboCalibrators | None = None
+    if fit_combo_calibrators and not valid_df.empty:
+        log.info("Fitting ComboCalibrators on valid set (NN)…")
+        try:
+            # Build an in-memory bundle so the bundle-aware combo predictor can
+            # be invoked without a save/load round-trip.
+            fit_bundle = ModelBundle(
+                model_type="nn",
+                model_dir=data_dir() / "models" / "_pending_nn",
+                meta={"model_type": "nn", "loss_type": loss},
+                feature_columns=all_feature_cols,
+                nn_model=race_model,
+                nn_horse_feature_cols=horse_feature_cols,
+                nn_race_feature_cols=race_feature_cols,
+                nn_preprocessor=preprocessor,
+                temperature_scaler=temperature_scaler,
+                combo_calibrators=None,
+            )
+            combo_calibrators_obj = fit_combo_calibrators_bundle(
+                valid_df,
+                fit_bundle,
+                n_samples=combo_calibrators_n_samples,
+            )
+            log.info(
+                "ComboCalibrators fitted for: %s",
+                combo_calibrators_obj.fitted_bet_types,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "ComboCalibrators fit failed: %s — proceeding without combo calibration",
+                exc,
+            )
+            combo_calibrators_obj = None
+
     # Save model
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     model_dir = data_dir() / "models" / f"{timestamp}-nn"
@@ -667,6 +744,19 @@ def train_nn(
     preprocessor.save(model_dir / "preprocessor.pkl")
     log.info("preprocessor.pkl saved to %s", model_dir)
 
+    has_combo_calibrators = (
+        combo_calibrators_obj is not None
+        and len(combo_calibrators_obj.fitted_bet_types) > 0
+    )
+    if has_combo_calibrators:
+        with (model_dir / "combo_calibrators.pkl").open("wb") as f:
+            import pickle
+            pickle.dump(combo_calibrators_obj, f)
+        log.info(
+            "combo_calibrators.pkl saved (bet_types=%s)",
+            combo_calibrators_obj.fitted_bet_types,
+        )
+
     meta_dict = {
         "model_type": "nn",
         "arch_version": 2,
@@ -699,6 +789,12 @@ def train_nn(
         "test_range": test_range,
         "has_temperature_scaler": has_temperature_scaler,
         "has_preprocessor": True,
+        "has_combo_calibrators": has_combo_calibrators,
+        "combo_calibrators_bet_types": (
+            combo_calibrators_obj.fitted_bet_types if has_combo_calibrators else []
+        ),
+        "gbdt_stacking": gbdt_bundle is not None,
+        "gbdt_model_path": str(gbdt_model_path) if gbdt_model_path is not None else None,
     }
 
     # Delegate to registry (writes meta.json; model.pt is already in model_dir)
@@ -789,6 +885,32 @@ def _cli() -> None:
             "temperature scaling on the validation set when it is non-empty."
         ),
     )
+    parser.add_argument(
+        "--no-fit-combo-calibrators",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable ComboCalibrators fitting after training.  Default is to fit "
+            "per-bet-type isotonic calibration of joint PL probabilities on the "
+            "validation set; this is what corrects 連系 EV signal for ワイド / 三連複."
+        ),
+    )
+    parser.add_argument(
+        "--combo-calibrators-n-samples",
+        type=int,
+        default=5_000,
+        help="MC samples per race for the ComboCalibrators fit (default 5000).",
+    )
+    parser.add_argument(
+        "--gbdt-model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a GBDT model directory.  When set, the NN trains on features "
+            "augmented with that GBDT's per-horse predictions (stacking).  Use a GBDT "
+            "whose --train-end is at or before the NN valid start to limit leakage."
+        ),
+    )
     args = parser.parse_args()
 
     result = train_nn(
@@ -810,6 +932,9 @@ def _cli() -> None:
         weight_decay=args.weight_decay,
         gradient_clip_val=args.gradient_clip_val,
         early_stopping_patience=args.early_stopping_patience,
+        fit_combo_calibrators=not args.no_fit_combo_calibrators,
+        combo_calibrators_n_samples=args.combo_calibrators_n_samples,
+        gbdt_model_path=args.gbdt_model_path,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
