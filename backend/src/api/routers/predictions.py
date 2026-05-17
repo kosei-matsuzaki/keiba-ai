@@ -17,8 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai.predict import (
-    predict_race_bundle,
-    predict_race_with_combinations_bundle,
+    predict_race,
+    predict_race_with_combinations,
     predict_race_with_shap,
 )
 from ai.registry import get_active, load_model_full
@@ -93,7 +93,7 @@ def get_bulk_predictions(
             continue
 
         try:
-            pred_df = predict_race_bundle(bundle, frame)
+            pred_df = predict_race(bundle, frame)
         except Exception as exc:
             log.warning("Prediction failed for race %s: %s", race_id, exc)
             result[race_id] = RacePredictionSummary(top_horses=[])
@@ -138,19 +138,8 @@ def get_predictions(
     frame = build_inference_frame_or_404(session, race_id)
 
     bundle = load_model_full(active_path)
-    if bundle.model_type == "nn":
-        # SHAP TreeExplainer は GBDT 専用。NN では top_features は空で返す。
-        result_df = predict_race_bundle(bundle, frame)
-        result_df["top_features"] = [[] for _ in range(len(result_df))]
-    else:
-        result_df = predict_race_with_shap(
-            bundle.lambdarank,
-            frame,
-            binary_model=bundle.binary,
-            calibrator=bundle.calibrator,
-            loss_type=bundle.meta.get("loss_type"),
-            temperature_scaler=bundle.temperature_scaler,
-        )
+    # bundle-aware: NN モデルでは top_features=[] が返る
+    result_df = predict_race_with_shap(bundle, frame)
 
     # Resolve model_runs id for the active model
     active_run = session.scalars(
@@ -171,7 +160,7 @@ def get_predictions(
 
     combinations_out: CombinationPredictions | None = None
     if include_combinations:
-        combo_map = predict_race_with_combinations_bundle(
+        combo_map = predict_race_with_combinations(
             bundle,
             frame,
             session=session,

@@ -71,7 +71,7 @@ def test_predictions_top_features_non_empty(
         _seed_race_and_entries(session, "TF_RACE1", n_horses=3)
         _seed_active_model(session, str(tmp_path / "fake_model"))
 
-    # Return DataFrame that includes top_features column (as predict_race_with_shap would)
+    # Return DataFrame that includes top_features column (as predict_race_with_shap_gbdt would)
     fake_df = pd.DataFrame({
         "horse_id": ["TF_TF_RACE1_0", "TF_TF_RACE1_1", "TF_TF_RACE1_2"],
         "score": [2.0, 1.5, 1.0],
@@ -86,7 +86,7 @@ def test_predictions_top_features_non_empty(
 
     with (
         patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/TF_RACE1")
@@ -109,7 +109,7 @@ def test_predictions_top_features_empty_fallback(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """If predict_race_with_shap returns None/empty top_features, response is empty list."""
+    """If predict_race_with_shap_gbdt returns None/empty top_features, response is empty list."""
     from core.paths import db_path
     from db.session import make_engine, session_scope
 
@@ -129,7 +129,7 @@ def test_predictions_top_features_empty_fallback(
 
     with (
         patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
+        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/TF_RACE2")

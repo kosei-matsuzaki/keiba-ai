@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 import db.models  # noqa: F401
 from ai.calibrate import ConditionalIsotonicCalibrator
 from ai.gbm.train import train
-from ai.predict import predict_race
+from ai.predict import predict_race_gbdt
 from ai.registry import load_model, load_model_full
 from db.models.race import Race
 from features.builder import build_inference_frame
@@ -44,7 +44,7 @@ def test_win_prob_sums_to_one(trained_model, tmp_path):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race(model, frame)
+    result = predict_race_gbdt(model, frame)
 
     assert not result.empty
     assert "win_prob" in result.columns
@@ -59,7 +59,7 @@ def test_predict_race_columns(trained_model):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race(model, frame)
+    result = predict_race_gbdt(model, frame)
 
     for col in ("horse_id", "score", "win_prob", "place_prob"):
         assert col in result.columns
@@ -73,7 +73,7 @@ def test_predict_sorted_by_score(trained_model):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race(model, frame)
+    result = predict_race_gbdt(model, frame)
 
     scores = result["score"].tolist()
     assert scores == sorted(scores, reverse=True)
@@ -87,13 +87,13 @@ def test_predict_place_prob_in_range(trained_model):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race(model, frame)
+    result = predict_race_gbdt(model, frame)
     assert (result["place_prob"] >= 0).all()
     assert (result["place_prob"] <= 1.0 + 1e-6).all()
 
 
 def test_predict_race_pl_model_win_prob_sums_to_one(tmp_path):
-    """Plackett-Luce model predict_race: win_prob sums to 1 via softmax path."""
+    """Plackett-Luce model predict_race_gbdt: win_prob sums to 1 via softmax path."""
     db_file = tmp_path / "test_pl.db"
     engine = create_engine(f"sqlite:///{db_file}", future=True)
     make_synthetic_db(engine, n_races=25, n_horses_per_race=8, days_back=150, seed=55)
@@ -112,17 +112,17 @@ def test_predict_race_pl_model_win_prob_sums_to_one(tmp_path):
         frame = build_inference_frame(session, race_id)
 
     # No binary_model or calibrator; loss_type drives softmax path
-    pred = predict_race(model, frame, loss_type="plackett_luce")
+    pred = predict_race_gbdt(model, frame, loss_type="plackett_luce")
 
     assert not pred.empty
     assert pred["win_prob"].sum() == pytest.approx(1.0, abs=1e-5)
     # Confirm backward compat: lambdarank path with same model also works
-    pred_lr = predict_race(model, frame, loss_type="lambdarank")
+    pred_lr = predict_race_gbdt(model, frame, loss_type="lambdarank")
     assert pred_lr["win_prob"].sum() == pytest.approx(1.0, abs=1e-5)
 
 
 def test_predict_race_performance(trained_model, monkeypatch):
-    """predict_race with plackett_luce must complete within 50 ms per race."""
+    """predict_race_gbdt with plackett_luce must complete within 50 ms per race."""
     engine, db_file, model_dir = trained_model
     model = load_model(model_dir)
 
@@ -133,17 +133,17 @@ def test_predict_race_performance(trained_model, monkeypatch):
         frame = build_inference_frame(session, race_id)
 
     # Warm up LightGBM predict (first call may load BLAS)
-    predict_race(model, frame)
+    predict_race_gbdt(model, frame)
 
     start = time.perf_counter()
-    predict_race(model, frame)
+    predict_race_gbdt(model, frame)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    assert elapsed_ms < 50, f"predict_race took {elapsed_ms:.1f} ms, expected < 50 ms"
+    assert elapsed_ms < 50, f"predict_race_gbdt took {elapsed_ms:.1f} ms, expected < 50 ms"
 
 
 def test_predict_race_with_conditional_calibrator(trained_model):
-    """predict_race with ConditionalIsotonicCalibrator produces valid results.
+    """predict_race_gbdt with ConditionalIsotonicCalibrator produces valid results.
 
     We fit the ConditionalIsotonicCalibrator on a batch of raw predictions that
     cover the actual score range the binary model produces, ensuring that the
@@ -191,7 +191,7 @@ def test_predict_race_with_conditional_calibrator(trained_model):
         race_id = session.scalars(select(Race.race_id).limit(1)).first()
         frame = build_inference_frame(session, race_id)
 
-    result = predict_race(
+    result = predict_race_gbdt(
         bundle.lambdarank,
         frame,
         binary_model=bundle.binary,

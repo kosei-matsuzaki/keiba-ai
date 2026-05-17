@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ai.predict import predict_race
+from ai.predict import predict_race_gbdt
 from ai.registry import load_model_full
 from core.logging import get_logger
 from core.paths import db_path
@@ -102,7 +102,7 @@ def _score_all_races(
     binary_model=None,
     calibrator=None,
 ) -> pd.DataFrame:
-    """Run predict_race per race and return combined long DataFrame.
+    """Run predict_race_gbdt per race and return combined long DataFrame.
 
     Output columns: race_id, horse_id, pred_rank (1=top by score), win_prob,
                     finish_position.
@@ -111,10 +111,10 @@ def _score_all_races(
     for race_id, race_frame in frame.groupby("race_id"):
         if len(race_frame) < 2:
             continue
-        preds = predict_race(
+        preds = predict_race_gbdt(
             model, race_frame, binary_model=binary_model, calibrator=calibrator
         )
-        # predict_race sorts by score desc -> add pred_rank
+        # predict_race_gbdt sorts by score desc -> add pred_rank
         preds = preds.reset_index(drop=True)
         preds["pred_rank"] = preds.index + 1
         # Merge actual finish position

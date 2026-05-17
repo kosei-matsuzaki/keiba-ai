@@ -316,7 +316,6 @@ def evaluate(
     engine = make_engine(resolved_db)
 
     bundle = load_model_full(model_path)
-    model = bundle.lambdarank
     use_kelly = bet_sizing == "kelly"
 
     log.info("Building evaluation frame from %s", resolved_db)
@@ -352,13 +351,8 @@ def evaluate(
         if len(race_frame) < 2:
             continue
 
-        preds = predict_race(
-            model, race_frame,
-            binary_model=bundle.binary,
-            calibrator=bundle.calibrator,
-            loss_type=bundle.meta.get("loss_type"),
-            temperature_scaler=bundle.temperature_scaler,
-        )
+        # bundle.model_type で GBDT / NN を自動切替
+        preds = predict_race(bundle, race_frame)
         # Merge actual finish positions + popularity (needed for betting filters)
         actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]
         if "popularity" in race_frame.columns:

@@ -845,22 +845,22 @@ def fit_combo_calibrators(
 ) -> ComboCalibrators:
     """Validation set 上で各 連系 馬券種の (PL_prob, hit) を集めて iso fit する。
 
-    train.py から呼び出される想定。重い処理 (race ごとに predict_race_with_combinations
+    train.py から呼び出される想定。重い処理 (race ごとに predict_race_with_combinations_gbdt
     を回す) を含むので、valid_frame の race 数 (~1000 程度) で 1-2 分。
 
     Args:
         valid_frame: build_training_frame の output から validation 期間を切り出したもの。
             'race_id', 'horse_id', 'post_position', 'finish_position' を含む。
         lambdarank_model / binary_model / single_horse_calibrator: 学習済みモデル一式。
-        n_samples: predict_race_with_combinations の MC samples。fit 時は精度を抑えて速度優先で OK。
+        n_samples: predict_race_with_combinations_gbdt の MC samples。fit 時は精度を抑えて速度優先で OK。
         use_conditional: True のとき、各馬券種の isotonic を ConditionalIsotonicCalibrator
             (surface × n_runners bin 別) で学習する。False (default) は従来の global iso。
 
     Returns:
         ComboCalibrators 5 馬券種分が fit された状態。
     """
-    # NOTE: 循環 import を避けるため、predict_race_with_combinations の import は遅延。
-    from ai.predict import predict_race_with_combinations
+    # NOTE: 循環 import を避けるため、predict_race_with_combinations_gbdt の import は遅延。
+    from ai.predict import predict_race_with_combinations_gbdt
 
     bet_types = list(_RENKEI_BET_TYPES)
     records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
@@ -886,7 +886,7 @@ def fit_combo_calibrators(
             continue
 
         try:
-            combo_map = predict_race_with_combinations(
+            combo_map = predict_race_with_combinations_gbdt(
                 lambdarank_model, race_frame,
                 n_samples=n_samples, rng=rng,
                 binary_model=binary_model,
@@ -914,6 +914,91 @@ def fit_combo_calibrators(
     for bt, recs in records.items():
         if len(recs) < 100:
             # サンプル不足の bet_type は fit しない (PL prob raw のまま使う)
+            continue
+        raw = np.asarray([r[0] for r in recs], dtype=np.float64)
+        out = np.asarray([r[1] for r in recs], dtype=np.float64)
+        if use_conditional:
+            conds = cond_records[bt]
+            cond_df = pd.DataFrame(conds, columns=["surface", "n_runners"])
+            cal.fit_for(bt, raw, out, conditions=cond_df)
+        else:
+            cal.fit_for(bt, raw, out)
+    return cal
+
+
+def fit_combo_calibrators_bundle(
+    valid_frame,
+    bundle,  # ModelBundle
+    n_samples: int = 5_000,
+    rng: np.random.Generator | None = None,
+    use_conditional: bool = False,
+) -> ComboCalibrators:
+    """Bundle-aware variant: collect (PL_prob, hit) pairs per bet type and fit iso.
+
+    Mirrors :func:`fit_combo_calibrators` but routes combo prediction through
+    :func:`ai.predict.predict_race_with_combinations` so it works for both
+    GBDT and NN bundles.  Used by ``ai.nn.train_nn`` after temperature
+    scaling so that the persisted ``combo_calibrators.pkl`` corrects the
+    raw PL joint probabilities that drive ワイド / 三連複 EV decisions.
+
+    Args:
+        valid_frame: Validation feature frame (race_id, post_position,
+            finish_position, etc.) — same shape used elsewhere.
+        bundle: A loaded ModelBundle (GBDT or NN).
+        n_samples: MC samples for the per-race combo prediction.
+        rng: Optional random generator for reproducibility.
+        use_conditional: Pass-through to ComboCalibrators
+            (surface × n_runners-conditional iso when True).
+
+    Returns:
+        A fitted ComboCalibrators (only bet types with ≥100 samples are fitted).
+    """
+    from ai.predict import predict_race_with_combinations  # noqa: PLC0415
+
+    bet_types = list(_RENKEI_BET_TYPES)
+    records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
+    cond_records: dict[str, list[tuple[str, int]]] = {bt: [] for bt in bet_types}
+
+    for race_id, race_frame in valid_frame.groupby("race_id"):
+        if len(race_frame) < 4:
+            continue
+        if race_frame["post_position"].isna().any():
+            continue
+        finished = race_frame.dropna(subset=["finish_position"])
+        finished = finished[finished["finish_position"].astype(int).isin([1, 2, 3])]
+        if len(finished) < 3:
+            continue
+        by_finish = {
+            int(row["finish_position"]): int(row["post_position"])
+            for _, row in finished.iterrows()
+        }
+        pp1, pp2, pp3 = by_finish.get(1), by_finish.get(2), by_finish.get(3)
+        if pp1 is None or pp2 is None or pp3 is None:
+            continue
+
+        try:
+            combo_map = predict_race_with_combinations(
+                bundle, race_frame, n_samples=n_samples, rng=rng,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+
+        surf = str(race_frame["surface"].iloc[0]) if "surface" in race_frame.columns else "unknown"
+        n_runners_val = (
+            int(race_frame["n_runners"].iloc[0])
+            if "n_runners" in race_frame.columns
+            else len(race_frame)
+        )
+
+        for bt in bet_types:
+            for cp in combo_map.get(bt, []):
+                hit = _is_combo_hit(bt, cp.combo, pp1, pp2, pp3)
+                records[bt].append((float(cp.prob), 1 if hit else 0))
+                cond_records[bt].append((surf, n_runners_val))
+
+    cal = ComboCalibrators(use_conditional=use_conditional)
+    for bt, recs in records.items():
+        if len(recs) < 100:
             continue
         raw = np.asarray([r[0] for r in recs], dtype=np.float64)
         out = np.asarray([r[1] for r in recs], dtype=np.float64)

@@ -17,7 +17,6 @@ Each NN model is stored under data/models/<YYYYMMDDTHHMMSS>-nn/ with:
 from __future__ import annotations
 
 import json
-import pickle
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +25,8 @@ from typing import TYPE_CHECKING
 import lightgbm as lgb
 from sqlalchemy.orm import Session
 
+from ai._registry_gbdt import load_gbdt_artifacts, save_gbdt_artifacts
+from ai._registry_nn import load_nn_artifacts, save_nn_artifacts
 from ai.calibrate import ComboCalibrators, IsotonicCalibrator
 from ai.temperature import TemperatureScaler
 from core.paths import data_dir
@@ -35,27 +36,7 @@ from features.builder import FEATURE_COLUMNS
 if TYPE_CHECKING:
     import torch.nn
 
-
-class _LegacyUnpickler(pickle.Unpickler):
-    """`keiba_ai.*` 旧パスで pickle 化された artifact を、refactor 後の新パスへ
-    透過的にリマップする Unpickler。再学習なしで旧 .pkl を読めるようにする。
-
-    対象は calibrator.pkl / combo_calibrators.pkl / temperature_scaler.pkl 等。
-    GBM 固有 (train/tune/pl_loss) はクラスを pickle しないので keiba_ai.ai → ai
-    の単純な prefix 除去で十分。
-    """
-
-    def find_class(self, module: str, name: str):
-        if module.startswith("keiba_ai."):
-            module = module[len("keiba_ai."):]
-        elif module == "keiba_ai":
-            raise ImportError("keiba_ai は廃止済みパッケージです")
-        return super().find_class(module, name)
-
-
-def _pickle_load(fp) -> object:
-    """旧 keiba_ai.* パス対応の pickle.load ラッパー。"""
-    return _LegacyUnpickler(fp).load()
+    from ai.nn.preprocess import NNPreprocessor
 
 
 @dataclass
@@ -109,32 +90,17 @@ def save_model(
     model_dir = _models_dir() / ts
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    model_txt = model_dir / "model.txt"
-    model.save_model(str(model_txt))
-
     if feature_columns is None:
         feature_columns = list(model.feature_name())
 
-    has_binary = binary_model is not None
-    has_calibrator = calibrator is not None
-
-    if has_binary:
-        binary_model.save_model(str(model_dir / "binary.txt"))
-    if has_calibrator:
-        with (model_dir / "calibrator.pkl").open("wb") as f:
-            pickle.dump(calibrator, f)
-
-    has_combo_calibrators = (
-        combo_calibrators is not None and len(combo_calibrators.fitted_bet_types) > 0
+    has_flags = save_gbdt_artifacts(
+        model_dir,
+        model=model,
+        binary_model=binary_model,
+        calibrator=calibrator,
+        combo_calibrators=combo_calibrators,
+        temperature_scaler=temperature_scaler,
     )
-    if has_combo_calibrators:
-        with (model_dir / "combo_calibrators.pkl").open("wb") as f:
-            pickle.dump(combo_calibrators, f)
-
-    has_temperature_scaler = temperature_scaler is not None
-    if has_temperature_scaler:
-        with (model_dir / "temperature_scaler.pkl").open("wb") as f:
-            pickle.dump(temperature_scaler, f)
 
     meta = {
         "model_type": model_type,
@@ -145,15 +111,9 @@ def save_model(
         "metrics": metrics,
         "feature_columns": feature_columns,
         "notes": notes,
-        "has_binary_model": has_binary,
-        "has_calibrator": has_calibrator,
-        "has_combo_calibrators": has_combo_calibrators,
-        "combo_calibrators_bet_types": (
-            combo_calibrators.fitted_bet_types if has_combo_calibrators else []
-        ),
         "loss_type": loss_type,
         "conditional_calibration": conditional_calibration,
-        "has_temperature_scaler": has_temperature_scaler,
+        **has_flags,
     }
     (model_dir / "meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2),
@@ -190,11 +150,7 @@ def save_nn_model(
     else:
         model_dir = _models_dir() / model_dir_name
         model_dir.mkdir(parents=True, exist_ok=True)
-        # Copy model.pt only when the target dir differs from the source.
-        target_pt = model_dir / "model.pt"
-        if state_dict_path.resolve() != target_pt.resolve():
-            import shutil
-            shutil.copy2(state_dict_path, target_pt)
+        save_nn_artifacts(state_dict_path, model_dir)
 
     # Ensure model_type is set
     meta_dict.setdefault("model_type", "nn")
@@ -257,6 +213,8 @@ class ModelBundle:
         nn_model:              RaceModel インスタンス (eval 済み)
         nn_horse_feature_cols: 馬ごとの特徴量列
         nn_race_feature_cols:  レースレベルの特徴量列
+        nn_preprocessor:       カテゴリ map + 数値標準化 (train で fit 済み)。
+                               旧モデルでは None (推論側で legacy fallback)。
 
     共通:
         model_type:     "gbdt" or "nn"
@@ -278,6 +236,17 @@ class ModelBundle:
     nn_model: "torch.nn.Module | None" = None
     nn_horse_feature_cols: list[str] | None = None
     nn_race_feature_cols: list[str] | None = None
+    nn_preprocessor: NNPreprocessor | None = None
+    # GBDT stacking: NN was trained on features augmented with this GBDT
+    # bundle's predictions.  Inference must apply the same augmentation
+    # before calling the NN.
+    nn_gbdt_bundle: "ModelBundle | None" = None
+    # GBDT ensemble (inference-time blending, no training-side coupling):
+    # blend the per-horse (win_prob, place_prob) between NN and this GBDT
+    # using ``nn_ensemble_weight`` (1.0 = pure NN, 0.0 = pure GBDT).
+    # Ranking score stays as the NN's, so ordering doesn't change.
+    nn_ensemble_gbdt_bundle: "ModelBundle | None" = None
+    nn_ensemble_weight: float = 1.0
     # 温度スケーリング (GBDT / NN 共通; optional)
     temperature_scaler: TemperatureScaler | None = None
 
@@ -312,92 +281,32 @@ def load_model_full(path: Path) -> ModelBundle:
     feature_columns: list[str] = meta.get("feature_columns", list(FEATURE_COLUMNS))
 
     if model_type == "nn":
-        return _load_nn_bundle(path, meta, feature_columns)
+        nn_artifacts = load_nn_artifacts(path, meta)
+        return ModelBundle(
+            model_type="nn",
+            model_dir=path,
+            meta=meta,
+            feature_columns=feature_columns,
+            nn_model=nn_artifacts["nn_model"],
+            nn_horse_feature_cols=nn_artifacts["nn_horse_feature_cols"],
+            nn_race_feature_cols=nn_artifacts["nn_race_feature_cols"],
+            nn_preprocessor=nn_artifacts["nn_preprocessor"],
+            nn_gbdt_bundle=nn_artifacts["nn_gbdt_bundle"],
+            temperature_scaler=nn_artifacts["temperature_scaler"],
+            combo_calibrators=nn_artifacts["combo_calibrators"],
+        )
 
-    # ── GBDT 経路 ────────────────────────────────────────────────────────────
-    lambdarank = lgb.Booster(model_file=str(path / "model.txt"))
-
-    binary_path = path / "binary.txt"
-    binary = lgb.Booster(model_file=str(binary_path)) if binary_path.exists() else None
-
-    calibrator_path = path / "calibrator.pkl"
-    calibrator = None
-    if calibrator_path.exists():
-        with calibrator_path.open("rb") as f:
-            calibrator = _pickle_load(f)
-
-    combo_cal_path = path / "combo_calibrators.pkl"
-    combo_calibrators = None
-    if combo_cal_path.exists():
-        with combo_cal_path.open("rb") as f:
-            combo_calibrators = _pickle_load(f)
-
-    temperature_scaler_path = path / "temperature_scaler.pkl"
-    temperature_scaler = None
-    if temperature_scaler_path.exists():
-        with temperature_scaler_path.open("rb") as f:
-            temperature_scaler = _pickle_load(f)
-
+    gbdt_artifacts = load_gbdt_artifacts(path)
     return ModelBundle(
         model_type="gbdt",
         model_dir=path,
         meta=meta,
         feature_columns=feature_columns,
-        lambdarank=lambdarank,
-        binary=binary,
-        calibrator=calibrator,
-        combo_calibrators=combo_calibrators,
-        temperature_scaler=temperature_scaler,
-    )
-
-
-def _load_nn_bundle(path: Path, meta: dict, feature_columns: list[str]) -> ModelBundle:
-    """Load a NN ModelBundle from a model directory.
-
-    torch は遅延 import — torch が入っていない環境では ImportError が伝播する。
-    """
-    import torch  # noqa: PLC0415 — intentional lazy import
-
-    from ai.nn.model import RaceModel  # noqa: PLC0415
-
-    params = meta.get("params", {})
-    horse_feature_cols: list[str] = meta.get("horse_feature_cols", [])
-    race_feature_cols: list[str] = meta.get("race_feature_cols", [])
-
-    horse_feat_dim = len(horse_feature_cols)
-    race_feat_dim = len(race_feature_cols)
-
-    hidden_dim: int = params.get("hidden_dim", 64)
-    embed_dim: int = params.get("embed_dim", 32)
-    n_heads: int = params.get("n_heads", 4)
-
-    race_model = RaceModel(
-        horse_feat_dim=horse_feat_dim,
-        race_feat_dim=race_feat_dim,
-        embed_dim=embed_dim,
-        hidden_dim=hidden_dim,
-        n_heads=n_heads,
-    )
-
-    state_dict = torch.load(path / "model.pt", map_location="cpu", weights_only=True)
-    race_model.load_state_dict(state_dict)
-    race_model.eval()
-
-    temperature_scaler_path = path / "temperature_scaler.pkl"
-    temperature_scaler = None
-    if temperature_scaler_path.exists():
-        with temperature_scaler_path.open("rb") as f:
-            temperature_scaler = _pickle_load(f)
-
-    return ModelBundle(
-        model_type="nn",
-        model_dir=path,
-        meta=meta,
-        feature_columns=feature_columns,
-        nn_model=race_model,
-        nn_horse_feature_cols=horse_feature_cols,
-        nn_race_feature_cols=race_feature_cols,
-        temperature_scaler=temperature_scaler,
+        lambdarank=gbdt_artifacts["lambdarank"],
+        binary=gbdt_artifacts["binary"],
+        calibrator=gbdt_artifacts["calibrator"],
+        combo_calibrators=gbdt_artifacts["combo_calibrators"],
+        temperature_scaler=gbdt_artifacts["temperature_scaler"],
     )
 
 

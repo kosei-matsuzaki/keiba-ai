@@ -26,11 +26,14 @@ import torch
 from lightning.pytorch.callbacks import EarlyStopping
 from torch.utils.data import DataLoader
 
+from ai.calibrate import ComboCalibrators, fit_combo_calibrators_bundle
 from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
-from ai.nn.model import RaceModel
-from ai.registry import save_nn_model
+from ai.nn.model import RaceTransformerModel
+from ai.nn.preprocess import NNPreprocessor
+from ai.nn.stacking import GBDT_FEATURE_COLUMNS, augment_frame_with_gbdt
+from ai.registry import ModelBundle, load_model_full, save_nn_model
 from ai.splits import time_split
 from ai.temperature import TemperatureScaler
 from core.paths import data_dir, db_path
@@ -71,21 +74,15 @@ def _split_feature_cols(all_feature_cols: list[str]) -> tuple[list[str], list[st
 
 
 def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    """Label-encode categorical string columns in-place so they become float32-compatible.
+    """Legacy: label-encode categoricals + numeric coercion, fitting on the frame itself.
 
-    Each unique string value is mapped to a consecutive integer.  NaN is mapped to -1.
-    Numeric columns are coerced to float32 and NaN-filled with 0.
+    **Bugged when called separately on train/valid/test** — each split produces its
+    own mapping (e.g. course=Tokyo could be 5.0 in train and 2.0 in valid).
+    Use :class:`NNPreprocessor` instead, which fits on train and applies the same
+    mapping to all splits + inference.
 
-    This is intentionally simple: the model treats these as ordinary continuous inputs.
-    For production quality, learned embeddings would be preferable, but label-encoding
-    is sufficient for the initial training pipeline.
-
-    Args:
-        frame: DataFrame containing at least the columns listed in feature_cols.
-        feature_cols: Columns to ensure are numeric.
-
-    Returns:
-        A copy of frame with the listed columns converted to float32.
+    Retained only as a fallback for inference against legacy NN models saved
+    before preprocessor.pkl was introduced.
     """
     frame = frame.copy()
     cat_set = set(CATEGORICAL_FEATURES)
@@ -95,7 +92,6 @@ def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.Dat
             frame[col] = 0.0
             continue
         if col in cat_set or frame[col].dtype == object:
-            # Label-encode: NaN → -1, unique values → 0, 1, 2, ...
             unique_vals = [v for v in frame[col].dropna().unique()]
             mapping = {v: float(i) for i, v in enumerate(sorted(unique_vals, key=str))}
             frame[col] = frame[col].map(mapping).fillna(-1.0)
@@ -106,7 +102,7 @@ def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.Dat
 
 
 def _compute_ndcg_nn(
-    model: RaceModel,
+    model: torch.nn.Module,
     frame: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
@@ -152,7 +148,7 @@ def _compute_ndcg_nn(
 
 
 def _fit_temperature_scaler_nn(
-    model: RaceModel,
+    model: torch.nn.Module,
     valid_df: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
@@ -232,7 +228,7 @@ def _fit_temperature_scaler_nn(
 
 
 def _compute_loss_on_dataset(
-    model: RaceModel,
+    model: torch.nn.Module,
     frame: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
@@ -289,25 +285,31 @@ def _build_loss_fn(loss_name: str):
 
 
 class RaceLitModule(pl.LightningModule):
-    """Lightning wrapper around RaceModel.
+    """Lightning wrapper around RaceModel / RaceTransformerModel.
 
     Args:
-        model: RaceModel instance
+        model: torch.nn.Module exposing (horse_features, race_features, mask) -> scores
         loss_fn_name: one of "plackett_luce", "listmle", "time_margin"
-        learning_rate: Adam optimizer learning rate
+        learning_rate: AdamW initial learning rate (cosine-annealed to 0)
+        weight_decay: AdamW weight decay (set 0 to disable)
+        max_epochs: total epochs — used as the cosine schedule period
     """
 
     def __init__(
         self,
-        model: RaceModel,
+        model: torch.nn.Module,
         loss_fn_name: str,
         learning_rate: float,
+        weight_decay: float = 0.0,
+        max_epochs: int = 100,
     ) -> None:
         super().__init__()
         self.model = model
         self.loss_fn_name = loss_fn_name
         self.loss_fn = _build_loss_fn(loss_fn_name)
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.max_epochs = max_epochs
 
     def _compute_loss(self, batch: dict) -> torch.Tensor:
         scores = self.model(
@@ -340,7 +342,50 @@ class RaceLitModule(pl.LightningModule):
             self.log("valid_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, self.max_epochs)
+        )
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+
+
+class _NDCG3Callback(pl.Callback):
+    """Compute NDCG@3 on the validation frame at end of each validation epoch.
+
+    The scalar is logged as ``valid_ndcg3`` so EarlyStopping can monitor a
+    ranking metric directly (PL loss and NDCG often peak at different epochs).
+    """
+
+    def __init__(
+        self,
+        valid_df: pd.DataFrame,
+        horse_feature_cols: list[str],
+        race_feature_cols: list[str],
+        device: torch.device,
+    ) -> None:
+        self.valid_df = valid_df
+        self.horse_feature_cols = horse_feature_cols
+        self.race_feature_cols = race_feature_cols
+        self.device = device
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if self.valid_df.empty:
+            return
+        ndcg3 = _compute_ndcg_nn(
+            pl_module.model,
+            self.valid_df,
+            self.horse_feature_cols,
+            self.race_feature_cols,
+            at=3,
+            device=self.device,
+        )
+        if math.isnan(ndcg3):
+            return
+        pl_module.log("valid_ndcg3", ndcg3, prog_bar=True)
 
 
 def train_nn(
@@ -357,6 +402,14 @@ def train_nn(
     learning_rate: float = 1e-3,
     device: str = "cpu",
     fit_temperature: bool = True,
+    n_transformer_layers: int = 2,
+    cat_embed_dim: int = 4,
+    weight_decay: float = 1e-4,
+    gradient_clip_val: float = 1.0,
+    early_stopping_patience: int = 10,
+    fit_combo_calibrators: bool = True,
+    combo_calibrators_n_samples: int = 5_000,
+    gbdt_model_path: Path | None = None,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict."""
     resolved_db = db or db_path()
@@ -370,6 +423,28 @@ def train_nn(
         raise RuntimeError("No training data found in the database.")
 
     log.info("Total rows: %d | Races: %d", len(frame), frame["race_id"].nunique())
+
+    # ── GBDT stacking: prepend GBDT preds to feature frame BEFORE split ───────
+    # Caller passes a GBDT bundle path; we run it race-by-race over the entire
+    # frame and write gbdt_score / gbdt_win_prob / gbdt_place_prob columns.
+    # Done before split so the same augmented columns flow to train/valid/test
+    # AND through the preprocessor fit (which captures their train mean/std).
+    gbdt_bundle = None
+    if gbdt_model_path is not None:
+        log.info("Loading GBDT bundle for stacking from %s", gbdt_model_path)
+        gbdt_bundle = load_model_full(gbdt_model_path)
+        if gbdt_bundle.model_type != "gbdt":
+            raise ValueError(
+                f"gbdt_model_path points to a {gbdt_bundle.model_type!r} bundle, expected gbdt"
+            )
+        log.info("Augmenting feature frame with GBDT predictions…")
+        frame = augment_frame_with_gbdt(frame, gbdt_bundle)
+        log.info(
+            "GBDT stacking columns added: %s (non-null=%d/%d)",
+            GBDT_FEATURE_COLUMNS,
+            int(frame["gbdt_score"].notna().sum()),
+            len(frame),
+        )
 
     train_df, valid_df, test_df = time_split(frame, train_end, valid_months, test_months)
     log.info(
@@ -394,20 +469,32 @@ def train_nn(
     horse_feature_cols = [c for c in horse_feature_cols if c in frame.columns]
     race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
 
+    # If GBDT stacking is active, append the stacked columns to the horse-level
+    # feature list (they vary per horse within a race, so are not race-level).
+    if gbdt_bundle is not None:
+        for col in GBDT_FEATURE_COLUMNS:
+            if col in frame.columns and col not in horse_feature_cols:
+                horse_feature_cols.append(col)
+        all_feature_cols = list(horse_feature_cols) + list(race_feature_cols)
+
     log.info(
         "Features — horse: %d, race: %d",
         len(horse_feature_cols),
         len(race_feature_cols),
     )
 
-    # Encode categorical string columns to numeric so torch.tensor() can consume them.
-    # Encoding is computed from the train set to avoid leakage, then applied to all splits.
-    all_feat_for_encoding = horse_feature_cols + race_feature_cols
-    train_df = _encode_categoricals(train_df, all_feat_for_encoding)
+    # Fit preprocessor on train only — categorical maps and numeric mean/std
+    # are computed once and applied identically to train/valid/test (and later
+    # at inference via bundle.nn_preprocessor).  Calling _encode_categoricals
+    # per-split was the previous behavior and produced inconsistent mappings.
+    preprocessor = NNPreprocessor.fit(
+        train_df, horse_feature_cols, race_feature_cols
+    )
+    train_df = preprocessor.transform(train_df)
     if not valid_df.empty:
-        valid_df = _encode_categoricals(valid_df, all_feat_for_encoding)
+        valid_df = preprocessor.transform(valid_df)
     if not test_df.empty:
-        test_df = _encode_categoricals(test_df, all_feat_for_encoding)
+        test_df = preprocessor.transform(test_df)
 
     horse_feat_dim = len(horse_feature_cols)
     race_feat_dim = len(race_feature_cols)
@@ -444,24 +531,58 @@ def train_nn(
             effective_n_heads,
         )
 
-    race_model = RaceModel(
+    horse_cat_positions, horse_cat_cardinalities = preprocessor.horse_cat_metadata()
+    race_cat_positions, race_cat_cardinalities = preprocessor.race_cat_metadata()
+    log.info(
+        "Categorical embeddings — horse: %d cols, race: %d cols (cat_embed_dim=%d, n_transformer_layers=%d)",
+        len(horse_cat_positions),
+        len(race_cat_positions),
+        cat_embed_dim,
+        n_transformer_layers,
+    )
+
+    race_model = RaceTransformerModel(
         horse_feat_dim=horse_feat_dim,
         race_feat_dim=race_feat_dim,
         embed_dim=embed_dim,
         hidden_dim=hidden_dim,
         n_heads=effective_n_heads,
+        horse_cat_positions=horse_cat_positions,
+        horse_cat_cardinalities=horse_cat_cardinalities,
+        race_cat_positions=race_cat_positions,
+        race_cat_cardinalities=race_cat_cardinalities,
+        cat_embed_dim=cat_embed_dim,
+        n_transformer_layers=n_transformer_layers,
     )
 
     lit_module = RaceLitModule(
         model=race_model,
         loss_fn_name=loss,
         learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        max_epochs=max_epochs,
     )
 
     # Trainer callbacks
-    callbacks = []
-    if val_loader is not None:
-        callbacks.append(EarlyStopping(monitor="valid_loss", patience=10, mode="min"))
+    callbacks: list[pl.Callback] = []
+    if val_loader is not None and not valid_df.empty:
+        # Compute NDCG@3 every validation epoch so EarlyStopping monitors the
+        # ranking metric directly rather than the PL loss proxy.
+        callbacks.append(
+            _NDCG3Callback(
+                valid_df=valid_df,
+                horse_feature_cols=horse_feature_cols,
+                race_feature_cols=race_feature_cols,
+                device=torch.device(device),
+            )
+        )
+        callbacks.append(
+            EarlyStopping(
+                monitor="valid_ndcg3",
+                patience=early_stopping_patience,
+                mode="max",
+            )
+        )
 
     torch_device = torch.device(device)
     accelerator = "gpu" if device.startswith("cuda") else "cpu"
@@ -474,6 +595,7 @@ def train_nn(
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=False,
+        gradient_clip_val=gradient_clip_val,
     )
 
     log.info("Starting NN training (loss=%s, max_epochs=%d)…", loss, max_epochs)
@@ -546,6 +668,48 @@ def train_nn(
                 )
                 temperature_scaler = None
 
+    # ── Combo calibration: fit per-bet-type iso on raw PL joint probs ─────────
+    # The temperature scaler above only corrects the per-horse marginal
+    # (win / place) distributions.  Renkei bet types (馬連 / ワイド / 馬単 /
+    # 三連複 / 三連単) consume joint probabilities derived via PL Monte Carlo
+    # from the NN scores; these are uncalibrated and tend to overestimate
+    # low-probability pairs/triples, which produced losing bets in the
+    # by-bet-type backtest.  Mirroring the GBDT pipeline, we fit an iso
+    # calibrator per bet type on the validation set.
+    combo_calibrators_obj: ComboCalibrators | None = None
+    if fit_combo_calibrators and not valid_df.empty:
+        log.info("Fitting ComboCalibrators on valid set (NN)…")
+        try:
+            # Build an in-memory bundle so the bundle-aware combo predictor can
+            # be invoked without a save/load round-trip.
+            fit_bundle = ModelBundle(
+                model_type="nn",
+                model_dir=data_dir() / "models" / "_pending_nn",
+                meta={"model_type": "nn", "loss_type": loss},
+                feature_columns=all_feature_cols,
+                nn_model=race_model,
+                nn_horse_feature_cols=horse_feature_cols,
+                nn_race_feature_cols=race_feature_cols,
+                nn_preprocessor=preprocessor,
+                temperature_scaler=temperature_scaler,
+                combo_calibrators=None,
+            )
+            combo_calibrators_obj = fit_combo_calibrators_bundle(
+                valid_df,
+                fit_bundle,
+                n_samples=combo_calibrators_n_samples,
+            )
+            log.info(
+                "ComboCalibrators fitted for: %s",
+                combo_calibrators_obj.fitted_bet_types,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "ComboCalibrators fit failed: %s — proceeding without combo calibration",
+                exc,
+            )
+            combo_calibrators_obj = None
+
     # Save model
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     model_dir = data_dir() / "models" / f"{timestamp}-nn"
@@ -577,26 +741,60 @@ def train_nn(
             pickle.dump(temperature_scaler, f)
         log.info("temperature_scaler.pkl saved to %s", model_dir)
 
+    preprocessor.save(model_dir / "preprocessor.pkl")
+    log.info("preprocessor.pkl saved to %s", model_dir)
+
+    has_combo_calibrators = (
+        combo_calibrators_obj is not None
+        and len(combo_calibrators_obj.fitted_bet_types) > 0
+    )
+    if has_combo_calibrators:
+        with (model_dir / "combo_calibrators.pkl").open("wb") as f:
+            import pickle
+            pickle.dump(combo_calibrators_obj, f)
+        log.info(
+            "combo_calibrators.pkl saved (bet_types=%s)",
+            combo_calibrators_obj.fitted_bet_types,
+        )
+
     meta_dict = {
         "model_type": "nn",
+        "arch_version": 2,
         "loss_type": loss,
         "params": {
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
             "n_heads": effective_n_heads,
+            "n_transformer_layers": n_transformer_layers,
+            "cat_embed_dim": cat_embed_dim,
             "batch_size": batch_size,
             "max_epochs": max_epochs,
             "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "gradient_clip_val": gradient_clip_val,
             "device": device,
         },
         "metrics": metrics,
         "feature_columns": all_feature_cols,
         "horse_feature_cols": horse_feature_cols,
         "race_feature_cols": race_feature_cols,
+        "cat_metadata": {
+            "horse_cat_positions": horse_cat_positions,
+            "horse_cat_cardinalities": horse_cat_cardinalities,
+            "race_cat_positions": race_cat_positions,
+            "race_cat_cardinalities": race_cat_cardinalities,
+        },
         "train_range": train_range,
         "valid_range": valid_range,
         "test_range": test_range,
         "has_temperature_scaler": has_temperature_scaler,
+        "has_preprocessor": True,
+        "has_combo_calibrators": has_combo_calibrators,
+        "combo_calibrators_bet_types": (
+            combo_calibrators_obj.fitted_bet_types if has_combo_calibrators else []
+        ),
+        "gbdt_stacking": gbdt_bundle is not None,
+        "gbdt_model_path": str(gbdt_model_path) if gbdt_model_path is not None else None,
     }
 
     # Delegate to registry (writes meta.json; model.pt is already in model_dir)
@@ -639,9 +837,39 @@ def _cli() -> None:
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
     parser.add_argument("--embed-dim", type=int, default=32, help="Embedding dimension")
     parser.add_argument("--n-heads", type=int, default=4, help="Number of attention heads")
+    parser.add_argument(
+        "--n-transformer-layers",
+        type=int,
+        default=2,
+        help="Number of stacked TransformerEncoderLayer blocks (default: 2)",
+    )
+    parser.add_argument(
+        "--cat-embed-dim",
+        type=int,
+        default=4,
+        help="Embedding size for each categorical column (default: 4)",
+    )
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size (races per batch)")
     parser.add_argument("--max-epochs", type=int, default=100, help="Maximum training epochs")
-    parser.add_argument("--learning-rate", type=float, default=1e-3, help="Adam learning rate")
+    parser.add_argument("--learning-rate", type=float, default=1e-3, help="AdamW learning rate")
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=1e-4,
+        help="AdamW weight decay (default: 1e-4)",
+    )
+    parser.add_argument(
+        "--gradient-clip-val",
+        type=float,
+        default=1.0,
+        help="Gradient norm clipping value (default: 1.0; set 0 to disable)",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=10,
+        help="EarlyStopping patience (epochs) on valid_ndcg3",
+    )
     parser.add_argument(
         "--device",
         choices=["cpu", "cuda"],
@@ -655,6 +883,32 @@ def _cli() -> None:
         help=(
             "Disable TemperatureScaler fitting after training.  Default is to fit "
             "temperature scaling on the validation set when it is non-empty."
+        ),
+    )
+    parser.add_argument(
+        "--no-fit-combo-calibrators",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable ComboCalibrators fitting after training.  Default is to fit "
+            "per-bet-type isotonic calibration of joint PL probabilities on the "
+            "validation set; this is what corrects 連系 EV signal for ワイド / 三連複."
+        ),
+    )
+    parser.add_argument(
+        "--combo-calibrators-n-samples",
+        type=int,
+        default=5_000,
+        help="MC samples per race for the ComboCalibrators fit (default 5000).",
+    )
+    parser.add_argument(
+        "--gbdt-model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a GBDT model directory.  When set, the NN trains on features "
+            "augmented with that GBDT's per-horse predictions (stacking).  Use a GBDT "
+            "whose --train-end is at or before the NN valid start to limit leakage."
         ),
     )
     args = parser.parse_args()
@@ -673,6 +927,14 @@ def _cli() -> None:
         learning_rate=args.learning_rate,
         device=args.device,
         fit_temperature=not args.no_fit_temperature,
+        n_transformer_layers=args.n_transformer_layers,
+        cat_embed_dim=args.cat_embed_dim,
+        weight_decay=args.weight_decay,
+        gradient_clip_val=args.gradient_clip_val,
+        early_stopping_patience=args.early_stopping_patience,
+        fit_combo_calibrators=not args.no_fit_combo_calibrators,
+        combo_calibrators_n_samples=args.combo_calibrators_n_samples,
+        gbdt_model_path=args.gbdt_model_path,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

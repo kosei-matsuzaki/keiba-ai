@@ -30,8 +30,8 @@ from ai.bet_odds import (
     compute_race_odds_with_sources,
 )
 from ai.bet_strategy import recommend_for_race
-from ai.predict import predict_race_bundle, predict_race_with_combinations_bundle
-from ai.registry import load_model_full
+from ai.predict import predict_race, predict_race_with_combinations
+from ai.registry import ModelBundle, load_model_full
 from core.logging import get_logger
 from features.builder import build_training_frame
 
@@ -264,6 +264,8 @@ def simulate_active_model(
     enabled_bet_types: list[str] | None = None,
     top_n_horses: int = 3,
     max_stake_per_race_yen: int | None = None,
+    *,
+    bundle: ModelBundle | None = None,
 ) -> SimulationResult:
     """Run end-to-end backtest using active model + recommendations.
 
@@ -291,11 +293,20 @@ def simulate_active_model(
     preset = STRATEGY_PRESETS[strategy]
     types = enabled_bet_types or DEFAULT_BET_TYPES
 
-    log.info(
-        "Loading active model bundle from %s (strategy=%s, budget=%d)",
-        model_path, strategy, budget,
-    )
-    bundle = load_model_full(model_path)
+    # Allow callers (notably ad-hoc experiments) to pass a pre-built bundle
+    # so they can attach ensemble fields or override calibrators without
+    # writing the changes back to disk.  When omitted we load from disk.
+    if bundle is None:
+        log.info(
+            "Loading active model bundle from %s (strategy=%s, budget=%d)",
+            model_path, strategy, budget,
+        )
+        bundle = load_model_full(model_path)
+    else:
+        log.info(
+            "Using pre-built bundle (model_dir=%s, strategy=%s, budget=%d)",
+            getattr(bundle, "model_dir", model_path), strategy, budget,
+        )
 
     log.info("Building feature frame for window %s..%s", start, end)
     frame = build_training_frame(session, train_start=start, train_end=end)
@@ -340,9 +351,9 @@ def simulate_active_model(
 
         # Predictions (GBDT/NN を bundle.model_type で自動切替)
         try:
-            preds = predict_race_bundle(bundle, race_frame)
+            preds = predict_race(bundle, race_frame)
         except Exception as exc:  # noqa: BLE001
-            log.warning("predict_race failed for %s: %s", race_id, exc)
+            log.warning("predict_race_gbdt failed for %s: %s", race_id, exc)
             continue
 
         # Attach post_position (recommend_for_race needs it)
@@ -352,7 +363,7 @@ def simulate_active_model(
         # Combination predictions + odds (with implied fill)
         race_odds, race_odds_sources = compute_race_odds_with_sources(session, race_id)
         try:
-            combos_by_type = predict_race_with_combinations_bundle(
+            combos_by_type = predict_race_with_combinations(
                 bundle,
                 race_frame,
                 session=session,
@@ -360,7 +371,7 @@ def simulate_active_model(
                 race_odds_sources=race_odds_sources,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
+            log.warning("predict_race_with_combinations_gbdt failed for %s: %s", race_id, exc)
             continue
 
         # Apply min_ev filter (strategy preset)
