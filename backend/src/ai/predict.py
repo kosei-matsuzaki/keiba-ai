@@ -720,6 +720,29 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
     place_temperature = ts.T_place if ts is not None else 1.0
     place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
 
+    # GBDT ensemble (inference-time blending of win/place prob; ranking score
+    # stays as the NN's so combinations and ordering are unaffected).  Skipped
+    # when weight==1.0 (pure NN) or no ensemble bundle is configured.
+    if (
+        bundle.nn_ensemble_gbdt_bundle is not None
+        and bundle.nn_ensemble_weight < 1.0
+    ):
+        w = float(bundle.nn_ensemble_weight)
+        gbdt_preds = predict_race(bundle.nn_ensemble_gbdt_bundle, frame)
+        gbdt_by_horse: dict[str, tuple[float, float]] = {
+            str(row["horse_id"]): (float(row["win_prob"]), float(row["place_prob"]))
+            for _, row in gbdt_preds.iterrows()
+        }
+        nn_horse_ids = frame["horse_id"].values
+        blended_win = np.empty_like(win_probs)
+        blended_place = np.empty_like(place_probs)
+        for i, hid in enumerate(nn_horse_ids):
+            g_win, g_place = gbdt_by_horse.get(str(hid), (win_probs[i], place_probs[i]))
+            blended_win[i] = w * win_probs[i] + (1.0 - w) * g_win
+            blended_place[i] = w * place_probs[i] + (1.0 - w) * g_place
+        win_probs = blended_win
+        place_probs = blended_place
+
     result = pd.DataFrame(
         {
             "horse_id": frame["horse_id"].values,

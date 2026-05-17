@@ -241,6 +241,12 @@ class ModelBundle:
     # bundle's predictions.  Inference must apply the same augmentation
     # before calling the NN.
     nn_gbdt_bundle: "ModelBundle | None" = None
+    # GBDT ensemble (inference-time blending, no training-side coupling):
+    # blend the per-horse (win_prob, place_prob) between NN and this GBDT
+    # using ``nn_ensemble_weight`` (1.0 = pure NN, 0.0 = pure GBDT).
+    # Ranking score stays as the NN's, so ordering doesn't change.
+    nn_ensemble_gbdt_bundle: "ModelBundle | None" = None
+    nn_ensemble_weight: float = 1.0
     # 温度スケーリング (GBDT / NN 共通; optional)
     temperature_scaler: TemperatureScaler | None = None
 
