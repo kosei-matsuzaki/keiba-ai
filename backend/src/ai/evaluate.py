@@ -29,6 +29,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -42,6 +43,9 @@ from core.paths import db_path
 from db.models import ModelRun  # noqa: F401
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
+
+if TYPE_CHECKING:
+    from ai.registry import ModelBundle
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -420,6 +424,7 @@ def evaluate(
     bankroll: float = 100_000.0,
     bootstrap_iters: int = 0,
     bootstrap_seed: int = 42,
+    bundle: ModelBundle | None = None,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
@@ -447,7 +452,11 @@ def evaluate(
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
-    bundle = load_model_full(model_path)
+    # Pre-built bundle override (used by blend / ensemble sweep callers that
+    # need to attach nn_ensemble_gbdt_bundle without writing to disk). When
+    # absent, fall back to the on-disk artifacts.
+    if bundle is None:
+        bundle = load_model_full(model_path)
     use_kelly = bet_sizing == "kelly"
 
     log.info("Building evaluation frame from %s", resolved_db)
