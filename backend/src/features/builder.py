@@ -11,12 +11,20 @@ recent win rate and horse same-course place rate), then derive the per-race
 relative dict from those values and merge it back.
 
 Caching: build_training_frame は entry × ~6 SQL の N+1 構造で 3,300
-race のフルスキャンに 15-20 分かかる。DB の mtime + (start, end) を
-key に pickle で feature DataFrame を data/cache/training_frames/ に
-キャッシュし、同じ条件での 2 回目以降の呼び出しを秒で済ませる。
-DB が更新されたら mtime が変わり cache は自動的に miss するので、
-古い結果を返してしまう心配はない。
-KEIBA_DISABLE_FRAME_CACHE=1 で無効化可能。
+race のフルスキャンに 15-20 分かかる。races/entries の **内容シグネチャ**
+(レース件数 + 最新レース日 + entry 件数) + (start, end) を key に pickle で
+feature DataFrame を data/cache/training_frames/ にキャッシュし、同じ条件
+での 2 回目以降の呼び出しを秒で済ませる。
+
+シグネチャは ingest でレース/出走馬が増えれば変わって自動 miss する一方、
+**model_runs / bet_records など無関係テーブルへの書込みでは変わらない**
+ので、モデル保存・active 切替を挟んでも高価な feature cache が無効化
+されない (旧実装は DB ファイル mtime を見ていたため、これらの書込みで
+毎回作り直していた)。
+
+注意: 行数を変えない in-place 編集 (payout / race_meta の refill で既存行を
+上書きするケース) はシグネチャに表れないため検知できない。そうした
+backfill 後は cache を消すか KEIBA_DISABLE_FRAME_CACHE=1 で無効化すること。
 """
 
 from __future__ import annotations
@@ -25,12 +33,11 @@ import hashlib
 import logging
 import math
 import os
-import pickle
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.paths import data_dir
@@ -350,20 +357,38 @@ def _frame_cache_dir() -> Path:
     return d
 
 
+def _frame_content_signature(session: Session) -> str:
+    """Cheap content signature of the tables that feed feature building.
+
+    Race count + max race date + entry count. Stable across writes to
+    unrelated tables (model_runs, bet_records), so the expensive feature
+    cache survives model save / activation. Changes when an ingest adds
+    races or entries (the common invalidation case).
+
+    Caveat: row-count-preserving in-place edits (payout / race_meta refill
+    overwriting existing rows) are not reflected — clear the cache or set
+    KEIBA_DISABLE_FRAME_CACHE=1 after such a backfill.
+    """
+    n_races = session.scalar(select(func.count()).select_from(Race)) or 0
+    max_date = session.scalar(select(func.max(Race.date))) or ""
+    n_entries = session.scalar(select(func.count()).select_from(Entry)) or 0
+    return f"{n_races}|{max_date}|{n_entries}"
+
+
 def _frame_cache_key(
     db_path_str: str | None,
+    content_signature: str,
     train_start: str | None,
     train_end: str | None,
 ) -> str:
-    """Build a cache key from DB mtime + (start, end). DB content change
-    invalidates everything (mtime moves), and per-range outputs stay separate.
+    """Build a cache key from DB path + content signature + (start, end).
+
+    Keyed off the source-table content signature rather than the DB file
+    mtime so unrelated writes (model_runs/bet_records) don't invalidate the
+    cache, while ingests that change race/entry counts do. Per-range outputs
+    stay separate; the db path keeps distinct DBs from colliding.
     """
-    if db_path_str and Path(db_path_str).exists():
-        mtime = int(os.path.getmtime(db_path_str))
-        size = os.path.getsize(db_path_str)
-    else:
-        mtime, size = 0, 0
-    raw = f"{db_path_str}|{mtime}|{size}|{train_start}|{train_end}"
+    raw = f"{db_path_str}|{content_signature}|{train_start}|{train_end}"
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
@@ -443,10 +468,11 @@ def build_training_frame(
     if cache_active:
         db_path_str = _session_db_path(session)
         if db_path_str is None:
-            # In-memory DB or unknown bind — no stable mtime, so refuse to cache.
+            # In-memory DB or unknown bind — no stable identity, so refuse to cache.
             cache_active = False
         else:
-            cache_key = _frame_cache_key(db_path_str, train_start, train_end)
+            signature = _frame_content_signature(session)
+            cache_key = _frame_cache_key(db_path_str, signature, train_start, train_end)
             cached = _frame_cache_load(cache_key)
             if cached is not None:
                 return cached

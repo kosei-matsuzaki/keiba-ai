@@ -305,11 +305,14 @@ def test_build_training_frame_use_cache_false_skips_cache(
         assert not list(cache_dir.glob("*.pkl"))
 
 
-def test_build_training_frame_cache_invalidates_on_db_mtime_change(
+def test_build_training_frame_cache_survives_mtime_only_change(
     file_db_engine, tmp_path, monkeypatch,
 ):
-    """DB ファイルが更新 (= mtime 変化) されたら cache key も変わるので
-    別 entry として再計算される — 古い結果を返してしまわないことを確認。"""
+    """DB ファイルの mtime だけが変わっても (内容は不変)、cache key は内容
+    シグネチャ基準なので **同じ key** に当たり再計算されない。
+
+    これがモデル保存 (model_runs への書込み = ファイル mtime 変化) を挟んでも
+    高価な feature cache が無効化されないことを担保する回帰テスト。"""
     import os
     import time
 
@@ -318,7 +321,7 @@ def test_build_training_frame_cache_invalidates_on_db_mtime_change(
     with session_scope(file_db_engine) as session:
         df1 = build_training_frame(session)
 
-    # DB ファイルの mtime を未来にずらす (touch 相当)
+    # DB ファイルの mtime を未来にずらす (model_runs 書込み等の touch 相当)
     db_file = tmp_path / "frame_cache_test.db"
     future_ts = time.time() + 60
     os.utime(db_file, (future_ts, future_ts))
@@ -326,11 +329,36 @@ def test_build_training_frame_cache_invalidates_on_db_mtime_change(
     with session_scope(file_db_engine) as session:
         df2 = build_training_frame(session)
 
-    # 内容は同じだが、cache file は 2 つできているはず (mtime 違いで別 key)
+    # 内容シグネチャが同じなので cache file は 1 つのまま (再利用された)
     cache_dir = tmp_path / "data" / "cache" / "training_frames"
     pkls = list(cache_dir.glob("*.pkl"))
-    assert len(pkls) == 2, f"expected 2 cache files (one per mtime), got {len(pkls)}"
+    assert len(pkls) == 1, f"expected 1 cache file (mtime-only change reused), got {len(pkls)}"
     assert len(df1) == len(df2)
+
+
+def test_build_training_frame_cache_invalidates_on_new_races(
+    file_db_engine, tmp_path, monkeypatch,
+):
+    """レースが追加される (= 内容シグネチャ変化) と別 key で再計算され、
+    古い結果を返さない。ingest 後に新データが反映されることを担保。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    with session_scope(file_db_engine) as session:
+        df1 = build_training_frame(session)
+    n_races_1 = df1["race_id"].nunique()
+
+    # 同じ DB に追加レースを ingest (内容シグネチャが変わる)
+    make_synthetic_db(
+        file_db_engine, n_races=5, n_horses_per_race=8, days_back=30, seed=777
+    )
+
+    with session_scope(file_db_engine) as session:
+        df2 = build_training_frame(session)
+
+    cache_dir = tmp_path / "data" / "cache" / "training_frames"
+    pkls = list(cache_dir.glob("*.pkl"))
+    assert len(pkls) == 2, f"expected 2 cache files (content changed), got {len(pkls)}"
+    assert df2["race_id"].nunique() > n_races_1, "new races should appear after re-ingest"
 
 
 # ---------------------------------------------------------------------------
