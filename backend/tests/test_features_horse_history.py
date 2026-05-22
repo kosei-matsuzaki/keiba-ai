@@ -22,6 +22,7 @@ from features.horse_history import (
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,
+    race_class_weight,
 )
 
 
@@ -384,13 +385,95 @@ def test_cache_single_sql_query(rich_engine):
 
 
 # ---------------------------------------------------------------------------
+# Phase C: 脚質 / 瞬発ピーク / 前走 class・斤量
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def phase_c_engine():
+    """passing / weight_carried / race_class を埋めた 2 戦の履歴。"""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    base = date(2024, 6, 15)
+
+    with Session(engine) as session:
+        session.add(Horse(horse_id="H001", name=None))
+        # R1 (古い): passing 2-3 (前付け), agari 34.0, 斤量 54, G3
+        # R2 (新しい=前走): passing 8-7 (後方), agari 35.5, 斤量 55, G1
+        races = [
+            ("R001", base - timedelta(days=30), "2-3", 34.0, 54.0, "G3", 1, 10),
+            ("R002", base - timedelta(days=5),  "8-7", 35.5, 55.0, "G1", 4, 10),
+        ]
+        for rid, d, _pass, _ag, _wc, rc, _fin, nr in races:
+            session.add(Race(
+                race_id=rid, date=d.isoformat(), course="東京", surface="芝",
+                distance=1600, race_class=rc, n_runners=nr,
+            ))
+        session.flush()
+        for rid, _d, passing, agari, wc, _rc, fin, _nr in races:
+            session.add(Entry(
+                race_id=rid, horse_id="H001", post_position=1,
+                finish_position=fin, agari_3f=agari, passing=passing,
+                weight_carried=wc,
+            ))
+        session.commit()
+    yield engine
+    engine.dispose()
+
+
+def test_phase_c_position_ratio_and_best_agari(phase_c_engine):
+    """early/late position ratio, best agari, 前走 class/斤量 が正しく計算される。"""
+    with Session(phase_c_engine) as session:
+        r = compute_horse_history(
+            session, horse_id="H001", before_date=date(2024, 6, 15),
+            distance=1600, course="東京",
+        )
+    # early = mean(2/10, 8/10) = 0.5 ; late = mean(3/10, 7/10) = 0.5
+    assert r["recent_early_position_ratio"] == pytest.approx(0.5)
+    assert r["recent_late_position_ratio"] == pytest.approx(0.5)
+    # best agari = min(34.0, 35.5) = 34.0
+    assert r["recent_best_agari_3f"] == pytest.approx(34.0)
+    # 前走 = R002 (most recent): G1 weight, 斤量 55
+    assert r["last_class_weight"] == pytest.approx(float(race_class_weight("G1")))
+    assert r["last_weight_carried"] == pytest.approx(55.0)
+
+
+def test_phase_c_cache_parity(phase_c_engine):
+    """新規 Phase C キーも SQL/cache で一致する。"""
+    with Session(phase_c_engine) as session:
+        cache = build_horse_history_cache(session)
+        sql = compute_horse_history(
+            session, horse_id="H001", before_date=date(2024, 6, 15),
+            distance=1600, course="東京",
+        )
+        cac = compute_horse_history_from_cache(
+            cache, horse_id="H001", before_date=date(2024, 6, 15),
+            distance=1600, course="東京",
+        )
+    _assert_dicts_equal(sql, cac, ctx="(phase C)")
+
+
+def test_phase_c_clip_when_passing_exceeds_runners(phase_c_engine):
+    """passing 位置 > 頭数 の異常データでも ratio は [0,1] にクリップされる。"""
+    # n_runners を 5 に上書きして passing 8-7 が 8/5=1.6 → 1.0 にクリップされるか
+    with Session(phase_c_engine) as session:
+        session.query(Race).filter(Race.race_id == "R002").update({"n_runners": 5})
+        session.commit()
+        r = compute_horse_history(
+            session, horse_id="H001", before_date=date(2024, 6, 15),
+        )
+    # R001: early 2/10=0.2, late 3/10=0.3 ; R002: early min(8/5,1)=1.0, late min(7/5,1)=1.0
+    assert r["recent_early_position_ratio"] == pytest.approx((0.2 + 1.0) / 2)
+    assert r["recent_late_position_ratio"] == pytest.approx((0.3 + 1.0) / 2)
+
+
+# ---------------------------------------------------------------------------
 # Q4: race-level features
 # ---------------------------------------------------------------------------
 
 
 from features.horse_history import (
     is_high_class,
-    race_class_weight,
 )
 
 

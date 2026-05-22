@@ -150,6 +150,11 @@ def _passing_std(positions: list[int] | None) -> float:
     return float(statistics.pstdev(positions))
 
 
+def _clip01(x: float) -> float:
+    """[0, 1] にクリップ。passing 位置 / 頭数 の異常値 (>1 や負) 対策。"""
+    return min(max(x, 0.0), 1.0)
+
+
 def _empty_horse_history() -> dict[str, float | int | None]:
     """履歴 0 件のときの返却値テンプレート。SQL/cache 両方が同一を返すよう一元化。"""
     nan = math.nan
@@ -173,6 +178,12 @@ def _empty_horse_history() -> dict[str, float | int | None]:
         "recent_best_margin_in_top3": nan,
         "recent_avg_position_change": nan,
         "recent_passing_volatility": nan,
+        # Phase C
+        "recent_early_position_ratio": nan,
+        "recent_late_position_ratio": nan,
+        "recent_best_agari_3f": nan,
+        "last_class_weight": nan,
+        "last_weight_carried": nan,
     }
 
 
@@ -323,11 +334,14 @@ def compute_horse_history(
     )
 
     # Phase B: margin / finish_time / passing 由来の特徴量
+    # Phase C: 脚質 (passing 前後位置 ratio) も同じループで集める。
     margin_values: list[float] = []
     top3_margins: list[float] = []
     finish_time_norms: list[float] = []
     position_changes: list[float] = []
     passing_stds: list[float] = []
+    early_position_ratios: list[float] = []
+    late_position_ratios: list[float] = []
     for r in recent_rows:
         m = parse_margin(r.Entry.margin)
         if m is None and r.Entry.finish_position == 1:
@@ -352,6 +366,11 @@ def compute_horse_history(
             std_val = _passing_std(passing_positions)
             if not math.isnan(std_val):
                 passing_stds.append(std_val)
+            # Phase C: 第1コーナー / 最終コーナー位置を頭数で正規化 (0=前, 1=後)。
+            n_run = r.Race.n_runners
+            if n_run is not None and n_run > 0:
+                early_position_ratios.append(_clip01(passing_positions[0] / n_run))
+                late_position_ratios.append(_clip01(passing_positions[-1] / n_run))
 
     recent_avg_margin = (
         sum(margin_values) / len(margin_values) if margin_values else nan
@@ -366,6 +385,24 @@ def compute_horse_history(
     recent_passing_volatility = (
         sum(passing_stds) / len(passing_stds) if passing_stds else nan
     )
+
+    # Phase C: 脚質 / 瞬発ピーク / 前走属性
+    recent_early_position_ratio = (
+        sum(early_position_ratios) / len(early_position_ratios)
+        if early_position_ratios
+        else nan
+    )
+    recent_late_position_ratio = (
+        sum(late_position_ratios) / len(late_position_ratios)
+        if late_position_ratios
+        else nan
+    )
+    recent_best_agari_3f = min(agari_values) if agari_values else nan
+    # 前走 (most recent past race) の class weight / 斤量 — builder が今走値との
+    # 差 (class_change / weight_carried_diff) を計算するための raw 値。
+    last_class_weight = float(race_class_weight(rows[0].Race.race_class))
+    _last_wc = rows[0].Entry.weight_carried
+    last_weight_carried = float(_last_wc) if _last_wc is not None else nan
 
     return {
         "recent_avg_finish": recent_avg_finish,
@@ -387,6 +424,12 @@ def compute_horse_history(
         "recent_best_margin_in_top3": recent_best_margin_in_top3,
         "recent_avg_position_change": recent_avg_position_change,
         "recent_passing_volatility": recent_passing_volatility,
+        # Phase C
+        "recent_early_position_ratio": recent_early_position_ratio,
+        "recent_late_position_ratio": recent_late_position_ratio,
+        "recent_best_agari_3f": recent_best_agari_3f,
+        "last_class_weight": last_class_weight,
+        "last_weight_carried": last_weight_carried,
     }
 
 
@@ -430,11 +473,13 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
             Race.distance,
             Race.course,
             Race.race_class,
+            Race.n_runners,
             Entry.finish_position,
             Entry.agari_3f,
             Entry.margin,
             Entry.finish_time,
             Entry.passing,
+            Entry.weight_carried,
         )
         .join(Race, Entry.race_id == Race.race_id)
     )
@@ -442,9 +487,9 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
     df = pd.DataFrame(
         rows,
         columns=[
-            "horse_id", "date", "distance", "course", "race_class",
+            "horse_id", "date", "distance", "course", "race_class", "n_runners",
             "finish_position", "agari_3f",
-            "margin", "finish_time", "passing",
+            "margin", "finish_time", "passing", "weight_carried",
         ],
     )
     # Pre-compute class_weight column once (vectorised) so per-pair lookup
@@ -472,6 +517,14 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
         lambda lst: float(lst[-1]) if lst else math.nan
     )
     df["position_change"] = df["passing_last_pos"] - df["finish_position"]
+
+    # Phase C: 脚質 — 第1コーナー / 最終コーナー位置を頭数で正規化 (0=前, 1=後)。
+    df["passing_first_pos"] = passing_lists.map(
+        lambda lst: float(lst[0]) if lst else math.nan
+    )
+    n_runners_safe = df["n_runners"].where(df["n_runners"] > 0)
+    df["early_position_ratio"] = (df["passing_first_pos"] / n_runners_safe).clip(0.0, 1.0)
+    df["late_position_ratio"] = (df["passing_last_pos"] / n_runners_safe).clip(0.0, 1.0)
 
     # Sort by date desc so head(n_recent) gives the n most recent races.
     # Stable sort keeps insertion order across ties (rare but harmless).
@@ -602,6 +655,26 @@ def compute_horse_history_from_cache(
     pv_recent = recent["passing_std"].dropna() if "passing_std" in recent.columns else pd.Series(dtype=float)
     recent_passing_volatility = float(pv_recent.mean()) if not pv_recent.empty else nan
 
+    # Phase C: 脚質 (early/late position ratio) / 瞬発ピーク / 前走属性
+    epr_recent = (
+        recent["early_position_ratio"].dropna()
+        if "early_position_ratio" in recent.columns else pd.Series(dtype=float)
+    )
+    recent_early_position_ratio = float(epr_recent.mean()) if not epr_recent.empty else nan
+
+    lpr_recent = (
+        recent["late_position_ratio"].dropna()
+        if "late_position_ratio" in recent.columns else pd.Series(dtype=float)
+    )
+    recent_late_position_ratio = float(lpr_recent.mean()) if not lpr_recent.empty else nan
+
+    recent_best_agari_3f = float(agari_recent.min()) if not agari_recent.empty else nan
+
+    # 前走 (most recent past row = h.iloc[0]) の class weight / 斤量。
+    last_class_weight = float(h["class_weight"].iloc[0]) if "class_weight" in h.columns else nan
+    _last_wc = h["weight_carried"].iloc[0] if "weight_carried" in h.columns else None
+    last_weight_carried = float(_last_wc) if pd.notna(_last_wc) else nan
+
     return {
         "recent_avg_finish": recent_avg_finish,
         "recent_n_starts": int(len(h)),
@@ -622,4 +695,10 @@ def compute_horse_history_from_cache(
         "recent_best_margin_in_top3": recent_best_margin_in_top3,
         "recent_avg_position_change": recent_avg_position_change,
         "recent_passing_volatility": recent_passing_volatility,
+        # Phase C
+        "recent_early_position_ratio": recent_early_position_ratio,
+        "recent_late_position_ratio": recent_late_position_ratio,
+        "recent_best_agari_3f": recent_best_agari_3f,
+        "last_class_weight": last_class_weight,
+        "last_weight_carried": last_weight_carried,
     }

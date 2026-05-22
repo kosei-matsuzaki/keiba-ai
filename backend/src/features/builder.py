@@ -50,6 +50,7 @@ from features.horse_history import (
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,
+    race_class_weight,
 )
 from features.jockey import (
     JockeyHistoryCache,
@@ -134,6 +135,12 @@ FEATURE_COLUMNS: list[str] = [
     # Pedigree (PR-C)
     "sire_progeny_win_rate",
     "dam_progeny_win_rate",
+    # Phase C: 脚質 / 瞬発ピーク / クラス・斤量の動き
+    "recent_early_position_ratio",   # 平均(第1コーナー位置/頭数): 逃(低)〜追(高)
+    "recent_late_position_ratio",    # 平均(最終コーナー位置/頭数): 勝負所の位置
+    "recent_best_agari_3f",          # 直近最速上がり3F (瞬発ピーク)
+    "class_change",                  # 今走 class weight − 前走 (昇級+/降級−)
+    "weight_carried_diff",           # 今走 斤量 − 前走 斤量
 ]
 
 CATEGORICAL_FEATURES: list[str] = [
@@ -301,6 +308,25 @@ def _build_entry_row(
     row.update(jockey_feats)
     row.update(trainer_feats)
     row.update(pedigree_feats)
+
+    # Phase C: 今走の class / 斤量 と 前走 (horse_feats の last_*) との差分。
+    # last_* が NaN (デビュー等) のときは差分も NaN。両モデルが NaN を処理する。
+    last_cw = horse_feats.get("last_class_weight", math.nan)
+    if last_cw is not None and not (isinstance(last_cw, float) and math.isnan(last_cw)):
+        row["class_change"] = float(race_class_weight(race.race_class)) - float(last_cw)
+    else:
+        row["class_change"] = math.nan
+
+    last_wc = horse_feats.get("last_weight_carried", math.nan)
+    if (
+        entry.weight_carried is not None
+        and last_wc is not None
+        and not (isinstance(last_wc, float) and math.isnan(last_wc))
+    ):
+        row["weight_carried_diff"] = float(entry.weight_carried) - float(last_wc)
+    else:
+        row["weight_carried_diff"] = math.nan
+
     return row
 
 

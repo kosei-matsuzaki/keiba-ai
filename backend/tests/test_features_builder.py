@@ -189,10 +189,23 @@ def test_horse_weight_pct_bounded(syn_engine):
 
 
 def test_feature_columns_count():
-    """FEATURE_COLUMNS should have exactly 46 columns:
-    24 original + 14 (PR-C extensions) + 3 (Q4 race-level) + 5 (Phase B margin/passing).
+    """FEATURE_COLUMNS should have exactly 51 columns:
+    24 original + 14 (PR-C extensions) + 3 (Q4 race-level) + 5 (Phase B margin/passing)
+    + 5 (Phase C 脚質/瞬発/クラス・斤量の動き).
     """
-    assert len(FEATURE_COLUMNS) == 46
+    assert len(FEATURE_COLUMNS) == 51
+
+
+def test_phase_c_features_present():
+    """Phase C で追加した 5 特徴量が FEATURE_COLUMNS に含まれる。"""
+    for col in (
+        "recent_early_position_ratio",
+        "recent_late_position_ratio",
+        "recent_best_agari_3f",
+        "class_change",
+        "weight_carried_diff",
+    ):
+        assert col in FEATURE_COLUMNS, f"{col} missing from FEATURE_COLUMNS"
 
 
 def test_high_cardinality_id_features_not_in_feature_columns():
