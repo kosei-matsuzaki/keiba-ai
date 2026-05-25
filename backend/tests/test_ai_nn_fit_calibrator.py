@@ -95,6 +95,22 @@ def test_calibrator_loaded_into_bundle(tmp_path):
     assert bundle.nn_calibrator.fitted
 
 
+def test_place_calibrator_loaded_into_bundle(tmp_path):
+    """fit_and_save も place_calibrator.pkl を作り、load_model_full が拾う。"""
+    from ai.nn.fit_calibrator import fit_and_save
+    from ai.registry import load_model_full
+
+    db_file, model_dir = _train_minimal_nn(tmp_path)
+    result = fit_and_save(model_path=model_dir, db=db_file)
+
+    assert (model_dir / "place_calibrator.pkl").exists()
+    assert "place" in result and "before" in result["place"] and "after" in result["place"]
+
+    bundle = load_model_full(model_dir)
+    assert bundle.place_calibrator is not None
+    assert bundle.place_calibrator.fitted
+
+
 def test_predict_race_applies_calibrator(tmp_path):
     """predict_race output sums to ~1 per race after calibration."""
     import numpy as np

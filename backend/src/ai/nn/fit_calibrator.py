@@ -52,7 +52,7 @@ def _collect_predictions(
     db: Path | None,
     start: str | None,
     end: str | None,
-) -> tuple[np.ndarray, np.ndarray, int]:
+) -> dict[str, np.ndarray | int]:
     """Run predict_race on every race in the window and return flat arrays.
 
     The bundle's nn_calibrator is forcibly cleared during this pass so that
@@ -60,9 +60,9 @@ def _collect_predictions(
     uncalibrated) outputs the IsotonicCalibrator should learn to correct.
 
     Returns:
-        (win_probs, is_winner, n_races)
-        win_probs and is_winner are 1-D arrays of equal length (one entry per
-        evaluated horse). n_races is the number of races used.
+        dict with keys: win_prob, is_winner, place_prob, placed (1-D arrays,
+        one entry per evaluated horse), and n_races (int). `placed` is 1 when
+        finish_position <= 3.
     """
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
@@ -71,8 +71,9 @@ def _collect_predictions(
         raise ValueError(
             f"--model must point to a NN model directory; got model_type={bundle.model_type}"
         )
-    # Re-fit must operate on uncalibrated NN output so we strip any existing one.
+    # Re-fit must operate on uncalibrated NN output so we strip any existing ones.
     bundle.nn_calibrator = None
+    bundle.place_calibrator = None
 
     log.info("Building feature frame from %s in window %s..%s", resolved_db, start, end)
     with session_scope(engine) as session:
@@ -85,7 +86,9 @@ def _collect_predictions(
         )
 
     win_chunks: list[np.ndarray] = []
-    win_chunks_outcome: list[np.ndarray] = []
+    win_outcome: list[np.ndarray] = []
+    place_chunks: list[np.ndarray] = []
+    place_outcome: list[np.ndarray] = []
     n_races = 0
     for _race_id, race_frame in frame.groupby("race_id"):
         if len(race_frame) < 2:
@@ -98,19 +101,21 @@ def _collect_predictions(
         if merged.empty:
             continue
         win_chunks.append(merged["win_prob"].to_numpy(dtype=np.float64))
-        win_chunks_outcome.append(
-            (merged["finish_position"] == 1).astype(np.float64).to_numpy()
-        )
+        win_outcome.append((merged["finish_position"] == 1).astype(np.float64).to_numpy())
+        place_chunks.append(merged["place_prob"].to_numpy(dtype=np.float64))
+        place_outcome.append((merged["finish_position"] <= 3).astype(np.float64).to_numpy())
         n_races += 1
 
     if not win_chunks:
         raise RuntimeError("No usable races after filtering — cannot fit calibrator.")
 
-    return (
-        np.concatenate(win_chunks),
-        np.concatenate(win_chunks_outcome),
-        n_races,
-    )
+    return {
+        "win_prob": np.concatenate(win_chunks),
+        "is_winner": np.concatenate(win_outcome),
+        "place_prob": np.concatenate(place_chunks),
+        "placed": np.concatenate(place_outcome),
+        "n_races": n_races,
+    }
 
 
 def _brier(probs: np.ndarray, outcomes: np.ndarray) -> float:
@@ -143,11 +148,15 @@ def fit_and_save(
     end: str | None = None,
     force: bool = False,
 ) -> dict:
-    """Fit + persist nn_calibrator.pkl. Returns before/after diagnostics."""
-    target = Path(model_path) / "nn_calibrator.pkl"
-    if target.exists() and not force:
+    """Fit + persist nn_calibrator.pkl (win) and place_calibrator.pkl (place).
+
+    Returns before/after Brier/ECE diagnostics for both heads.
+    """
+    win_target = Path(model_path) / "nn_calibrator.pkl"
+    place_target = Path(model_path) / "place_calibrator.pkl"
+    if (win_target.exists() or place_target.exists()) and not force:
         raise FileExistsError(
-            f"{target} already exists. Re-run with --force to overwrite."
+            f"{win_target} or {place_target} already exists. Re-run with --force to overwrite."
         )
 
     meta_path = Path(model_path) / "meta.json"
@@ -160,39 +169,40 @@ def fit_and_save(
             )
 
     log.info("Fit window: %s .. %s", start, end)
-    raw_probs, outcomes, n_races = _collect_predictions(
-        model_path=Path(model_path), db=db, start=start, end=end
-    )
-    log.info(
-        "Collected %d (raw_prob, outcome) pairs across %d races", len(raw_probs), n_races
-    )
+    data = _collect_predictions(model_path=Path(model_path), db=db, start=start, end=end)
+    n_races = int(data["n_races"])
+    log.info("Collected %d entries across %d races", len(data["win_prob"]), n_races)
 
-    before_brier = _brier(raw_probs, outcomes)
-    before_ece = _ece(raw_probs, outcomes)
-    log.info("Before calibration: Brier=%.4f, ECE=%.4f", before_brier, before_ece)
+    def _fit_head(raw: np.ndarray, outcome: np.ndarray, target: Path, label: str) -> dict:
+        b_brier, b_ece = _brier(raw, outcome), _ece(raw, outcome)
+        cal = IsotonicCalibrator()
+        cal.fit(raw, outcome)
+        after = cal.iso.predict(raw)  # flat-array diagnostics (no renormalisation)
+        a_brier, a_ece = _brier(after, outcome), _ece(after, outcome)
+        log.info(
+            "[%s] Before: Brier=%.4f ECE=%.4f -> After: Brier=%.4f ECE=%.4f",
+            label, b_brier, b_ece, a_brier, a_ece,
+        )
+        with target.open("wb") as f:
+            pickle.dump(cal, f)
+        log.info("Saved %s calibrator to %s", label, target)
+        return {"before": {"brier": b_brier, "ece": b_ece},
+                "after": {"brier": a_brier, "ece": a_ece}, "saved_to": str(target)}
 
-    calibrator = IsotonicCalibrator()
-    calibrator.fit(raw_probs, outcomes)
-
-    # In-sample diagnostics (no race-level re-normalisation; matches the
-    # _ece convention from ai.calibration_diagnosis on flat arrays).
-    after_probs = calibrator.iso.predict(raw_probs)
-    after_brier = _brier(after_probs, outcomes)
-    after_ece = _ece(after_probs, outcomes)
-    log.info("After  calibration: Brier=%.4f, ECE=%.4f", after_brier, after_ece)
-
-    with target.open("wb") as f:
-        pickle.dump(calibrator, f)
-    log.info("Saved calibrator to %s", target)
+    win_diag = _fit_head(data["win_prob"], data["is_winner"], win_target, "win")
+    place_diag = _fit_head(data["place_prob"], data["placed"], place_target, "place")
 
     return {
         "model_path": str(model_path),
         "n_races": n_races,
-        "n_entries": int(len(raw_probs)),
+        "n_entries": int(len(data["win_prob"])),
         "window": {"start": start, "end": end},
-        "before": {"brier": before_brier, "ece": before_ece},
-        "after": {"brier": after_brier, "ece": after_ece},
-        "saved_to": str(target),
+        "win": win_diag,
+        "place": place_diag,
+        # backward-compat top-level keys mirror the win head
+        "before": win_diag["before"],
+        "after": win_diag["after"],
+        "saved_to": win_diag["saved_to"],
     }
 
 

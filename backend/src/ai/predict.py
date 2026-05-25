@@ -107,6 +107,7 @@ def predict_race_gbdt(
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
     temperature_scaler: "TemperatureScaler | None" = None,
+    place_calibrator: IsotonicCalibrator | None = None,
 ) -> pd.DataFrame:
     """Score all horses in a single race and return calibrated probabilities.
 
@@ -196,6 +197,12 @@ def predict_race_gbdt(
 
     place_temperature = temperature_scaler.T_place if temperature_scaler is not None else 1.0
     place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
+
+    # Post-hoc isotonic calibration of place_prob. Unlike win_prob, place
+    # probabilities don't sum to 1 over a race (3 horses place), so we apply a
+    # plain monotonic mapping without per-race re-normalisation (normalise=False).
+    if place_calibrator is not None:
+        place_probs = place_calibrator.predict(place_probs, normalise=False)
 
     result = pd.DataFrame(
         {
@@ -645,6 +652,7 @@ def predict_race(
         calibrator=bundle.calibrator,
         loss_type=bundle.meta.get("loss_type"),
         temperature_scaler=bundle.temperature_scaler,
+        place_calibrator=bundle.place_calibrator,
     )
 
 
@@ -725,6 +733,10 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
 
     place_temperature = ts.T_place if ts is not None else 1.0
     place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
+
+    # Post-hoc isotonic calibration of place_prob (no per-race renormalisation).
+    if bundle.place_calibrator is not None:
+        place_probs = bundle.place_calibrator.predict(place_probs, normalise=False)
 
     # GBDT ensemble (inference-time blending of win/place prob; ranking score
     # stays as the NN's so combinations and ordering are unaffected).  Skipped

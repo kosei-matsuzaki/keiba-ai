@@ -252,6 +252,11 @@ class ModelBundle:
     # GBDT bundles (GBDT uses `calibrator` above) and for NN models trained
     # before the calibrator path was introduced.
     nn_calibrator: IsotonicCalibrator | None = None
+    # Post-hoc isotonic calibrator for place_prob (GBDT / NN 共通). place_prob は
+    # PL Monte Carlo 由来で未校正のため穴の複勝率を過大評価しがち。win とは別に
+    # place 結果で fit した monotonic 補正を適用する (race 内で合計 1 にならない
+    # ので normalise=False)。optional — 無い旧モデルは未校正のまま。
+    place_calibrator: IsotonicCalibrator | None = None
     # 温度スケーリング (GBDT / NN 共通; optional)
     temperature_scaler: TemperatureScaler | None = None
 
@@ -285,6 +290,9 @@ def load_model_full(path: Path) -> ModelBundle:
     model_type = meta.get("model_type", "gbdt")
     feature_columns: list[str] = meta.get("feature_columns", list(FEATURE_COLUMNS))
 
+    # place_calibrator.pkl は GBDT / NN 共通の optional artifact。
+    place_calibrator = _load_place_calibrator(path)
+
     if model_type == "nn":
         nn_artifacts = load_nn_artifacts(path, meta)
         return ModelBundle(
@@ -300,6 +308,7 @@ def load_model_full(path: Path) -> ModelBundle:
             temperature_scaler=nn_artifacts["temperature_scaler"],
             combo_calibrators=nn_artifacts["combo_calibrators"],
             nn_calibrator=nn_artifacts.get("nn_calibrator"),
+            place_calibrator=place_calibrator,
         )
 
     gbdt_artifacts = load_gbdt_artifacts(path)
@@ -313,7 +322,19 @@ def load_model_full(path: Path) -> ModelBundle:
         calibrator=gbdt_artifacts["calibrator"],
         combo_calibrators=gbdt_artifacts["combo_calibrators"],
         temperature_scaler=gbdt_artifacts["temperature_scaler"],
+        place_calibrator=place_calibrator,
     )
+
+
+def _load_place_calibrator(path: Path) -> IsotonicCalibrator | None:
+    """Load place_calibrator.pkl from a model dir if present (optional)."""
+    from ai._registry_gbdt import _pickle_load  # noqa: PLC0415 — shared unpickler
+
+    cal_path = path / "place_calibrator.pkl"
+    if not cal_path.exists():
+        return None
+    with cal_path.open("rb") as f:
+        return _pickle_load(f)
 
 
 def set_active(model_path: Path, session: Session) -> None:
@@ -356,8 +377,11 @@ def renumber_model_ids(session: Session) -> None:
     """ModelRun.id を created_at 昇順で 1, 2, 3, ... に振り直す。
 
     削除を繰り返すと autoincrement のせいで「モデル 1 個しかないのに id=13」のような
-    飛び番が残りがちなので、削除後に呼んで詰める。他テーブルから ModelRun.id への
-    FK 参照は存在しない (grep 確認済み) ため、安全に振り直せる。
+    飛び番が残りがちなので、削除後に呼んで詰める。
+
+    simulation_runs.model_run_id が ModelRun.id を FK 参照する (ON UPDATE CASCADE)
+    ため、ここで id を振り直すと子の参照も自動追従する。FK enforcement は
+    db/session.py の PRAGMA foreign_keys=ON 前提。
 
     主キー UPDATE で衝突しないよう、一度全 id を +1_000_000 にオフセットしてから
     1..N の本番値を割り当てる。AUTOINCREMENT を使うテーブルがある場合は
