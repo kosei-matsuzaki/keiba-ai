@@ -359,6 +359,55 @@ def test_evaluate_fixed_bet_sizing_recorded(trained_scenario):
 
 
 # ---------------------------------------------------------------------------
+# Place odds mode (leak-free estimated vs legacy min_payout)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_place_odds_mode_recorded(trained_scenario):
+    """place_odds_mode が metrics に記録され、default は 'estimated' (leak-free)。"""
+    db_file, model_dir = trained_scenario
+    default = evaluate(model_path=model_dir, db=db_file)
+    assert default["place_odds_mode"] == "estimated"
+
+    legacy = evaluate(model_path=model_dir, db=db_file, place_odds_mode="min_payout")
+    assert legacy["place_odds_mode"] == "min_payout"
+    assert legacy["place_takeout"] is None  # only set in estimated mode
+
+
+def test_estimate_place_odds_favorite_lower_than_longshot():
+    """_estimate_place_odds: 人気馬(低オッズ)の複勝オッズ < 穴(高オッズ)。"""
+    from ai.evaluate import _estimate_place_odds
+
+    # 10 頭立て (k=3 なので頭数 > 3 で P(top3) が馬ごとに差が出る)
+    rf = pd.DataFrame({
+        "horse_id": [f"h{i}" for i in range(10)],
+        "odds_win": [1.5, 6.0, 60.0, 8.0, 12.0, 20.0, 30.0, 45.0, 80.0, 100.0],
+    })
+    est = _estimate_place_odds(rf)
+    assert len(est) == 10
+    assert all(v > 0 for v in est.values())
+    # 人気ほど複勝も付かない (decimal odds 小)
+    assert est["h0"] < est["h1"] < est["h2"]  # fav < mid < longshot
+
+
+def test_estimate_place_odds_handles_missing_odds():
+    """odds_win が欠損/不正でも落ちず、有効頭数 < 2 なら空 dict。"""
+    from ai.evaluate import _estimate_place_odds
+
+    rf = pd.DataFrame({"horse_id": ["a", "b"], "odds_win": [None, float("nan")]})
+    assert _estimate_place_odds(rf) == {}
+
+
+def test_evaluate_place_odds_modes_differ(trained_scenario):
+    """estimated と min_payout で place の挙動が変わりうる (どちらも完走する)。"""
+    db_file, model_dir = trained_scenario
+    est = evaluate(model_path=model_dir, db=db_file, place_odds_mode="estimated")
+    leg = evaluate(model_path=model_dir, db=db_file, place_odds_mode="min_payout")
+    for m in (est, leg):
+        assert "payback_place" in m and "place_bets" in m
+
+
+# ---------------------------------------------------------------------------
 # Bootstrap CI tests
 # ---------------------------------------------------------------------------
 

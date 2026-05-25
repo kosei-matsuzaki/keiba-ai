@@ -36,6 +36,7 @@ import pandas as pd
 from sklearn.metrics import ndcg_score
 from sqlalchemy import select
 
+from ai.calibrate import plackett_luce_place_prob
 from ai.labels import assign_relevance
 from ai.predict import predict_race
 from ai.registry import load_model_full
@@ -118,6 +119,34 @@ def _bet_excluded(
         if max_popularity is not None and pop_int > max_popularity:
             return True
     return False
+
+
+def _estimate_place_odds(
+    race_frame: pd.DataFrame,
+    k: int = 3,
+    takeout: float = 0.20,
+) -> dict[str, float]:
+    """Estimate each horse's 複勝 decimal odds from PRE-RACE win odds (leak-free).
+
+    The legacy place-EV path used `min(confirmed post-race place payouts)` as the
+    odds for every horse — a lookahead leak (the bet decision peeked at the race
+    result). This estimates place odds using only entries.odds_win (known before
+    the off): win odds → implied win prob → Plackett-Luce P(top-k) → fair place
+    odds discounted by the place-pool takeout.
+
+    Returns {horse_id: estimated_place_decimal_odds}. Horses without a usable
+    odds_win are omitted. Returns {} when fewer than 2 horses have odds.
+    """
+    sub = race_frame[["horse_id", "odds_win"]].copy()
+    sub = sub[sub["odds_win"].notna() & (sub["odds_win"] > 0)]
+    if len(sub) < 2:
+        return {}
+    implied = 1.0 / sub["odds_win"].to_numpy(dtype=np.float64)
+    implied = implied / implied.sum()  # strip the win-pool overround
+    scores = np.log(np.clip(implied, 1e-12, None))
+    p_top_k = np.clip(plackett_luce_place_prob(scores, k=k), 1e-6, 1.0)
+    est_odds = (1.0 - takeout) / p_top_k
+    return dict(zip(sub["horse_id"].to_numpy(), est_odds, strict=False))
 
 
 def _parse_payout_place(json_str: str | None) -> dict[int, int]:
@@ -425,6 +454,8 @@ def evaluate(
     bootstrap_iters: int = 0,
     bootstrap_seed: int = 42,
     bundle: ModelBundle | None = None,
+    place_odds_mode: str = "estimated",
+    place_takeout: float = 0.20,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
@@ -573,22 +604,35 @@ def evaluate(
 
         payout_place_map = _parse_payout_place(payout_place_raw)
         if payout_place_map:
-            # Determine the minimum payout across 1st/2nd/3rd place for EV calculation.
-            # Using min payout gives a conservative estimate of expected return.
-            min_payout = min(payout_place_map.values())
-            # min_payout is in yen per 100 yen bet, so odds = min_payout / 100
-            min_odds = min_payout / 100.0
+            # Odds used for the place EV / Kelly *decision*:
+            #   "estimated" (default, leak-free): per-horse 複勝 odds estimated
+            #     from PRE-RACE win odds via Plackett-Luce.
+            #   "min_payout" (legacy): min(confirmed post-race payout) shared by
+            #     all horses — a lookahead leak kept only for back-compat / A-B.
+            # Settlement (realized payout) always uses the confirmed payout_place.
+            if place_odds_mode == "estimated":
+                est_place_odds = _estimate_place_odds(race_frame, takeout=place_takeout)
+                min_odds = None  # not used in this mode
+            else:
+                min_odds = min(payout_place_map.values()) / 100.0
+                est_place_odds = None
 
             for rank, (_, row) in enumerate(preds.iterrows()):
                 if _bet_excluded(
                     rank, row, exclude_top_rank, min_popularity, max_popularity
                 ):
                     continue
-                ev = row["place_prob"] * min_odds
+                if est_place_odds is not None:
+                    place_odds = est_place_odds.get(row["horse_id"])
+                    if place_odds is None:
+                        continue  # no pre-race odds → cannot price this bet
+                else:
+                    place_odds = min_odds
+                ev = row["place_prob"] * place_odds
                 if ev > place_ev_threshold:
                     if use_kelly:
                         place_bet_size = kelly_bet_size(
-                            float(row["place_prob"]), min_odds, bankroll,
+                            float(row["place_prob"]), place_odds, bankroll,
                             kappa=kelly_kappa,
                         )
                         if place_bet_size == 0:
@@ -646,6 +690,8 @@ def evaluate(
         "bet_sizing": bet_sizing,
         "kelly_kappa": float(kelly_kappa) if use_kelly else None,
         "bankroll": float(bankroll) if use_kelly else None,
+        "place_odds_mode": place_odds_mode,
+        "place_takeout": float(place_takeout) if place_odds_mode == "estimated" else None,
     }
 
     if bootstrap_iters > 0 and n_races > 0:
@@ -778,6 +824,23 @@ def _cli() -> None:
         default=42,
         help="RNG seed for bootstrap resampling. Default 42 (reproducible).",
     )
+    parser.add_argument(
+        "--place-odds-mode",
+        choices=["estimated", "min_payout"],
+        default="estimated",
+        help=(
+            "Odds source for the place EV decision. 'estimated' (default, "
+            "leak-free) prices each horse's 複勝 odds from pre-race win odds via "
+            "Plackett-Luce. 'min_payout' is the legacy min(confirmed payout) — a "
+            "lookahead leak, kept for A/B comparison only."
+        ),
+    )
+    parser.add_argument(
+        "--place-takeout",
+        type=float,
+        default=0.20,
+        help="Place-pool takeout for the estimated place odds (default 0.20).",
+    )
     args = parser.parse_args()
 
     metrics = evaluate(
@@ -797,6 +860,8 @@ def _cli() -> None:
         bankroll=args.bankroll,
         bootstrap_iters=args.bootstrap_iters,
         bootstrap_seed=args.bootstrap_seed,
+        place_odds_mode=args.place_odds_mode,
+        place_takeout=args.place_takeout,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
