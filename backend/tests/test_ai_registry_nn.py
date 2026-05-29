@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 import torch
 
 from ai.nn.model import RaceModel
@@ -156,7 +155,7 @@ def test_load_model_full_nn_weights_preserved(tmp_path):
     loaded = bundle.nn_model
 
     for (n1, p1), (n2, p2) in zip(
-        original.state_dict().items(), loaded.state_dict().items()
+        original.state_dict().items(), loaded.state_dict().items(), strict=True,
     ):
         assert n1 == n2
         assert torch.allclose(p1, p2), f"Weight mismatch for {n1}"
@@ -283,7 +282,6 @@ def test_load_model_full_nn_arch_v2(tmp_path):
 
 def test_load_model_full_gbdt_not_affected(tmp_path, monkeypatch):
     """load_model_full on a GBDT dir still returns GBDT ModelBundle."""
-    import os
     monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
 
     from sqlalchemy import create_engine

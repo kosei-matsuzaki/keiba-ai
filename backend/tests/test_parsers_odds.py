@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from scraper.parsers.odds import (
-    LiveOddsRow,
     _parse_odds_text,
     _parse_range_odds,
     parse_sanrenpuku_odds,

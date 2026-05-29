@@ -129,7 +129,7 @@ def get_recommendations(
 
     # Join post_position from frame so recommend_for_race can build top_pps.
     # predict_race returns horse_id-indexed rows without post_position.
-    pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values))
+    pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values, strict=True))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
     # Step 4: resolve confirmed + implied odds + per-combo source

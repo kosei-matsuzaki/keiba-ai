@@ -232,7 +232,9 @@ def parse_payouts(html: str) -> list[PayoutRow]:
                         bet_type, len(combos_raw), len(amounts),
                     )
                     continue
-                for idx, (combo_str, amount_str) in enumerate(zip(combos_raw, amounts)):
+                for idx, (combo_str, amount_str) in enumerate(
+                    zip(combos_raw, amounts, strict=True)
+                ):
                     amount = _to_int(amount_str)
                     if amount is None:
                         continue
@@ -252,7 +254,9 @@ def parse_payouts(html: str) -> list[PayoutRow]:
                         bet_type, len(combos_raw), len(amounts),
                     )
                     continue
-                for idx, (combo_str, amount_str) in enumerate(zip(combos_raw, amounts)):
+                for idx, (combo_str, amount_str) in enumerate(
+                    zip(combos_raw, amounts, strict=True)
+                ):
                     amount = _to_int(amount_str)
                     if amount is None:
                         continue

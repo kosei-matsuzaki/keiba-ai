@@ -5,8 +5,6 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-import pytest
-from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from db.models.race import Race

@@ -246,7 +246,6 @@ class TestLightGBMTraining:
     def test_lgbm_trains_without_collapse(self, tmp_path):
         """LightGBM must complete training and produce non-trivial scores."""
         import lightgbm as lgb
-        import pandas as pd
         from sqlalchemy import create_engine
 
         # Build a small synthetic dataset using the existing helper

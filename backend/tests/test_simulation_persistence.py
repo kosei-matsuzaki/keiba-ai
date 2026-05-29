@@ -21,7 +21,6 @@ from ai.simulation_persistence import (
 )
 from db.base import Base
 from db.models.model_run import ModelRun
-from db.models.simulation_run import SimulationRun
 
 
 @pytest.fixture()

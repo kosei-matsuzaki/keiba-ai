@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-import pytest
 from sqlalchemy import select
 
 from db.models.payout import Payout

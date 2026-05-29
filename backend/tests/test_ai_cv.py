@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pandas as pd
-import pytest
 
 from ai.cv import rolling_origin_splits
 

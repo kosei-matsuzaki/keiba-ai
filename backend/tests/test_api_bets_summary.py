@@ -392,7 +392,7 @@ class TestBetExportCsv:
         assert "text/csv" in resp.headers["content-type"]
         # Only header row
         body = resp.content.decode("utf-8-sig")
-        lines = [l for l in body.splitlines() if l.strip()]
+        lines = [line for line in body.splitlines() if line.strip()]
         assert len(lines) == 1  # header only
 
     def test_export_has_bom(self, app_with_temp_db: FastAPI) -> None:
@@ -440,7 +440,7 @@ class TestBetExportCsv:
         with TestClient(app_with_temp_db) as client:
             resp = client.get("/api/bets/export.csv?source=recommendation")
         body = resp.content.decode("utf-8-sig")
-        lines = [l for l in body.splitlines() if l.strip()]
+        lines = [line for line in body.splitlines() if line.strip()]
         assert len(lines) == 2  # header + 1 row
 
     def test_export_notes_with_comma(self, app_with_temp_db: FastAPI) -> None:

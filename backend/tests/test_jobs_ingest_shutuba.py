@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.config import Settings
 from db.models.entry import Entry
