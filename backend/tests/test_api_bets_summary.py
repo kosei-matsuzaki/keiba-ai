@@ -415,7 +415,8 @@ class TestBetExportCsv:
                         settled_at="2024-06-01T16:00:00+00:00")
 
         with TestClient(app_with_temp_db) as client:
-            resp = client.get("/api/bets/export.csv")
+            # default range は直近 1 年なので 2024-06-01 を含む期間を明示
+            resp = client.get("/api/bets/export.csv?from=2024-01-01&to=2024-12-31")
         body = resp.content.decode("utf-8-sig")
         lines = body.splitlines()
         header = lines[0].split(",")
@@ -438,7 +439,9 @@ class TestBetExportCsv:
                         settled_at="2024-06-01T16:01:00+00:00")
 
         with TestClient(app_with_temp_db) as client:
-            resp = client.get("/api/bets/export.csv?source=recommendation")
+            resp = client.get(
+                "/api/bets/export.csv?source=recommendation&from=2024-01-01&to=2024-12-31"
+            )
         body = resp.content.decode("utf-8-sig")
         lines = [line for line in body.splitlines() if line.strip()]
         assert len(lines) == 2  # header + 1 row
@@ -463,7 +466,7 @@ class TestBetExportCsv:
             session.commit()
 
         with TestClient(app_with_temp_db) as client:
-            resp = client.get("/api/bets/export.csv")
+            resp = client.get("/api/bets/export.csv?from=2024-01-01&to=2024-12-31")
         body = resp.content.decode("utf-8-sig")
         # csv quoting ensures comma inside notes doesn't break column count
         import csv
