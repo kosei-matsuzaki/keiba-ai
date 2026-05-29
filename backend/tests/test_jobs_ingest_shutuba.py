@@ -183,9 +183,6 @@ async def test_idempotency_does_not_overwrite_confirmed_finish_position(
     db_session.add(Horse(horse_id=HORSE_ID, name="ドウデュース"))
     db_session.add(Jockey(jockey_id="01167", name="武豊"))
     db_session.add(Trainer(trainer_id="01096", name="友道康夫"))
-    # relationship() が無いと SQLAlchemy が Entry を親より先に insert することがあるため、
-    # 親 (Race/Horse/Jockey/Trainer) を確実に flush してから Entry を追加する。
-    db_session.flush()
     db_session.add(Entry(
         race_id=RACE_ID,
         horse_id=HORSE_ID,
@@ -245,9 +242,6 @@ async def test_idempotency_updates_odds_for_pending_entry(
     db_session.add(Horse(horse_id=HORSE_ID, name="ドウデュース"))
     db_session.add(Jockey(jockey_id="01167", name="武豊"))
     db_session.add(Trainer(trainer_id="01096", name="友道康夫"))
-    # relationship() が無いと SQLAlchemy が Entry を親より先に insert することがあるため、
-    # 親 (Race/Horse/Jockey/Trainer) を確実に flush してから Entry を追加する。
-    db_session.flush()
     db_session.add(Entry(
         race_id=RACE_ID,
         horse_id=HORSE_ID,
@@ -338,9 +332,6 @@ async def test_confirmed_entry_post_position_not_overwritten(
     db_session.add(Horse(horse_id=HORSE_ID, name="ドウデュース"))
     db_session.add(Jockey(jockey_id=ORIGINAL_JOCKEY_ID, name="仮騎手"))
     db_session.add(Trainer(trainer_id="01096", name="友道康夫"))
-    # relationship() が無いと SQLAlchemy が Entry を親より先に insert することがあるため、
-    # 親 (Race/Horse/Jockey/Trainer) を確実に flush してから Entry を追加する。
-    db_session.flush()
     db_session.add(Entry(
         race_id=RACE_ID,
         horse_id=HORSE_ID,

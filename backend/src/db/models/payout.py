@@ -5,10 +5,15 @@ race_id → races: CASCADE  (レース削除時に払戻記録も連動削除)
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import ForeignKey, Index, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
+
+if TYPE_CHECKING:
+    from db.models.race import Race
 
 
 class Payout(Base):
@@ -28,3 +33,7 @@ class Payout(Base):
     __table_args__ = (
         Index("ix_payouts_race_id_bet_type", "race_id", "bet_type"),
     )
+
+    # SQLAlchemy unit-of-work が parent-first insert を解決できるよう scalar
+    # relationship を 1 本だけ張る (back_populates 等は意図的に省略)。
+    race: Mapped[Race] = relationship("Race", foreign_keys=[race_id])

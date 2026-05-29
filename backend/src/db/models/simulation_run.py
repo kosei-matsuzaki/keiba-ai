@@ -7,10 +7,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
+
+if TYPE_CHECKING:
+    from db.models.model_run import ModelRun
 
 
 class SimulationRun(Base):
@@ -53,3 +58,7 @@ class SimulationRun(Base):
     by_race_class_json: Mapped[str] = mapped_column(String, nullable=False)
     by_course_json: Mapped[str] = mapped_column(String, nullable=False)
     bankroll_timeseries_json: Mapped[str] = mapped_column(String, nullable=False)
+
+    # SQLAlchemy unit-of-work が parent-first insert を解決できるよう scalar
+    # relationship を 1 本だけ張る (back_populates 等は意図的に省略)。
+    model_run: Mapped[ModelRun] = relationship("ModelRun", foreign_keys=[model_run_id])
