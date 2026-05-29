@@ -174,10 +174,22 @@ describe('UpcomingRaces table layout', () => {
     await screen.findByRole('columnheader', { name: 'AI 予想' });
   });
 
-  it('shows AI prediction top horses for a race', async () => {
+  it('does not fetch AI predictions until the button is clicked', async () => {
     renderUpcoming();
+    await screen.findByText('日本ダービー'); // races loaded
+    // ボタンを押すまで一覧の予測は走らない
+    expect(vi.mocked(fetchBulkPredictions)).not.toHaveBeenCalled();
+    expect(screen.queryByText(/①メイショウ/)).not.toBeInTheDocument();
+  });
+
+  it('shows AI prediction top horses after clicking AI 予想', async () => {
+    const user = userEvent.setup();
+    renderUpcoming();
+    await screen.findByText('日本ダービー'); // races loaded
+    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
     // 202406010101 has メイショウ as top horse
     expect(await screen.findByText(/①メイショウ/)).toBeInTheDocument();
+    expect(vi.mocked(fetchBulkPredictions)).toHaveBeenCalled();
   });
 
   it('shows 再取込 button', async () => {
@@ -215,15 +227,26 @@ describe('UpcomingRaces empty/error states', () => {
   });
 });
 
-describe('UpcomingRaces auto-bootstrap', () => {
+describe('UpcomingRaces ingest (button-driven)', () => {
   it('shows today-weekend title', async () => {
     renderUpcoming();
     expect(await screen.findByText(/今週末のレース/)).toBeInTheDocument();
   });
 
-  // ── Auto bootstrap ────────────────────────────────────────────────────────
+  // ── Button-driven ingest ────────────────────────────────────────────────
 
-  it('shows bootstrap progress banner when races are 0 and discovery starts', async () => {
+  it('does not start ingest automatically on mount when races are 0', async () => {
+    vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
+
+    renderUpcoming();
+
+    // 自動では走らず、取得ボタン付きの空状態を表示する
+    await screen.findByRole('button', { name: '今週末のレースを取得' });
+    expect(vi.mocked(discoverThisWeekendRaceIds)).not.toHaveBeenCalled();
+    expect(vi.mocked(runShutubaScraper)).not.toHaveBeenCalled();
+  });
+
+  it('shows discovery banner after clicking 取得 when races are 0', async () => {
     vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
     // Keep discovery pending to catch mid-flight UI
     let resolveDisco!: (v: DiscoverThisWeekendRaceIdsResponse) => void;
@@ -232,8 +255,13 @@ describe('UpcomingRaces auto-bootstrap', () => {
         resolveDisco = r;
       })
     );
+    const user = userEvent.setup();
 
     renderUpcoming();
+
+    await user.click(
+      await screen.findByRole('button', { name: '今週末のレースを取得' })
+    );
 
     await waitFor(() => {
       expect(screen.getByText(/今週末の JRA レースを確認中/)).toBeInTheDocument();
@@ -243,49 +271,39 @@ describe('UpcomingRaces auto-bootstrap', () => {
     resolveDisco({ ...mockDiscoverResponse, race_ids: [] });
   });
 
-  it('shows 今週末の JRA レースはありません when discover returns empty', async () => {
+  it('shows 今週末の JRA レースはありません after 取得 when discover returns empty', async () => {
     vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
     vi.mocked(discoverThisWeekendRaceIds).mockResolvedValue({
       ...mockDiscoverResponse,
       race_ids: [],
     });
+    const user = userEvent.setup();
 
     renderUpcoming();
+
+    await user.click(
+      await screen.findByRole('button', { name: '今週末のレースを取得' })
+    );
 
     await waitFor(() => {
       expect(screen.getByText('今週末の JRA レースはありません')).toBeInTheDocument();
     });
   });
 
-  it('fires runShutubaScraper with discovered race_ids when 0 races', async () => {
-    vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
-
-    renderUpcoming();
-
-    await waitFor(() => {
-      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_ids: mockDiscoverResponse.race_ids })
-      );
-    });
-  });
-
-  it('does not fire auto-bootstrap a second time after manual 再取込 click', async () => {
+  it('fires runShutubaScraper with discovered race_ids after 取得 click', async () => {
     vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
     const user = userEvent.setup();
 
     renderUpcoming();
 
-    // Wait for first auto-bootstrap
-    await waitFor(() => {
-      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledTimes(1);
-    });
+    await user.click(
+      await screen.findByRole('button', { name: '今週末のレースを取得' })
+    );
 
-    const btn = screen.getByRole('button', { name: '再取込' });
-    await user.click(btn);
-
-    // Should fire again after manual click (autoFiredRef reset)
     await waitFor(() => {
-      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
+        expect.objectContaining({ race_ids: mockDiscoverResponse.race_ids })
+      );
     });
   });
 

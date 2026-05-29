@@ -1,6 +1,6 @@
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown, Sparkles, Download } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
@@ -331,61 +331,25 @@ export function RaceDetail() {
   const [searchParams] = useSearchParams();
   const dateParam = searchParams.get('date');
 
+  // AI 予想 (予想スコア + 推奨買い目) は画面を開いた瞬間ではなく、ボタンを
+  // 押して初めて走らせる (重い推論を自動実行しない / ユーザー要望)。
+  const [aiRequested, setAiRequested] = useState(false);
+
   const raceQuery = useRaceDetail(race_id);
-  const predQuery = usePredictions(race_id);
+  const predQuery = usePredictions(race_id, aiRequested);
   const recQuery = useRecommendations(
     race_id,
-    Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
+    aiRequested && Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
   );
   const fetchOddsMutation = useFetchLiveOdds(race_id);
   // runShutuba scoped to this race so raceDetail is invalidated on completion
   const runShutubaMutation = useRunShutuba(race_id);
 
-  // Guards against duplicate auto-fetches for this race_id
-  const autoShutubaFiredRef = useRef<string | null>(null);
-  const autoOddsFiredRef = useRef<string | null>(null);
-
   const race = raceQuery.data;
 
-  // Auto-fetch shutuba when entries are empty
-  useEffect(() => {
-    if (!race || race.entries.length > 0) return;
-    if (autoShutubaFiredRef.current === race_id) return;
-    if (runShutubaMutation.isPending || runShutubaMutation.isPolling) return;
-
-    autoShutubaFiredRef.current = race_id;
-    runShutubaMutation.mutate(
-      { race_ids: [race_id] },
-      {
-        onError: async (err) => {
-          toast.error(`出馬表の自動取得に失敗しました: ${await formatErrorMessage(err)}`);
-        },
-      },
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [race, race_id]);
-
-  // Auto-fetch live odds when entries are available and odds_source is not 'live'.
-  // 'unknown' (no live + no past data) と 'past' (確定オッズはあるが live は無い) の両方で
-  // live 取得を試みる — ただし past の場合は当日オッズが存在しない可能性が高いので、
-  // ヘッダ判定: !== 'live' で取得を試行（実 live odds が DB に書かれれば odds_source='live' に切替わる）
-  useEffect(() => {
-    if (!race || race.entries.length === 0) return;
-    if (!recQuery.data || recQuery.data.odds_source === 'live') return;
-    if (autoOddsFiredRef.current === race_id) return;
-    if (fetchOddsMutation.isPending || fetchOddsMutation.isPolling) return;
-
-    autoOddsFiredRef.current = race_id;
-    fetchOddsMutation.mutate(
-      { race_id },
-      {
-        onError: async (err) => {
-          toast.error(`オッズの自動取得に失敗しました: ${await formatErrorMessage(err)}`);
-        },
-      },
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [race, race_id, recQuery.data]);
+  // NOTE: 出馬表取込・ライブオッズ取得・AI 予想はいずれも画面表示時に自動実行
+  // しない。すべて下部の各ボタン (出馬表を取得 / オッズ更新 / AI 予想を実行) で
+  // 明示的に開始する。
 
   const backLink = dateParam ? `/past?date=${dateParam}` : '/past';
 
@@ -434,11 +398,13 @@ export function RaceDetail() {
 
   const predictions = predQuery.data?.predictions ?? null;
 
-  // オッズ更新ボタンは entries が存在する場合のみ表示する
-  const canFetchOdds = race.entries.length > 0;
+  const hasEntries = race.entries.length > 0;
+  // オッズ更新 / AI 予想ボタンは entries が存在する場合のみ表示する
+  const canFetchOdds = hasEntries;
 
   const isFetchingOdds = fetchOddsMutation.isPending || fetchOddsMutation.isPolling;
   const isScrapingShutuba = runShutubaMutation.isPending || runShutubaMutation.isPolling;
+  const isPredicting = aiRequested && (predQuery.isFetching || recQuery.isFetching);
 
   function handleFetchOdds() {
     fetchOddsMutation.mutate(
@@ -454,6 +420,30 @@ export function RaceDetail() {
     );
   }
 
+  function handleRunShutuba() {
+    runShutubaMutation.mutate(
+      { race_ids: [race_id] },
+      {
+        onSuccess: (data) => {
+          toast.success(`出馬表取込ジョブを開始しました（Job: ${data.job_id}）`);
+        },
+        onError: async (err) => {
+          toast.error(`出馬表の取得に失敗しました: ${await formatErrorMessage(err)}`);
+        },
+      }
+    );
+  }
+
+  function handleRunAi() {
+    if (!aiRequested) {
+      setAiRequested(true);
+      return;
+    }
+    // 既にリクエスト済みなら再実行 (最新モデル / オッズ反映)
+    predQuery.refetch();
+    recQuery.refetch();
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <BackLink to={backLink} />
@@ -463,6 +453,32 @@ export function RaceDetail() {
         title={race.name ?? `${race.course} ${race.race_class ?? ''}`.trim()}
         description={`${race.date}・${race.surface}${race.distance}m・${race.race_id}`}
       >
+        {!hasEntries && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isScrapingShutuba}
+            onClick={handleRunShutuba}
+          >
+            <Download className="mr-1.5 h-4 w-4" />
+            {isScrapingShutuba ? '出馬表取得中...' : '出馬表を取得'}
+          </Button>
+        )}
+        {hasEntries && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isPredicting}
+            onClick={handleRunAi}
+          >
+            <Sparkles className="mr-1.5 h-4 w-4" />
+            {isPredicting
+              ? 'AI 予想 実行中...'
+              : aiRequested
+                ? 'AI 予想を再実行'
+                : 'AI 予想を実行'}
+          </Button>
+        )}
         {canFetchOdds && (
           <Button
             variant="outline"
@@ -475,7 +491,7 @@ export function RaceDetail() {
         )}
       </PageHeader>
 
-      {/* Auto-fetch progress banners */}
+      {/* Job progress banners (button 起動の取込/取得ジョブの進捗) */}
       {isScrapingShutuba && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
           出馬表を取得中...
@@ -510,14 +526,41 @@ export function RaceDetail() {
         </CardContent>
       </Card>
 
+      {/* 出馬表が未取得のとき: ボタンで取り込む (自動取得しない) */}
+      {!hasEntries && (
+        <Card>
+          <CardContent className="pt-6">
+            <EmptyState
+              message="出馬表が未取得です"
+              description="自動取得は行いません。下のボタンで出馬表を取り込んでください。"
+            >
+              <Button onClick={handleRunShutuba} disabled={isScrapingShutuba}>
+                <Download className="mr-1.5 h-4 w-4" />
+                {isScrapingShutuba ? '出馬表取得中...' : '出馬表を取得'}
+              </Button>
+            </EmptyState>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Unified entry + prediction table */}
-      {race.entries.length > 0 && (
+      {hasEntries && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">出走馬一覧</CardTitle>
           </CardHeader>
           <CardContent>
-            {predQuery.isPending ? (
+            {!aiRequested ? (
+              // AI 予想 未実行: 実績データのみ表示 (予想列は空欄)。
+              // 上部の「AI 予想を実行」ボタンでスコア + 推奨を取得する。
+              <>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  「AI 予想を実行」ボタンで予想スコア（単勝/複勝確率）と推奨買い目を取得します。
+                </p>
+                <EntryPredictionTable entries={race.entries} predictions={null} />
+                <BuyBadgeNote />
+              </>
+            ) : predQuery.isPending ? (
               <Skeleton className="h-40 w-full" />
             ) : predQuery.isError ? (
               <>
@@ -539,14 +582,16 @@ export function RaceDetail() {
         </Card>
       )}
 
-      {/* Recommendations card */}
-      <RecommendationsCard
-        raceId={race_id}
-        data={recQuery.data}
-        isPending={recQuery.isPending}
-        isError={recQuery.isError}
-        error={recQuery.error}
-      />
+      {/* Recommendations card — AI 予想を実行したときのみ表示 */}
+      {hasEntries && aiRequested && (
+        <RecommendationsCard
+          raceId={race_id}
+          data={recQuery.data}
+          isPending={recQuery.isPending}
+          isError={recQuery.isError}
+          error={recQuery.error}
+        />
+      )}
     </div>
   );
 }

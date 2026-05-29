@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { Pencil, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -44,6 +45,7 @@ export function ModelTable({
   onDelete,
   activatingId,
 }: ModelTableProps) {
+  const navigate = useNavigate();
   return (
     <Table>
       <TableHeader>
@@ -63,7 +65,9 @@ export function ModelTable({
         {models.map((model) => (
           <TableRow
             key={model.id}
-            className={model.is_active ? 'bg-success/5' : undefined}
+            className={`cursor-pointer ${model.is_active ? 'bg-success/5' : ''}`}
+            onClick={() => navigate(`/models/${model.id}`)}
+            title="詳細 / バックテストを開く"
           >
             <TableCell>{model.id}</TableCell>
             <TableCell>
@@ -85,7 +89,7 @@ export function ModelTable({
                 <Badge variant="outline">非アクティブ</Badge>
               )}
             </TableCell>
-            <TableCell>
+            <TableCell onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-end gap-2">
                 {!model.is_active && (
                   <Button

@@ -28,9 +28,12 @@ _SAVE_RETRY_BASE_SLEEP: float = 1.0  # exponential backoff: 1, 2, 4, 8, 16
 
 
 def save_simulation_result(
-    session: Session, result: SimulationResult
+    session: Session, result: SimulationResult, model_run_id: int
 ) -> SimulationRun:
     """SimulationResult を simulation_runs テーブルに保存する。
+
+    Args:
+        model_run_id: バックテストに使ったモデル (model_runs.id)。NOT NULL FK。
 
     保存後、件数が MAX_SAVED_RUNS (= 50) を超える場合は created_at 古い順に削除する。
     `database is locked` のときは exponential backoff で retry (最大 5 回)。
@@ -41,6 +44,7 @@ def save_simulation_result(
 
     payload = dict(
         created_at=now,
+        model_run_id=model_run_id,
         budget=d["budget"],
         strategy=d["strategy"],
         window_start=d["window"]["start"],
@@ -109,15 +113,18 @@ def _prune_old_runs(session: Session) -> int:
     return len(old_ids)
 
 
-def list_simulation_runs(session: Session, limit: int = 50) -> list[SimulationRun]:
-    """新しい順に最大 limit 件を返す (一覧表示用)。"""
-    return list(
-        session.scalars(
-            select(SimulationRun)
-            .order_by(desc(SimulationRun.created_at))
-            .limit(limit)
-        )
-    )
+def list_simulation_runs(
+    session: Session, limit: int = 50, model_run_id: int | None = None
+) -> list[SimulationRun]:
+    """新しい順に最大 limit 件を返す (一覧表示用)。
+
+    model_run_id を渡すとそのモデルの実行のみに絞る (モデル詳細画面用)。
+    """
+    stmt = select(SimulationRun)
+    if model_run_id is not None:
+        stmt = stmt.where(SimulationRun.model_run_id == model_run_id)
+    stmt = stmt.order_by(desc(SimulationRun.created_at)).limit(limit)
+    return list(session.scalars(stmt))
 
 
 def get_simulation_run(session: Session, run_id: int) -> SimulationRun | None:

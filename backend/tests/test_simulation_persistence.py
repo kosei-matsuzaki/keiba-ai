@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 import db.models  # noqa: F401
@@ -20,15 +20,34 @@ from ai.simulation_persistence import (
     save_simulation_result,
 )
 from db.base import Base
+from db.models.model_run import ModelRun
 from db.models.simulation_run import SimulationRun
 
 
 @pytest.fixture()
 def engine():
     e = create_engine("sqlite:///:memory:", future=True)
+
+    # simulation_runs.model_run_id の FK CASCADE / NOT NULL を効かせるため
+    # 接続ごとに foreign_keys=ON にする (本番 db/session.py と同じ)。
+    @event.listens_for(e, "connect")
+    def _set_fk(dbapi_conn, _):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(e)
     yield e
     e.dispose()
+
+
+def _seed_model(session: Session, model_path: str = "/tmp/dummy-model") -> int:
+    """テスト用 ModelRun を 1 件作成し id を返す (simulation_runs の FK 親)。"""
+    run = ModelRun(
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc).isoformat(),
+        model_path=model_path,
+    )
+    session.add(run)
+    session.flush()
+    return run.id
 
 
 def _make_result(budget: int = 100_000, final: int = 105_000) -> SimulationResult:
@@ -61,10 +80,12 @@ def _make_result(budget: int = 100_000, final: int = 105_000) -> SimulationResul
 
 def test_save_simulation_result_creates_row(engine):
     with Session(engine) as session:
+        model_id = _seed_model(session)
         result = _make_result(budget=100_000, final=105_000)
-        saved = save_simulation_result(session, result)
+        saved = save_simulation_result(session, result, model_id)
         # Session 内で属性をすべて読む (commit 後の lazy refresh を避ける)
         assert saved.id is not None
+        assert saved.model_run_id == model_id
         assert saved.budget == 100_000
         assert saved.final_bankroll == 105_000
         assert saved.strategy == "balanced"
@@ -77,11 +98,12 @@ def test_save_simulation_result_creates_row(engine):
 def test_save_simulation_result_prunes_when_over_limit(engine):
     """50 件を超えると古い順に削除される。"""
     with Session(engine) as session:
+        model_id = _seed_model(session)
         # MAX_SAVED_RUNS + 5 件を保存
         base = datetime(2024, 1, 1, tzinfo=timezone.utc)
         for i in range(MAX_SAVED_RUNS + 5):
             result = _make_result(budget=100_000 + i, final=100_000)
-            saved = save_simulation_result(session, result)
+            saved = save_simulation_result(session, result, model_id)
             # created_at を古い順に手動で書き換え (insert 順 = 古い順 にしたい)
             saved.created_at = (base + timedelta(minutes=i)).isoformat()
             session.commit()
@@ -97,9 +119,12 @@ def test_save_simulation_result_prunes_when_over_limit(engine):
 
 def test_list_simulation_runs_orders_newest_first(engine):
     with Session(engine) as session:
+        model_id = _seed_model(session)
         base = datetime(2024, 1, 1, tzinfo=timezone.utc)
         for i in range(3):
-            saved = save_simulation_result(session, _make_result(budget=100 * (i + 1)))
+            saved = save_simulation_result(
+                session, _make_result(budget=100 * (i + 1)), model_id
+            )
             saved.created_at = (base + timedelta(days=i)).isoformat()
             session.commit()
 
@@ -114,7 +139,8 @@ def test_list_simulation_runs_orders_newest_first(engine):
 
 def test_get_simulation_run_returns_row_or_none(engine):
     with Session(engine) as session:
-        saved = save_simulation_result(session, _make_result())
+        model_id = _seed_model(session)
+        saved = save_simulation_result(session, _make_result(), model_id)
         got = get_simulation_run(session, saved.id)
         assert got is not None
         assert got.id == saved.id
@@ -125,11 +151,88 @@ def test_get_simulation_run_returns_row_or_none(engine):
 
 def test_delete_simulation_run_removes_row(engine):
     with Session(engine) as session:
-        saved = save_simulation_result(session, _make_result())
+        model_id = _seed_model(session)
+        saved = save_simulation_result(session, _make_result(), model_id)
         assert delete_simulation_run(session, saved.id) is True
         assert get_simulation_run(session, saved.id) is None
         # 既に消えているので False
         assert delete_simulation_run(session, saved.id) is False
+
+
+# ---------------------------------------------------------------------------
+# model_run_id FK: フィルタ / CASCADE 削除 / renumber 追従
+# ---------------------------------------------------------------------------
+
+
+def test_list_simulation_runs_filters_by_model(engine):
+    """model_run_id を渡すとそのモデルの run のみ返る。"""
+    with Session(engine) as session:
+        model_a = _seed_model(session, model_path="/tmp/model-a")
+        model_b = _seed_model(session, model_path="/tmp/model-b")
+        save_simulation_result(session, _make_result(budget=100), model_a)
+        save_simulation_result(session, _make_result(budget=200), model_a)
+        save_simulation_result(session, _make_result(budget=300), model_b)
+        session.commit()
+
+        a_runs = list_simulation_runs(session, model_run_id=model_a)
+        b_runs = list_simulation_runs(session, model_run_id=model_b)
+        all_runs = list_simulation_runs(session)
+
+    assert len(a_runs) == 2
+    assert all(r.model_run_id == model_a for r in a_runs)
+    assert len(b_runs) == 1
+    assert b_runs[0].model_run_id == model_b
+    assert len(all_runs) == 3
+
+
+def test_delete_model_cascades_to_simulation_runs(engine):
+    """ModelRun 削除で紐づく simulation_runs も消える (ON DELETE CASCADE)。"""
+    with Session(engine) as session:
+        model_a = _seed_model(session, model_path="/tmp/model-a")
+        model_b = _seed_model(session, model_path="/tmp/model-b")
+        sim_a = save_simulation_result(session, _make_result(), model_a)
+        sim_b = save_simulation_result(session, _make_result(), model_b)
+        sim_a_id, sim_b_id = sim_a.id, sim_b.id
+        session.commit()
+
+        # model_a を削除 → sim_a だけ消え、sim_b は残る
+        session.delete(session.get(ModelRun, model_a))
+        session.commit()
+
+        assert get_simulation_run(session, sim_a_id) is None
+        assert get_simulation_run(session, sim_b_id) is not None
+
+
+def test_renumber_model_ids_cascades_to_simulation_runs(engine):
+    """renumber_model_ids で model_runs.id が振り直されても FK が追従する
+    (ON UPDATE CASCADE)。"""
+    from ai.registry import renumber_model_ids
+
+    with Session(engine) as session:
+        # id を飛び番にするため 3 件作って真ん中を消す
+        _seed_model(session, model_path="/tmp/m1")
+        m2 = _seed_model(session, model_path="/tmp/m2")
+        m3 = _seed_model(session, model_path="/tmp/m3")
+        session.delete(session.get(ModelRun, m2))
+        session.commit()
+
+        # 残った m3 (= 最新) に sim を紐づける
+        sim = save_simulation_result(session, _make_result(), m3)
+        sim_id = sim.id
+        session.commit()
+
+        renumber_model_ids(session)
+        session.commit()
+
+        # m3 は created_at 順で 2 番目 → id=2 に詰められ、sim も追従する
+        runs = list_simulation_runs(session)
+        assert len(runs) == 1
+        new_model_id = runs[0].model_run_id
+        # FK 整合: 振り直された ModelRun が実在する
+        assert session.get(ModelRun, new_model_id) is not None
+        # m1 が id=1, m3 が id=2
+        assert new_model_id == 2
+        assert get_simulation_run(session, sim_id) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +244,9 @@ def _seed_run_via_db(api_client: TestClient) -> int:
     """api_client の app の engine を直接使って 1 件 seed、id を返す。"""
     app_engine = api_client.app.state.engine
     with Session(app_engine) as session:
-        saved = save_simulation_result(session, _make_result())
+        model_id = _seed_model(session)
+        saved = save_simulation_result(session, _make_result(), model_id)
+        session.commit()
         return saved.id
 
 

@@ -132,3 +132,37 @@ def test_simulation_start_accepts_full_year_window(api_client: TestClient):
     )
     # 期間 OK で先に進む → active model がないので 503
     assert response.status_code == 503
+
+
+# ── model_id 指定 ────────────────────────────────────────────────────────────
+
+
+def test_simulation_sync_unknown_model_id_404(api_client: TestClient):
+    """存在しない model_id を指定すると 404 (active fallback ではない)。"""
+    response = api_client.get(
+        "/api/simulation/active_model",
+        params={
+            "start": "2024-01-01",
+            "end": "2024-06-30",
+            "budget": 100_000,
+            "strategy": "balanced",
+            "model_id": 99999,
+        },
+    )
+    assert response.status_code == 404
+    assert "model id=99999" in response.json()["detail"]
+
+
+def test_simulation_start_unknown_model_id_404(api_client: TestClient):
+    response = api_client.post(
+        "/api/simulation/start",
+        params={
+            "start": "2024-01-01",
+            "end": "2024-06-30",
+            "budget": 100_000,
+            "strategy": "balanced",
+            "model_id": 99999,
+        },
+    )
+    assert response.status_code == 404
+    assert "model id=99999" in response.json()["detail"]

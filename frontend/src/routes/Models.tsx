@@ -13,12 +13,10 @@ import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { EditModelNameDialog } from '@/components/EditModelNameDialog';
 import { DeleteModelDialog } from '@/components/DeleteModelDialog';
 import { JobProgressCard } from '@/components/JobProgressCard';
-import { SimulationTab } from '@/components/SimulationTab';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { formatErrorMessage } from '@/lib/api';
 import { useTrainingStore } from '@/store/app';
@@ -106,7 +104,7 @@ export function Models() {
       <PageHeader
         icon={Brain}
         title="Models"
-        description="学習済みモデルの管理 / バックテストシミュレーション"
+        description="学習済みモデルの管理。各モデルの行を開くとバックテストを実行できます。"
       >
         <Button
           variant="outline"
@@ -120,57 +118,46 @@ export function Models() {
         <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
       </PageHeader>
 
-      <Tabs defaultValue="list" className="flex flex-col gap-6">
-        <TabsList className="self-start">
-          <TabsTrigger value="list">モデル一覧</TabsTrigger>
-          <TabsTrigger value="simulation">シミュレーション</TabsTrigger>
-        </TabsList>
+      <div className="flex flex-col gap-6">
+        {modelsQuery.isPending ? (
+          <Skeleton className="h-24 w-full rounded-lg" />
+        ) : modelsQuery.data ? (
+          <ActiveModelCard
+            model={modelsQuery.data.find((m) => m.is_active) ?? null}
+            linkToModels={false}
+          />
+        ) : null}
 
-        <TabsContent value="list" className="mt-0 flex flex-col gap-6">
-          {modelsQuery.isPending ? (
-            <Skeleton className="h-24 w-full rounded-lg" />
-          ) : modelsQuery.data ? (
-            <ActiveModelCard
-              model={modelsQuery.data.find((m) => m.is_active) ?? null}
-              linkToModels={false}
-            />
-          ) : null}
+        {trackedJobId && (
+          <JobProgressCard
+            jobId={trackedJobId}
+            title="train ジョブ進捗"
+            onDismiss={() => setTrackedJobId(null)}
+          />
+        )}
 
-          {trackedJobId && (
-            <JobProgressCard
-              jobId={trackedJobId}
-              title="train ジョブ進捗"
-              onDismiss={() => setTrackedJobId(null)}
-            />
-          )}
-
-          {modelsQuery.isPending ? (
-            <Skeleton className="h-64 w-full rounded-lg" />
-          ) : modelsQuery.isError ? (
-            <EmptyState
-              message="モデル情報の取得に失敗しました"
-              description="バックエンドが起動しているか確認してください。"
-            />
-          ) : modelsQuery.data.length === 0 ? (
-            <EmptyState
-              message="学習済みモデルはありません"
-              description="「再学習を実行」ボタンから最初のモデルを学習してください。"
-            />
-          ) : (
-            <ModelTable
-              models={modelsQuery.data}
-              onActivate={handleActivate}
-              onEdit={setEditTarget}
-              onDelete={setDeleteTarget}
-              activatingId={activatingId}
-            />
-          )}
-        </TabsContent>
-
-        <TabsContent value="simulation" className="mt-0">
-          <SimulationTab />
-        </TabsContent>
-      </Tabs>
+        {modelsQuery.isPending ? (
+          <Skeleton className="h-64 w-full rounded-lg" />
+        ) : modelsQuery.isError ? (
+          <EmptyState
+            message="モデル情報の取得に失敗しました"
+            description="バックエンドが起動しているか確認してください。"
+          />
+        ) : modelsQuery.data.length === 0 ? (
+          <EmptyState
+            message="学習済みモデルはありません"
+            description="「再学習を実行」ボタンから最初のモデルを学習してください。"
+          />
+        ) : (
+          <ModelTable
+            models={modelsQuery.data}
+            onActivate={handleActivate}
+            onEdit={setEditTarget}
+            onDelete={setDeleteTarget}
+            activatingId={activatingId}
+          />
+        )}
+      </div>
 
       <EditModelNameDialog
         open={editTarget !== null}
