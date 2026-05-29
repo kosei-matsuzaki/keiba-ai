@@ -330,9 +330,9 @@ def predict_race_with_combinations_gbdt(
 
     # Compute all PL combination probs in one MC pass (k=3 for triple support).
     # predict_race_gbdt sorts by score, so we re-align probabilities back to frame order via horse_id.
-    horse_to_score = dict(zip(base_df["horse_id"].values, base_df["score"].values))
-    horse_to_win = dict(zip(base_df["horse_id"].values, base_df["win_prob"].values))
-    horse_to_place = dict(zip(base_df["horse_id"].values, base_df["place_prob"].values))
+    horse_to_score = dict(zip(base_df["horse_id"].values, base_df["score"].values, strict=True))
+    horse_to_win = dict(zip(base_df["horse_id"].values, base_df["win_prob"].values, strict=True))
+    horse_to_place = dict(zip(base_df["horse_id"].values, base_df["place_prob"].values, strict=True))
 
     # Build aligned arrays in frame order (one entry per post_position)
     frame_scores = np.array([horse_to_score[hid] for hid in frame["horse_id"].values])
@@ -894,9 +894,9 @@ def _combinations_from_base(
         race_odds_sources if race_odds_sources is not None else {}
     )
 
-    horse_to_score = dict(zip(base_df["horse_id"].values, base_df["score"].values))
-    horse_to_win = dict(zip(base_df["horse_id"].values, base_df["win_prob"].values))
-    horse_to_place = dict(zip(base_df["horse_id"].values, base_df["place_prob"].values))
+    horse_to_score = dict(zip(base_df["horse_id"].values, base_df["score"].values, strict=True))
+    horse_to_win = dict(zip(base_df["horse_id"].values, base_df["win_prob"].values, strict=True))
+    horse_to_place = dict(zip(base_df["horse_id"].values, base_df["place_prob"].values, strict=True))
 
     frame_scores = np.array([horse_to_score[hid] for hid in frame["horse_id"].values])
     frame_win_probs = np.array([horse_to_win[hid] for hid in frame["horse_id"].values])
