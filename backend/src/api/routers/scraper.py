@@ -9,9 +9,6 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-# netkeiba の race_id は JST 基準で YYYYMMDD を含むので JST 起算の date を使う
-_JST = ZoneInfo("Asia/Tokyo")
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -47,6 +44,9 @@ from scraper.parsers.race_info_top import (
 from scraper.parsers.shutuba import extract_race_date_from_shutuba_html
 from scraper.rate_limiter import AsyncRateLimiter
 from scraper.robots import RobotsCache
+
+# netkeiba の race_id は JST 基準で YYYYMMDD を含むので JST 起算の date を使う
+_JST = ZoneInfo("Asia/Tokyo")
 
 router = APIRouter()
 
@@ -297,11 +297,8 @@ async def discover_today_race_ids(
     - 該当日の開催なし → race_ids=[] を返す（404 ではない）。
     - netkeiba 側の通信エラーや想定外レスポンスは 502 で返す。
     """
-    if date:
-        # YYYY-MM-DD → YYYYMMDD
-        kaisai_date = date.replace("-", "")
-    else:
-        kaisai_date = datetime.now(_JST).strftime("%Y%m%d")
+    # YYYY-MM-DD → YYYYMMDD (date 省略時は JST 当日)
+    kaisai_date = date.replace("-", "") if date else datetime.now(_JST).strftime("%Y%m%d")
 
     url = _RACE_INFO_TOP_URL.format(date=kaisai_date)
 

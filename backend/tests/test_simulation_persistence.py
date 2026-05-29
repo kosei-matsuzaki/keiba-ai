@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,7 +41,7 @@ def engine():
 def _seed_model(session: Session, model_path: str = "/tmp/dummy-model") -> int:
     """テスト用 ModelRun を 1 件作成し id を返す (simulation_runs の FK 親)。"""
     run = ModelRun(
-        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc).isoformat(),
+        created_at=datetime(2024, 1, 1, tzinfo=UTC).isoformat(),
         model_path=model_path,
     )
     session.add(run)
@@ -99,7 +99,7 @@ def test_save_simulation_result_prunes_when_over_limit(engine):
     with Session(engine) as session:
         model_id = _seed_model(session)
         # MAX_SAVED_RUNS + 5 件を保存
-        base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2024, 1, 1, tzinfo=UTC)
         for i in range(MAX_SAVED_RUNS + 5):
             result = _make_result(budget=100_000 + i, final=100_000)
             saved = save_simulation_result(session, result, model_id)
@@ -119,7 +119,7 @@ def test_save_simulation_result_prunes_when_over_limit(engine):
 def test_list_simulation_runs_orders_newest_first(engine):
     with Session(engine) as session:
         model_id = _seed_model(session)
-        base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2024, 1, 1, tzinfo=UTC)
         for i in range(3):
             saved = save_simulation_result(
                 session, _make_result(budget=100 * (i + 1)), model_id

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 
@@ -12,10 +13,8 @@ def configure_logging(level: int = logging.INFO) -> None:
     # py3.7+ の TextIOWrapper.reconfigure で utf-8 + replace に切り替える。
     # stdout が非 TextIOWrapper の場合（リダイレクト等）は静かにスキップ。
     if hasattr(sys.stdout, "reconfigure"):
-        try:
+        with contextlib.suppress(AttributeError, OSError, ValueError):
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, OSError, ValueError):
-            pass
 
     logging.basicConfig(
         stream=sys.stdout,

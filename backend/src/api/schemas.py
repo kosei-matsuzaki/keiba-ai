@@ -276,7 +276,7 @@ class ScraperRunShutubaRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def require_date_or_race_ids(self) -> "ScraperRunShutubaRequest":
+    def require_date_or_race_ids(self) -> ScraperRunShutubaRequest:
         if self.date is None and (self.race_ids is None or len(self.race_ids) == 0):
             raise ValueError("date か race_ids のいずれかを指定してください")
         return self

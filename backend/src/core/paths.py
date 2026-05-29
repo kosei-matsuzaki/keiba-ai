@@ -23,10 +23,7 @@ def _repo_root() -> Path:
 def data_dir() -> Path:
     """Return the data directory, creating it if necessary."""
     env_val = os.getenv("KEIBA_DATA_DIR", "")
-    if env_val:
-        d = Path(env_val)
-    else:
-        d = _repo_root() / "data"
+    d = Path(env_val) if env_val else _repo_root() / "data"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

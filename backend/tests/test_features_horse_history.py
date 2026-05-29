@@ -22,6 +22,9 @@ from features.horse_history import (
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,
+    is_high_class,
+    parse_margin,
+    parse_passing,
     race_class_weight,
 )
 
@@ -472,11 +475,6 @@ def test_phase_c_clip_when_passing_exceeds_runners(phase_c_engine):
 # ---------------------------------------------------------------------------
 
 
-from features.horse_history import (
-    is_high_class,
-)
-
-
 @pytest.fixture()
 def class_engine():
     """Horse with mixed-class history: G1 win, G3 place, OP runs, 1勝 race."""
@@ -591,12 +589,6 @@ def test_class_features_cutoff_excludes_future(class_engine):
 # ---------------------------------------------------------------------------
 # Phase B: margin / finish_time / passing 由来 features
 # ---------------------------------------------------------------------------
-
-
-from features.horse_history import (
-    parse_margin,
-    parse_passing,
-)
 
 
 def test_parse_margin_literals():

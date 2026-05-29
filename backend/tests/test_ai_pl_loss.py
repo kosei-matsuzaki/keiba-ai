@@ -245,7 +245,6 @@ class TestEvalMetric:
 class TestLightGBMTraining:
     def test_lgbm_trains_without_collapse(self, tmp_path):
         """LightGBM must complete training and produce non-trivial scores."""
-        import lightgbm as lgb
         from sqlalchemy import create_engine
 
         # Build a small synthetic dataset using the existing helper
@@ -272,9 +271,6 @@ class TestLightGBMTraining:
         assert meta.get("loss_type") == "plackett_luce", "loss_type not persisted in meta.json"
         assert meta.get("has_binary_model") is False, "binary_model should not be saved in PL mode"
         assert meta.get("has_calibrator") is False, "calibrator should not be saved in PL mode"
-
-        # Scores must have variance (model did not collapse to a constant)
-        model = lgb.Booster(model_file=str(__import__("pathlib").Path(model_dir) / "model.txt"))
 
         # Confirm model_dir key is present and ndcg metrics are present
         assert "model_dir" in result

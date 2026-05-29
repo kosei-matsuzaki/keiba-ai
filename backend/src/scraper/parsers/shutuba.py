@@ -62,6 +62,7 @@ race_result.py と同様に ParsedEntry / 新規 ShutubaEntry dataclass を使�
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass, field
 
@@ -349,10 +350,8 @@ def _parse_entry_row(
     sex_age = text_for("性齢", 4)
     if sex_age:
         entry.sex = sex_age[0] if sex_age[0] in ("牡", "牝", "セ") else None
-        try:
+        with contextlib.suppress(ValueError, IndexError):
             entry.age = int(sex_age[1:])
-        except (ValueError, IndexError):
-            pass
 
     entry.weight_carried = to_float(text_for("斤量", 5))
 
