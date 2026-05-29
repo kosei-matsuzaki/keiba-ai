@@ -187,17 +187,14 @@ class TestDiscoverThisWeekendRaceIds:
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
 
-        # kaisai_day_key = race_id[:10]
-        # 今週土: YYYYMMDD = 20260509, NN = 01
-        # 今週日: YYYYMMDD = 20260510, NN = 01
-        # 来週土: YYYYMMDD = 20260516, NN = 01
-        # NAR  : 20260509 だが venue = 11
+        # race_id 形式: YYYY + 場(2) + 回(2) + 日(2) + R(2)。場 01-10=JRA / 11+=NAR。
+        # kaisai_day_key = race_id[:10] (年+場+回+日)。実 date は shutuba 経由で取得。
         race_ids_all = [
             "202605090501",  # 今週土 / 東京(05) / JRA
             "202605090502",  # 今週土 / 東京(05) / JRA
             "202605100601",  # 今週日 / 中山(06) / JRA
             "202605160501",  # 来週土 / JRA → 除外
-            "202605091101",  # 今週土 / NAR(11) → 除外
+            "202611050901",  # 今週土 / NAR(11=大井) → 場フィルタで除外
         ]
 
         shutuba_html_sat = _make_shutuba_html("2026-05-09")
@@ -307,6 +304,9 @@ class TestDiscoverThisWeekendRaceIds:
             200,
             content=shutuba_html_eucjp,
             headers={"Content-Type": "text/html"},  # charset を意図的に省略
+            # httpx 0.28+ では raise_for_status() が request 未バインドだと
+            # RuntimeError を投げるためダミーを渡しておく。
+            request=httpx.Request("GET", "https://race.netkeiba.com/race/shutuba.html"),
         )
 
         mock_top = _make_top_response(race_ids_all)
@@ -338,8 +338,8 @@ class TestDiscoverThisWeekendRaceIds:
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
 
-        # NAR only — venue codes 11, 12
-        nar_ids = ["202605091101", "202605091201"]
+        # NAR only — venue code は race_id[4:6] (年の直後 2 桁)。11=大井, 12=川崎。
+        nar_ids = ["202611050901", "202612050901"]
         mock_top = _make_top_response(nar_ids)
 
         with (
