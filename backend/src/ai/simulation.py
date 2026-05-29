@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-import pandas as pd
 from sqlalchemy.orm import Session
 
 from ai.bet_odds import (

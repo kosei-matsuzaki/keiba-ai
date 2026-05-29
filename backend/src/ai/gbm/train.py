@@ -458,19 +458,14 @@ def _train_single_split(
         pl_params["objective"] = pl_objective
 
         # Use PL NLL as evaluation metric on valid set when available.
+        # TODO: also monitor train PL NLL (would require per-dataset feval; LightGBM
+        # passes the same feval to every valid set, so a wrapper would be needed).
         if not valid_df.empty:
             valid_group_sizes = valid_df.groupby("race_id", sort=False)["horse_id"].count().tolist()
             pl_eval = plackett_luce_eval_metric(valid_group_sizes)
-            # Also register on train set using same eval (for monitoring).
-            train_eval = plackett_luce_eval_metric(train_group_sizes)
-            feval = [train_eval, pl_eval]
-            # LightGBM custom feval receives (preds, dataset); we need per-split
-            # functions registered separately.  We use a single feval dict trick:
-            # pass both under different dataset names via a wrapper.
             pl_params["metric"] = "custom"
         else:
             pl_params.pop("metric", None)
-            feval = None
 
         log.info("Starting LightGBM training with Plackett-Luce objective…")
         model = lgb.train(
@@ -603,7 +598,6 @@ def _train_single_split(
     temperature_scaler = None
     if fit_temperature and not valid_df.empty and loss == "plackett_luce":
         log.info("Fitting TemperatureScaler on valid set (PL mode)…")
-        from ai.temperature import TemperatureScaler
 
         try:
             temperature_scaler = _fit_temperature_scaler(

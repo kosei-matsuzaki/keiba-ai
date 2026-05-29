@@ -152,7 +152,7 @@ def time_margin_loss(
     total_loss = torch.zeros(1, device=device)
     n_pairs = 0
 
-    for b in range(B := scores.size(0)):
+    for b in range(scores.size(0)):
         valid = mask[b] & ~torch.isnan(finish_positions[b])
         idx = valid.nonzero(as_tuple=True)[0]
         if idx.numel() < 2:

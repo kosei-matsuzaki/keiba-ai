@@ -17,7 +17,7 @@ Each NN model is stored under data/models/<YYYYMMDDTHHMMSS>-nn/ with:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING

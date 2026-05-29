@@ -1,4 +1,4 @@
-"""Tests for ai/bet_odds.py — baseline odds computation and compute_race_odds."""
+"""Tests for ai/bet_odds.py — race-level odds dicts (live + past + tansho fill)."""
 
 from __future__ import annotations
 
@@ -10,12 +10,8 @@ from sqlalchemy.orm import Session
 
 import db.models  # noqa: F401
 from ai.bet_odds import (
-    _FALLBACK_AMOUNTS,
-    compute_baseline_odds,
-    compute_baseline_odds_by_class,
     compute_implied_combo_odds_from_tansho,
     compute_past_race_odds,
-    compute_past_race_odds_with_tansho_fill,
     compute_race_odds,
     tansho_to_pl_scores,
 )
@@ -71,91 +67,6 @@ def seeded_session():
 
         session.commit()
         yield session
-
-
-def test_compute_baseline_odds_empty_payouts_uses_fallback(empty_session):
-    """When payouts table is empty, every bet_type should return its fallback value."""
-    odds = compute_baseline_odds(empty_session)
-
-    for bet_type, fallback_amount in _FALLBACK_AMOUNTS.items():
-        expected_odds = fallback_amount / 100.0
-        assert odds[bet_type] == pytest.approx(expected_odds), (
-            f"{bet_type}: expected fallback {expected_odds}, got {odds[bet_type]}"
-        )
-
-
-def test_compute_baseline_odds_uses_db_average(seeded_session):
-    """When payouts table has data, returns average from DB for those bet_types."""
-    odds = compute_baseline_odds(seeded_session)
-
-    # 単勝: (1200 + 800) / 2 / 100 = 10.0
-    assert odds["単勝"] == pytest.approx(10.0, rel=1e-4)
-
-    # 馬連: 5500 / 100 = 55.0
-    assert odds["馬連"] == pytest.approx(55.0, rel=1e-4)
-
-
-def test_compute_baseline_odds_missing_types_fall_back(seeded_session):
-    """Bet types not present in DB still get the hardcoded fallback."""
-    odds = compute_baseline_odds(seeded_session)
-
-    # ワイド has no rows in seeded_session
-    expected_wide = _FALLBACK_AMOUNTS["ワイド"] / 100.0
-    assert odds["ワイド"] == pytest.approx(expected_wide)
-
-    # 三連単 has no rows
-    expected_sanrentan = _FALLBACK_AMOUNTS["三連単"] / 100.0
-    assert odds["三連単"] == pytest.approx(expected_sanrentan)
-
-
-def test_compute_baseline_odds_returns_all_bet_types(seeded_session):
-    """Result dict should cover all standard bet types."""
-    odds = compute_baseline_odds(seeded_session)
-    for bt in ["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"]:
-        assert bt in odds, f"Missing bet_type: {bt}"
-
-
-def test_compute_baseline_odds_by_class_with_match(seeded_session):
-    """When enough rows match the filter, returns filtered average."""
-    # Only 単勝 from G1 races (R001): amount=1200 → odds=12.0
-    # min_samples=1 to ensure we use the filtered value
-    odds = compute_baseline_odds_by_class(
-        seeded_session,
-        race_class="G1",
-        min_samples=1,
-    )
-    assert odds["単勝"] == pytest.approx(12.0, rel=1e-4)
-
-
-def test_compute_baseline_odds_by_class_falls_back_on_low_samples(seeded_session):
-    """When filtered rows < min_samples, falls back to overall average."""
-    # G1 has only 1 単勝 row, min_samples=5 forces fallback to overall (10.0)
-    odds = compute_baseline_odds_by_class(
-        seeded_session,
-        race_class="G1",
-        min_samples=5,
-    )
-    # Overall average: (1200 + 800) / 2 / 100 = 10.0
-    assert odds["単勝"] == pytest.approx(10.0, rel=1e-4)
-
-
-def test_compute_baseline_odds_by_class_surface_filter(seeded_session):
-    """Filter by surface isolates races on that track type."""
-    # ダ surface only has R002: 単勝 amount=800 → odds=8.0
-    odds = compute_baseline_odds_by_class(
-        seeded_session,
-        surface="ダ",
-        min_samples=1,
-    )
-    assert odds["単勝"] == pytest.approx(8.0, rel=1e-4)
-
-
-def test_compute_baseline_odds_by_class_no_filter_matches_overall(seeded_session):
-    """With no filter conditions, by_class returns same as compute_baseline_odds."""
-    overall = compute_baseline_odds(seeded_session)
-    by_class = compute_baseline_odds_by_class(seeded_session, min_samples=0)
-    for bt in overall:
-        assert overall[bt] == pytest.approx(by_class[bt], rel=1e-4), f"Mismatch for {bt}"
 
 
 # ---------------------------------------------------------------------------
@@ -531,47 +442,3 @@ def test_compute_implied_combo_odds_raises_for_single_horse():
     """1 頭しか単勝が無いと連系券種が組めず ValueError。"""
     with pytest.raises(ValueError):
         compute_implied_combo_odds_from_tansho({"1": 2.0})
-
-
-def test_compute_past_race_odds_with_tansho_fill_keeps_confirmed(past_race_session):
-    """確定 combo は tansho-implied で上書きされない。"""
-    import numpy as np
-
-    # ※ compute_implied_... は内部で default_rng() を使うが、確定値が
-    # 上書きされないことだけ確認するので rng の seed は不要
-    result = compute_past_race_odds_with_tansho_fill(
-        past_race_session, "PAST_R001", n_samples=20_000
-    )
-
-    # confirmed values from past_race_session
-    assert result["馬連"]["1-3"] == pytest.approx(35.0)
-    assert result["ワイド"]["1-3"] == pytest.approx(8.0)
-    assert result["ワイド"]["3-5"] == pytest.approx(6.0)
-    assert result["馬単"]["3→1"] == pytest.approx(60.0)
-    assert result["三連複"]["1-3-5"] == pytest.approx(80.0)
-    assert result["三連単"]["3→1→5"] == pytest.approx(300.0)
-
-
-def test_compute_past_race_odds_with_tansho_fill_adds_missing(past_race_session):
-    """未確定 combo は tansho-implied で補完される。"""
-    result = compute_past_race_odds_with_tansho_fill(
-        past_race_session, "PAST_R001", n_samples=20_000
-    )
-
-    # past_race_session has 5 horses, only 1-3 / 3→1 / 1-3-5 / 3→1→5 confirmed.
-    # All other combos should be filled by tansho-implied.
-    # 5 horses → 馬連 = C(5,2) = 10, ワイド = 10, 馬単 = P(5,2) = 20, 三連複 = C(5,3) = 10
-    assert len(result["馬連"]) == 10
-    assert len(result["ワイド"]) == 10
-    assert len(result["馬単"]) == 20
-
-    # The non-confirmed combos must be > 0
-    assert result["馬連"]["2-4"] > 0  # not confirmed → implied
-    assert result["馬単"]["1→3"] > 0  # not confirmed (1→3, opposite of 3→1)
-    assert result["馬単"]["3→1"] == pytest.approx(60.0)  # confirmed preserved
-
-
-def test_compute_past_race_odds_with_tansho_fill_no_tansho(empty_session):
-    """単勝オッズが取れない場合はそのまま返す（空 dict）。"""
-    result = compute_past_race_odds_with_tansho_fill(empty_session, "NONEXISTENT")
-    assert result == {}

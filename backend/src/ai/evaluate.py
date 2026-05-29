@@ -41,7 +41,7 @@ from ai.labels import assign_relevance
 from ai.predict import predict_race
 from ai.registry import load_model_full
 from core.paths import db_path
-from db.models import ModelRun  # noqa: F401
+from db.models import ModelRun
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
 
@@ -404,8 +404,6 @@ def _persist_metrics_to_model_run(
 
     Returns True if a row was updated, False if no matching ModelRun found.
     """
-    from db.models.model_run import ModelRun  # local import to avoid cycles
-
     requested = str(Path(model_path).resolve())
     target_name = Path(model_path).name
 
