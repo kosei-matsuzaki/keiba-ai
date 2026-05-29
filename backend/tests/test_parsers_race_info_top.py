@@ -121,11 +121,11 @@ class TestExtractJraRaceIdsWithKaisaiGroups:
         assert groups["2026050206"] == ["202605020601"]
 
     def test_excludes_nar_venues(self) -> None:
-        """venue code 11 以上 (NAR) は除外する。"""
+        """venue code (race_id[4:6]) 11 以上 (NAR) は除外する。"""
         payload = _make_payload(
-            "202605020501",  # JRA (venue 05)
-            "202605021101",  # NAR (venue 11)
-            "202605021201",  # NAR (venue 12)
+            "202605020501",  # JRA (venue 05 at [4:6])
+            "202611050201",  # NAR (venue 11 at [4:6])
+            "202612050201",  # NAR (venue 12 at [4:6])
         )
         jra_ids, groups = extract_jra_race_ids_with_kaisai_groups(payload)
 
