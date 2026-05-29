@@ -98,9 +98,7 @@ def generate_nagashi(
 
     elif bet_type == "馬単":
         for cp in combinations_list:
-            if axis_position == 1 and cp.post_positions[0] == axis_post_position:
-                candidates.append(_make_candidate(cp, bet_type, "nagashi"))
-            elif axis_position == 2 and cp.post_positions[1] == axis_post_position:
+            if axis_position == 1 and cp.post_positions[0] == axis_post_position or axis_position == 2 and cp.post_positions[1] == axis_post_position:
                 candidates.append(_make_candidate(cp, bet_type, "nagashi"))
 
     elif bet_type == "三連複":

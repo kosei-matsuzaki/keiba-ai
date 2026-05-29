@@ -40,7 +40,7 @@ GBDT_FEATURE_COLUMNS: list[str] = [
 
 def augment_frame_with_gbdt(
     frame: pd.DataFrame,
-    gbdt_bundle: "ModelBundle",
+    gbdt_bundle: ModelBundle,
 ) -> pd.DataFrame:
     """Add per-horse GBDT prediction columns to ``frame``.
 

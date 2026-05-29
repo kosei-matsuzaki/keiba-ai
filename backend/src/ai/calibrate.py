@@ -466,7 +466,7 @@ def compute_analytical_combo_probs(scores: np.ndarray) -> dict:
                 continue
             base_ij = base_i * p[j] / denom_ij
             for k in range(n):
-                if k == i or k == j:
+                if k in (i, j):
                     continue
                 ordered_triple[i, j, k] = base_ij * p[k]
 

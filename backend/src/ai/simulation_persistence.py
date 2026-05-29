@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import OperationalError
@@ -40,7 +40,7 @@ def save_simulation_result(
     Returns: 新規作成された SimulationRun (id 付き)。
     """
     d = result.as_dict()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     payload = dict(
         created_at=now,

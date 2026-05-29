@@ -67,10 +67,7 @@ def _prepare_features(
     が object として推論してしまうため、CATEGORICAL_FEATURES 以外は明示的に
     pd.to_numeric (errors='coerce') で float に強制する。
     """
-    if model is not None:
-        cols = list(model.feature_name())
-    else:
-        cols = FEATURE_COLUMNS
+    cols = list(model.feature_name()) if model is not None else FEATURE_COLUMNS
     X = frame[cols].copy()
     for col in X.columns:
         if col in CATEGORICAL_FEATURES:
@@ -105,7 +102,7 @@ def predict_race_gbdt(
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
-    temperature_scaler: "TemperatureScaler | None" = None,
+    temperature_scaler: TemperatureScaler | None = None,
     place_calibrator: IsotonicCalibrator | None = None,
 ) -> pd.DataFrame:
     """Score all horses in a single race and return calibrated probabilities.
@@ -268,7 +265,7 @@ def predict_race_with_combinations_gbdt(
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     combo_calibrators: ComboCalibrators | None = None,
     loss_type: str | None = None,
-    temperature_scaler: "TemperatureScaler | None" = None,
+    temperature_scaler: TemperatureScaler | None = None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Extend predict_race_gbdt with EV calculations for all combination bet types.
 
@@ -553,7 +550,7 @@ def predict_race_with_shap_gbdt(
     binary_model: lgb.Booster | None = None,
     calibrator: IsotonicCalibrator | ConditionalIsotonicCalibrator | None = None,
     loss_type: str | None = None,
-    temperature_scaler: "TemperatureScaler | None" = None,
+    temperature_scaler: TemperatureScaler | None = None,
 ) -> pd.DataFrame:
     """Same as predict_race_gbdt but adds a 'top_features' column (list[str]).
 
@@ -594,10 +591,7 @@ def predict_race_with_shap_gbdt(
     # LightGBM lambdarank は (n_samples, n_features) の 2D を返すが、
     # multi-output モデル（例: 多クラス分類）では list of 2D / 3D が返る場合があるため
     # 第 1 出力 (primary) を採用するガードを入れる。
-    if isinstance(raw_shap, list):
-        shap_values = np.asarray(raw_shap[0])
-    else:
-        shap_values = np.asarray(raw_shap)
+    shap_values = np.asarray(raw_shap[0]) if isinstance(raw_shap, list) else np.asarray(raw_shap)
     if shap_values.ndim == 3:
         shap_values = shap_values[..., 0]
     if shap_values.ndim != 2:
@@ -624,7 +618,7 @@ def predict_race_with_shap_gbdt(
 
 
 def predict_race(
-    bundle: "ModelBundle",
+    bundle: ModelBundle,
     frame: pd.DataFrame,
 ) -> pd.DataFrame:
     """Score all horses in a single race using a ModelBundle.
@@ -655,7 +649,7 @@ def predict_race(
     )
 
 
-def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame:
+def _predict_race_nn(bundle: ModelBundle, frame: pd.DataFrame) -> pd.DataFrame:
     """NN inference for a single race.
 
     Builds a single-batch tensor from frame, runs the RaceModel forward pass,
@@ -719,10 +713,7 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
         scores = np.where(finite_mask, scores, scores[finite_mask].min() if finite_mask.any() else 0.0)
 
     ts = bundle.temperature_scaler
-    if ts is not None:
-        win_probs = ts.transform_win(scores)
-    else:
-        win_probs = softmax_within_race(scores)
+    win_probs = ts.transform_win(scores) if ts is not None else softmax_within_race(scores)
 
     # Post-hoc isotonic calibration on win_prob (fixes NN over-confidence on
     # longshots / under-confidence on top picks). predict() re-normalises per
@@ -772,7 +763,7 @@ def _predict_race_nn(bundle: "ModelBundle", frame: pd.DataFrame) -> pd.DataFrame
 
 
 def predict_race_with_combinations(
-    bundle: "ModelBundle",
+    bundle: ModelBundle,
     frame: pd.DataFrame,
     session: Session | None = None,
     n_samples: int = 10_000,
@@ -843,7 +834,7 @@ def predict_race_with_combinations(
 
 
 def predict_race_with_shap(
-    bundle: "ModelBundle",
+    bundle: ModelBundle,
     frame: pd.DataFrame,
     top_n: int = 3,
 ) -> pd.DataFrame:
