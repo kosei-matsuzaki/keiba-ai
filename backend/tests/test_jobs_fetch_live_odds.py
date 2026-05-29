@@ -15,9 +15,39 @@ from db.models.live_odds import LiveOdds
 from db.models.race import Race
 from jobs.fetch_live_odds import fetch_odds_for_race, run_fetch_live_odds
 from scraper.netkeiba import NetkeibaClient
+from scraper.parsers.odds import LiveOddsRow
 from scraper.rate_limiter import AsyncRateLimiter
 from scraper.robots import RobotsCache
 from scraper.stop_flag import ScraperStopped
+
+
+def _make_tan_fuku_rows() -> list[LiveOddsRow]:
+    """18 頭立ての単勝 + 複勝 を表現する合成オッズ行。"""
+    rows: list[LiveOddsRow] = []
+    for pp in range(1, 19):
+        rows.append(LiveOddsRow(
+            bet_type="単勝", combo=str(pp), odds=2.0 + pp * 0.5,
+            odds_max=None, popularity=pp,
+        ))
+        rows.append(LiveOddsRow(
+            bet_type="複勝", combo=str(pp), odds=1.1 + pp * 0.1,
+            odds_max=1.5 + pp * 0.1, popularity=pp,
+        ))
+    return rows
+
+
+def _make_umaren_rows() -> list[LiveOddsRow]:
+    """18 頭立ての馬連 153 通り。"""
+    rows: list[LiveOddsRow] = []
+    pop = 1
+    for i in range(1, 19):
+        for j in range(i + 1, 19):
+            rows.append(LiveOddsRow(
+                bet_type="馬連", combo=f"{i}-{j}",
+                odds=10.0 + pop * 0.5, odds_max=None, popularity=pop,
+            ))
+            pop += 1
+    return rows
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -90,8 +120,16 @@ def _build_mock_client(html_map: dict[str, str]) -> NetkeibaClient:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fetch_tan_fuku_inserts_rows(session):
-    """b1 fetch → 単勝/複勝 の live_odds 行が挿入される。"""
+async def test_fetch_tan_fuku_inserts_rows(session, monkeypatch):
+    """b1 fetch → 単勝/複勝 の live_odds 行が挿入される。
+
+    実フィクスチャ HTML は発走前 (odds=---.-) で全行 skip されるので、
+    パーサを差し替えて INSERT パイプライン自体を検証する。
+    """
+    import jobs.fetch_live_odds as _flo
+    monkeypatch.setitem(
+        _flo._TYPE_PARSERS, "b1", (lambda html: _make_tan_fuku_rows(), 0.5),
+    )
     client = _build_mock_client({"b1": TAN_FUKU_HTML})
     counters = await fetch_odds_for_race(RACE_ID, ["b1"], client, session)
 
@@ -108,8 +146,12 @@ async def test_fetch_tan_fuku_inserts_rows(session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_umaren_inserts_rows(session):
+async def test_fetch_umaren_inserts_rows(session, monkeypatch):
     """b4 fetch → 馬連 153 行が挿入される。"""
+    import jobs.fetch_live_odds as _flo
+    monkeypatch.setitem(
+        _flo._TYPE_PARSERS, "b4", (lambda html: _make_umaren_rows(), 0.5),
+    )
     client = _build_mock_client({"b4": UMAREN_HTML})
     await fetch_odds_for_race(RACE_ID, ["b4"], client, session)
 
@@ -138,8 +180,15 @@ async def test_fetch_upsert_idempotent(session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_multiple_types(session):
+async def test_fetch_multiple_types(session, monkeypatch):
     """複数 type を指定するとすべてのオッズが挿入される。"""
+    import jobs.fetch_live_odds as _flo
+    monkeypatch.setitem(
+        _flo._TYPE_PARSERS, "b1", (lambda html: _make_tan_fuku_rows(), 0.5),
+    )
+    monkeypatch.setitem(
+        _flo._TYPE_PARSERS, "b4", (lambda html: _make_umaren_rows(), 0.5),
+    )
     client = _build_mock_client({
         "b1": TAN_FUKU_HTML,
         "b4": UMAREN_HTML,
@@ -159,8 +208,12 @@ async def test_fetch_multiple_types(session):
 
 
 @pytest.mark.asyncio
-async def test_run_fetch_live_odds_multiple_races(engine):
+async def test_run_fetch_live_odds_multiple_races(engine, monkeypatch):
     """複数レースを順次 fetch して各レースのデータが別々に保存される。"""
+    import jobs.fetch_live_odds as _flo
+    monkeypatch.setitem(
+        _flo._TYPE_PARSERS, "b1", (lambda html: _make_tan_fuku_rows(), 0.5),
+    )
     race_id2 = "202412281212"
     with Session(engine) as session:
         session.add(Race(
