@@ -183,6 +183,9 @@ async def test_idempotency_does_not_overwrite_confirmed_finish_position(
     db_session.add(Horse(horse_id=HORSE_ID, name="ドウデュース"))
     db_session.add(Jockey(jockey_id="01167", name="武豊"))
     db_session.add(Trainer(trainer_id="01096", name="友道康夫"))
+    # relationship() が無いと SQLAlchemy が Entry を親より先に insert することがあるため、
+    # 親 (Race/Horse/Jockey/Trainer) を確実に flush してから Entry を追加する。
+    db_session.flush()
     db_session.add(Entry(
         race_id=RACE_ID,
         horse_id=HORSE_ID,
@@ -242,6 +245,9 @@ async def test_idempotency_updates_odds_for_pending_entry(
     db_session.add(Horse(horse_id=HORSE_ID, name="ドウデュース"))
     db_session.add(Jockey(jockey_id="01167", name="武豊"))
     db_session.add(Trainer(trainer_id="01096", name="友道康夫"))
+    # relationship() が無いと SQLAlchemy が Entry を親より先に insert することがあるため、
+    # 親 (Race/Horse/Jockey/Trainer) を確実に flush してから Entry を追加する。
+    db_session.flush()
     db_session.add(Entry(
         race_id=RACE_ID,
         horse_id=HORSE_ID,
@@ -255,6 +261,9 @@ async def test_idempotency_updates_odds_for_pending_entry(
     db_session.commit()
 
     # 2. shutuba ingest 実行 (フィクスチャ: odds_win=3.1, popularity=1)
+    # 既存の seed と同じ race_id (202406010111) を直接指定して ingest する。
+    # _build_fake_fetch は shutuba URL に対して常に同じ HTML を返すため、
+    # race_ids=[RACE_ID] でその race_id 用の shutuba HTML を取らせる。
     settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
     rate = AsyncRateLimiter(settings)
     robots = RobotsCache("TestAgent")
@@ -262,7 +271,8 @@ async def test_idempotency_updates_odds_for_pending_entry(
     client = NetkeibaClient(rate, robots, http, settings)
     client.fetch = _build_fake_fetch(CARD_CALENDAR_HTML, SHUTUBA_HTML)  # type: ignore[method-assign]
 
-    await run_ingest_shutuba("2026-05-05", client, db_session, limit=1)
+    # date_str はフィクスチャ HTML に日付が無いとき fallback として使われる。
+    await run_ingest_shutuba("2024-06-01", client, db_session, race_ids=[RACE_ID])
 
     # 3. odds_win と popularity が最新値に更新されていること
     entry = db_session.execute(
@@ -328,6 +338,9 @@ async def test_confirmed_entry_post_position_not_overwritten(
     db_session.add(Horse(horse_id=HORSE_ID, name="ドウデュース"))
     db_session.add(Jockey(jockey_id=ORIGINAL_JOCKEY_ID, name="仮騎手"))
     db_session.add(Trainer(trainer_id="01096", name="友道康夫"))
+    # relationship() が無いと SQLAlchemy が Entry を親より先に insert することがあるため、
+    # 親 (Race/Horse/Jockey/Trainer) を確実に flush してから Entry を追加する。
+    db_session.flush()
     db_session.add(Entry(
         race_id=RACE_ID,
         horse_id=HORSE_ID,
@@ -582,7 +595,9 @@ async def test_existing_wrong_date_is_corrected_by_html_date(
     HTML_DATE = "2026-05-09"  # shutuba HTML が返す正しい日付
 
     # 1. DB に bad row を植え込む
-    db_session.add(Race(race_id=RACE_ID, date=BAD_DATE, course="東京"))
+    db_session.add(Race(
+        race_id=RACE_ID, date=BAD_DATE, course="東京", surface="芝", distance=2000,
+    ))
     db_session.commit()
 
     # 2. shutuba parse が HTML_DATE を返すよう patch

@@ -9,7 +9,7 @@ race_id → races: CASCADE  (レース削除時に live_odds も連動削除)
 
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -38,5 +38,11 @@ class LiveOdds(Base):
     __table_args__ = (
         Index("ix_live_odds_race_id", "race_id"),
         Index("ix_live_odds_race_id_bet_type", "race_id", "bet_type"),
-        UniqueConstraint("race_id", "bet_type", "combo", name="uq_live_odds_race_id_bet_type_combo"),
+        # migration 0006 は同名で unique INDEX を作るためメタデータ側も Index で
+        # 揃える (UniqueConstraint だと alembic autogen が差分を出す)。
+        Index(
+            "uq_live_odds_race_id_bet_type_combo",
+            "race_id", "bet_type", "combo",
+            unique=True,
+        ),
     )
