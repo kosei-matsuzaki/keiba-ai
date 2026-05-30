@@ -30,7 +30,7 @@ from ai.labels import assign_is_winner, assign_relevance
 from ai.registry import save_model
 from ai.splits import time_split
 from core.paths import db_path
-from db.models import ModelRun  # noqa: F401 — register table with Base
+from db.models import ModelRun
 from db.session import make_engine, session_scope
 from features.builder import (
     CATEGORICAL_FEATURES,

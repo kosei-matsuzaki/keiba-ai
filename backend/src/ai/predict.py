@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sqlalchemy.orm import Session  # noqa: F401 — kept for API compatibility
 
 from ai.calibrate import (
     ComboCalibrators,
@@ -47,6 +46,8 @@ from ai.types import CombinationPrediction
 from features.builder import CATEGORICAL_FEATURES, FEATURE_COLUMNS
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from ai.registry import ModelBundle
     from ai.temperature import TemperatureScaler
 

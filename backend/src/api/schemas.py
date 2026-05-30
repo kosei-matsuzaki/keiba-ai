@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ai.types import CombinationPrediction  # noqa: F401 — re-exported for API consumers
+from ai.types import CombinationPrediction
 
 _ALL_BET_TYPES = frozenset(["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"])
 
