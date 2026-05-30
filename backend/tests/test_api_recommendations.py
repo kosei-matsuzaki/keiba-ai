@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from ai.types import BetCandidate, RecommendationResult
 from db.models.entry import Entry
 from db.models.horse import Horse
-from db.models.live_odds import LiveOdds
 from db.models.model_run import ModelRun
 from db.models.payout import Payout
 from db.models.race import Race
@@ -539,30 +538,24 @@ def test_recommendations_odds_source_unknown_when_no_odds(
     assert data["odds_source"] == "unknown"
 
 
-def test_recommendations_odds_source_live_when_live_odds_present(
+def test_recommendations_odds_source_live_for_today_market_odds(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """odds_source='live' when live_odds table has rows for the race."""
+    """odds_source='live' for a today race whose market (単勝) odds are known.
+
+    live_odds テーブル廃止後は、当日レースの市場オッズ(entries.odds_win)が
+    confirmed 単勝として供給され、high-level label は "live" になる。
+    """
     race_id = "REC_RACE_ODDS_LIVE"
     from core.paths import db_path
     from db.session import make_engine, session_scope
 
     engine = make_engine(db_path())
     with session_scope(engine) as session:
+        # date=today (default) + odds_win あり (default) → 単勝 confirmed が入る
         _seed_race_and_entries(session, race_id, n_horses=4)
         _seed_active_model(session, str(tmp_path / "fake_model_live"))
-        # Insert live_odds rows for this race
-        session.add(LiveOdds(
-            race_id=race_id,
-            bet_type="馬連",
-            combo="1-2",
-            odds=30.5,
-            odds_max=None,
-            popularity=1,
-            fetched_at="2025-01-01T10:00:00+00:00",
-        ))
-        session.commit()
 
     fake_df = _fake_predictions_df(race_id, n=4)
 
@@ -592,10 +585,9 @@ def test_recommendations_odds_source_live_when_live_odds_present(
     assert resp.status_code == 200
     data = resp.json()
     assert data["odds_source"] == "live"
-    # race_odds dict was passed to predict_race_with_combinations
+    # race_odds dict was passed to predict_race_with_combinations, with 単勝 confirmed
     assert captured_race_odds["value"] is not None
-    assert "馬連" in captured_race_odds["value"]
-    assert captured_race_odds["value"]["馬連"]["1-2"] == pytest.approx(30.5)
+    assert "単勝" in captured_race_odds["value"]
 
 
 def test_recommendations_odds_source_past_for_past_race(

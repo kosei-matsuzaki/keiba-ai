@@ -19,44 +19,8 @@ from ai.calibrate import (
     compute_analytical_combo_probs,
 )
 from db.models.entry import Entry
-from db.models.live_odds import LiveOdds
 from db.models.payout import Payout
 from db.models.race import Race
-
-
-def compute_race_odds(
-    session: Session,
-    race_id: str,
-) -> dict[str, dict[str, float]]:
-    """live_odds テーブルから特定レースのオッズを返す。
-
-    live_odds テーブルに指定レースのデータが存在する場合のみ値を返す。
-    データが無い場合は空 dict を返す（baseline へのフォールバックは呼び出し側の責務）。
-
-    Args:
-        session: SQLAlchemy Session.
-        race_id: 対象レースの race_id。
-
-    Returns:
-        {bet_type: {combo: odds}} 形式の 2 段ネスト dict。
-        例: {'馬連': {'3-7': 25.4, '3-9': 18.2}, ...}
-        複勝/ワイドは最小オッズ (odds) を使用し、odds_max は含めない（EV 計算用の単一値）。
-        オッズ未確定 (odds=None) の combo は結果から除外する。
-    """
-    rows = session.execute(
-        select(LiveOdds.bet_type, LiveOdds.combo, LiveOdds.odds)
-        .where(LiveOdds.race_id == race_id)
-        .where(LiveOdds.odds.is_not(None))
-    ).all()
-
-    result: dict[str, dict[str, float]] = {}
-    for row in rows:
-        if row.bet_type not in result:
-            result[row.bet_type] = {}
-        # live_odds 側も将来的にスペース入りで来た場合に備えて正規化しておく
-        result[row.bet_type][_normalize_combo(row.combo)] = row.odds
-
-    return result
 
 
 def _normalize_combo(combo: str) -> str:
@@ -93,7 +57,7 @@ def compute_past_race_odds(
 
     Returns:
         {bet_type: {combo: odds}} 形式の 2 段ネスト dict。
-        compute_race_odds と同じ構造。
+        compute_race_odds_with_sources と同じ構造。
     """
     result: dict[str, dict[str, float]] = {}
 
@@ -400,9 +364,8 @@ def compute_race_odds_with_sources(
     """確定オッズ + 単勝由来の推定オッズ統合版。レース時期を問わず使える。
 
     優先順位:
-      1. live_odds テーブル（今日のレース・取得済み）         → "confirmed"
-      2. payouts / entries.odds_win / payout_place（過去）   → "confirmed"
-      3. 残りの combo は単勝由来 Plackett-Luce 推定で補完     → "implied"
+      1. payouts / entries.odds_win / payout_place（過去）   → "confirmed"
+      2. 残りの combo は単勝由来 Plackett-Luce 推定で補完     → "implied"
 
     両方の odds と source は同一構造の 2 段ネスト dict で返す:
 
@@ -412,12 +375,8 @@ def compute_race_odds_with_sources(
 
     odds が空（単勝も取れない）→ ({}, {}) を返す。
     """
-    # Step 1: live を試す
-    confirmed = compute_race_odds(session, race_id)
-
-    # Step 2: live が無ければ過去レースの payout 系
-    if not confirmed:
-        confirmed = compute_past_race_odds(session, race_id)
+    # Step 1: 過去レースの payout / entries.odds_win 系の確定オッズ
+    confirmed = compute_past_race_odds(session, race_id)
 
     # confirmed 由来の combo に "confirmed" マーカーを付与
     sources: dict[str, dict[str, str]] = {
@@ -425,7 +384,7 @@ def compute_race_odds_with_sources(
         for bt, combos in confirmed.items()
     }
 
-    # Step 3: 単勝オッズから連系券種の推定オッズを生成
+    # Step 2: 単勝オッズから連系券種の推定オッズを生成
     tansho_odds = confirmed.get("単勝", {})
     if not tansho_odds:
         # confirmed に "単勝" が無い場合（live で連系のみ取得済み等）、

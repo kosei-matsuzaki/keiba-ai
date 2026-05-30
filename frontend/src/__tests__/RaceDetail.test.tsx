@@ -10,7 +10,6 @@ vi.mock('../lib/api', () => ({
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
-  fetchLiveOdds: vi.fn(),
   runShutubaScraper: vi.fn(),
   fetchJob: vi.fn(),
   createBet: vi.fn(),
@@ -24,7 +23,6 @@ import {
   fetchRaceDetail,
   fetchPredictions,
   fetchRecommendations,
-  fetchLiveOdds,
   runShutubaScraper,
   fetchJob,
 } from '../lib/api';
@@ -150,7 +148,6 @@ beforeEach(() => {
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
-  vi.mocked(fetchLiveOdds).mockResolvedValue({ job_id: 'odds-001', status: 'running', started_at: '2026-04-28T10:00:00' });
   vi.mocked(runShutubaScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
@@ -382,33 +379,6 @@ describe('RaceDetail', () => {
     expect(await screen.findByRole('heading', { name: '東京 G1' })).toBeInTheDocument();
   });
 
-  // ── オッズ更新ボタン ────────────────────────────────────────────────────────
-
-  it('renders オッズ更新 button when entries exist', async () => {
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-    expect(screen.getByRole('button', { name: 'オッズ更新' })).toBeInTheDocument();
-  });
-
-  it('calls fetchLiveOdds when オッズ更新 button is clicked', async () => {
-    const user = userEvent.setup();
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-    await user.click(screen.getByRole('button', { name: 'オッズ更新' }));
-    await waitFor(() => {
-      expect(vi.mocked(fetchLiveOdds)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_id: '202406010101' })
-      );
-    });
-  });
-
-  it('does not render オッズ更新 button when entries are empty', async () => {
-    vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-    expect(screen.queryByRole('button', { name: 'オッズ更新' })).not.toBeInTheDocument();
-  });
-
   // ── Shutuba fetch (button-driven) ─────────────────────────────────────────
 
   it('does not auto-fire runShutubaScraper when entries are empty', async () => {
@@ -462,17 +432,5 @@ describe('RaceDetail', () => {
     await waitFor(() => {
       expect(vi.mocked(fetchRaceDetail).mock.calls.length).toBeGreaterThan(1);
     });
-  });
-
-  // ── Live odds (button-driven) ─────────────────────────────────────────────
-
-  it('does not auto-fire fetchLiveOdds on mount', async () => {
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-
-    // Give enough time for any accidental auto-fire
-    await new Promise((r) => setTimeout(r, 50));
-    // オッズ取得はボタンを押すまで走らない
-    expect(vi.mocked(fetchLiveOdds)).not.toHaveBeenCalled();
   });
 });

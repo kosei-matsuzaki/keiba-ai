@@ -209,13 +209,6 @@ export interface ScraperRunShutubaRequest {
   limit?: number;
 }
 
-export interface FetchLiveOddsRequest {
-  /** 12 桁 race_id（必須）。 */
-  race_id: string;
-  /** 取得する券種コード（b1/b3/b4/b5/b6/b7/b8）。省略時は全種類。 */
-  types?: string[];
-}
-
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {
@@ -250,7 +243,7 @@ export interface SettingsUpdate {
 
 /**
  * est_odds の出所:
- *   confirmed = live_odds / payouts / entries.odds_win 由来の確定値
+ *   confirmed = payouts / entries.odds_win 由来の確定値
  *   implied   = 単勝オッズから Plackett-Luce で推定した値
  *   unknown   = 推定不能（est_odds は null）
  */
@@ -280,7 +273,7 @@ export interface RecommendationsResponse {
   bankroll_at_decision: number;
   candidates: RecommendationCandidate[];
   /**
-   * 'live'    = 当日リアルオッズ（live_odds テーブルより）
+   * 'live'    = 当日レースの市場オッズ（entries.odds_win 由来。締切前の単勝オッズ）
    * 'past'    = 確定オッズ（payouts/entries より。外れ combo は null）
    * 'unknown' = オッズ取得待ち or 該当データなし
    */

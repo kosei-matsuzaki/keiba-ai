@@ -445,7 +445,7 @@ describe('RecommendationsCard', () => {
       />
     );
 
-    expect(screen.getByText(/当日リアルオッズ/)).toBeInTheDocument();
+    expect(screen.getByText(/市場オッズ/)).toBeInTheDocument();
   });
 
   it('shows past odds note when odds_source is past', () => {

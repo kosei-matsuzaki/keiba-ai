@@ -26,7 +26,7 @@ class CombinationPrediction(BaseModel):
         est_odds: Odds multiplier used for EV. None when neither confirmed nor
             implied odds are available (e.g. tansho missing).
         est_odds_source: Where est_odds came from.
-            - "confirmed": live_odds / payouts / entries.odds_win 由来の確定値
+            - "confirmed": payouts / entries.odds_win 由来の確定値
             - "implied": 単勝オッズから Plackett-Luce で推定した値
             - "unknown": 推定不能（est_odds は None）
         ev: Expected value = prob * est_odds. None when est_odds is None.

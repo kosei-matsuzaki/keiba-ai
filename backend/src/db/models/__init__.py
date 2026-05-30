@@ -8,7 +8,6 @@ from db.models.bet_record import BetRecord
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.jockey import Jockey
-from db.models.live_odds import LiveOdds
 from db.models.model_run import ModelRun
 from db.models.payout import Payout
 from db.models.race import Race
@@ -21,7 +20,6 @@ __all__ = [
     "Entry",
     "Horse",
     "Jockey",
-    "LiveOdds",
     "ModelRun",
     "Payout",
     "Race",

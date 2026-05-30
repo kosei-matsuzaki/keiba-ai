@@ -11,8 +11,7 @@ vi.mock('../lib/api', () => ({
   runScraper: vi.fn(),
   stopScraper: vi.fn(),
   runShutubaScraper: vi.fn(),
-  fetchLiveOdds: vi.fn(),
-  // Required by useRunShutuba / useFetchLiveOdds job polling
+  // Required by useRunShutuba job polling
   fetchJob: vi.fn(),
 }));
 
@@ -21,7 +20,6 @@ import {
   runScraper,
   stopScraper,
   runShutubaScraper,
-  fetchLiveOdds,
   fetchJob,
 } from '../lib/api';
 
@@ -63,7 +61,6 @@ beforeEach(() => {
   vi.mocked(runScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(stopScraper).mockResolvedValue({ stopped: true });
   vi.mocked(runShutubaScraper).mockResolvedValue({ job_id: 'shutuba-001', status: 'running', started_at: '2026-04-28T10:00:00' });
-  vi.mocked(fetchLiveOdds).mockResolvedValue({ job_id: 'odds-001', status: 'running', started_at: '2026-04-28T10:00:00' });
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
 

@@ -283,7 +283,7 @@ def predict_race_with_combinations_gbdt(
         top_k_combinations: If set, each bet type list is truncated to the top-K
             entries by EV descending (None rows sort last). Useful for 三連単 (up
             to 4896 combos for 18 horses). None returns all combinations.
-        race_odds: Confirmed odds dict from compute_race_odds or compute_past_race_odds.
+        race_odds: Confirmed odds dict from compute_race_odds_with_sources.
             Format: {bet_type: {combo: odds}}.
             If provided, per-combo est_odds is taken from race_odds when available;
             combos not present in race_odds get est_odds=None and ev=None.

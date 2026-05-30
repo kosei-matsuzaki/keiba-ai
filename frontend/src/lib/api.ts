@@ -21,7 +21,6 @@ import type {
   BulkPredictionsResponse,
   DiscoverThisWeekendRaceIdsResponse,
   DiscoverTodayRaceIdsResponse,
-  FetchLiveOddsRequest,
   HealthResponse,
   JobAccepted,
   JobInfo,
@@ -171,10 +170,6 @@ export function runScraper(body: ScraperRunRequest): Promise<JobAccepted> {
 
 export function runShutubaScraper(body: ScraperRunShutubaRequest): Promise<JobAccepted> {
   return getClient().then((c) => c.post('scraper/run_shutuba', { json: body }).json<JobAccepted>());
-}
-
-export function fetchLiveOdds(body: FetchLiveOddsRequest): Promise<JobAccepted> {
-  return getClient().then((c) => c.post('scraper/fetch_live_odds', { json: body }).json<JobAccepted>());
 }
 
 export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceIdsResponse> {

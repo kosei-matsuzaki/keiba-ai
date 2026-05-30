@@ -19,7 +19,6 @@ from api.jobs import JobRegistry
 from api.schemas import (
     DiscoverThisWeekendRaceIdsResponse,
     DiscoverTodayRaceIdsResponse,
-    FetchLiveOddsRequest,
     JobAccepted,
     ScraperRecentActivity,
     ScraperRunRequest,
@@ -31,7 +30,6 @@ from core.dates import this_weekend_dates
 from core.paths import db_path
 from db.models.scrape_log import ScrapeLog
 from db.session import make_engine, session_scope
-from jobs.fetch_live_odds import _DEFAULT_TYPES, run_fetch_live_odds
 from jobs.ingest import run_ingest
 from jobs.ingest_shutuba import run_ingest_shutuba
 from scraper import stop_flag
@@ -224,38 +222,6 @@ async def run_shutuba_scraper(
                 await run_ingest_shutuba(date_str, client, s, limit=limit, race_ids=race_ids)
 
     info = registry.start("ingest_shutuba", _coro)
-    return JobAccepted(
-        job_id=info.job_id,
-        status=info.status,
-        started_at=info.started_at,
-    )
-
-
-@router.post("/scraper/fetch_live_odds", response_model=JobAccepted, status_code=202)
-async def fetch_live_odds_endpoint(
-    body: FetchLiveOddsRequest,
-    session: Annotated[Session, Depends(get_session)],  # noqa: ARG001
-    registry: Annotated[JobRegistry, Depends(get_job_registry)],
-) -> JobAccepted:
-    """Fetch live combination odds for the specified race from netkeiba.
-
-    Returns 202 Accepted immediately; the actual fetch runs as a background job.
-    """
-    race_id = body.race_id
-    types = body.types or _DEFAULT_TYPES
-
-    async def _coro() -> None:
-        settings = load_settings()
-        rate_limiter = AsyncRateLimiter(settings)
-        robots_cache = RobotsCache(settings.user_agent)
-        engine = make_engine(db_path())
-
-        async with httpx.AsyncClient() as http_client:
-            client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
-            with session_scope(engine) as s:
-                await run_fetch_live_odds([race_id], types, client, s)
-
-    info = registry.start("fetch_live_odds", _coro)
     return JobAccepted(
         job_id=info.job_id,
         status=info.status,

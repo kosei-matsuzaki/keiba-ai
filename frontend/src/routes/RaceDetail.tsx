@@ -5,7 +5,6 @@ import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown, Sparkles, 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
-import { useFetchLiveOdds } from '@/hooks/useFetchLiveOdds';
 import { useRunShutuba } from '@/hooks/useRunShutuba';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -341,15 +340,13 @@ export function RaceDetail() {
     race_id,
     aiRequested && Boolean(race_id) && !raceQuery.isPending && !raceQuery.isError,
   );
-  const fetchOddsMutation = useFetchLiveOdds(race_id);
   // runShutuba scoped to this race so raceDetail is invalidated on completion
   const runShutubaMutation = useRunShutuba(race_id);
 
   const race = raceQuery.data;
 
-  // NOTE: 出馬表取込・ライブオッズ取得・AI 予想はいずれも画面表示時に自動実行
-  // しない。すべて下部の各ボタン (出馬表を取得 / オッズ更新 / AI 予想を実行) で
-  // 明示的に開始する。
+  // NOTE: 出馬表取込・AI 予想はいずれも画面表示時に自動実行しない。
+  // すべて下部の各ボタン (出馬表を取得 / AI 予想を実行) で明示的に開始する。
 
   const backLink = dateParam ? `/past?date=${dateParam}` : '/past';
 
@@ -399,26 +396,9 @@ export function RaceDetail() {
   const predictions = predQuery.data?.predictions ?? null;
 
   const hasEntries = race.entries.length > 0;
-  // オッズ更新 / AI 予想ボタンは entries が存在する場合のみ表示する
-  const canFetchOdds = hasEntries;
 
-  const isFetchingOdds = fetchOddsMutation.isPending || fetchOddsMutation.isPolling;
   const isScrapingShutuba = runShutubaMutation.isPending || runShutubaMutation.isPolling;
   const isPredicting = aiRequested && (predQuery.isFetching || recQuery.isFetching);
-
-  function handleFetchOdds() {
-    fetchOddsMutation.mutate(
-      { race_id },
-      {
-        onSuccess: (data) => {
-          toast.success(`オッズ取得ジョブを開始しました（Job: ${data.job_id}）`);
-        },
-        onError: async (err) => {
-          toast.error(`オッズ取得に失敗しました: ${await formatErrorMessage(err)}`);
-        },
-      }
-    );
-  }
 
   function handleRunShutuba() {
     runShutubaMutation.mutate(
@@ -479,27 +459,12 @@ export function RaceDetail() {
                 : 'AI 予想を実行'}
           </Button>
         )}
-        {canFetchOdds && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isFetchingOdds}
-            onClick={handleFetchOdds}
-          >
-            {isFetchingOdds ? 'オッズ取得中...' : 'オッズ更新'}
-          </Button>
-        )}
       </PageHeader>
 
       {/* Job progress banners (button 起動の取込/取得ジョブの進捗) */}
       {isScrapingShutuba && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
           出馬表を取得中...
-        </div>
-      )}
-      {isFetchingOdds && !fetchOddsMutation.isPending && (
-        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
-          オッズを取得中...
         </div>
       )}
 

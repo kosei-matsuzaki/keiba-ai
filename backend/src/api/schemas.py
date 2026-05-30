@@ -282,25 +282,6 @@ class ScraperRunShutubaRequest(BaseModel):
         return self
 
 
-class FetchLiveOddsRequest(BaseModel):
-    """POST /api/scraper/fetch_live_odds リクエストボディ。"""
-    race_id: str = Field(pattern=r"^\d{12}$", description="12 桁 race_id")
-    types: list[str] | None = Field(
-        default=None,
-        description="取得する券種コード (b1/b3/b4/b5/b6/b7/b8)。省略時は全種類を取得",
-    )
-
-    @field_validator("types")
-    @classmethod
-    def validate_types(cls, v: list[str] | None) -> list[str] | None:
-        if v is not None:
-            valid = {"b1", "b3", "b4", "b5", "b6", "b7", "b8"}
-            invalid = [t for t in v if t not in valid]
-            if invalid:
-                raise ValueError(f"不正な券種コード: {invalid}。使用可能: {sorted(valid)}")
-        return v
-
-
 # ── Discover today race IDs schema ───────────────────────────────────────────
 
 class DiscoverTodayRaceIdsResponse(BaseModel):
