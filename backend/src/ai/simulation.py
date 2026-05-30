@@ -32,6 +32,7 @@ from ai.bet_strategy import recommend_for_race
 from ai.predict import predict_race, predict_race_with_combinations
 from ai.registry import ModelBundle, load_model_full
 from core.logging import get_logger
+from db.odds_db import init_odds_db, make_odds_engine
 from features.builder import build_training_frame
 
 log = get_logger(__name__)
@@ -342,6 +343,13 @@ def simulate_active_model(
     # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
     daily_buckets: dict[str, dict[str, float | int]] = {}
 
+    # odds.db の実オッズで EV 選択を実測ベースにする。未 backfill のレースは
+    # load_race_odds が {} を返し、従来の Plackett-Luce 推定へフォールバックする
+    # （後方互換）。読み取り専用なので close は loop 後にまとめて行う。
+    odds_engine = make_odds_engine()
+    init_odds_db(odds_engine)
+    odds_session = Session(bind=odds_engine)
+
     n_settled = 0
     for race_id in race_ids:
         race_frame = frame[frame["race_id"] == race_id]
@@ -360,7 +368,9 @@ def simulate_active_model(
         preds["post_position"] = preds["horse_id"].map(pp_map)
 
         # Combination predictions + odds (with implied fill)
-        race_odds, race_odds_sources = compute_race_odds_with_sources(session, race_id)
+        race_odds, race_odds_sources = compute_race_odds_with_sources(
+            session, race_id, odds_session=odds_session
+        )
         try:
             combos_by_type = predict_race_with_combinations(
                 bundle,
@@ -495,6 +505,8 @@ def simulate_active_model(
             crs_grp.invested += s["stake"]
             crs_grp.payout += s_payout
             crs_grp.hits += s["hit"]
+
+    odds_session.close()
 
     result.n_settled_races = n_settled
     result.final_bankroll = current_bankroll

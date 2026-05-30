@@ -41,3 +41,14 @@ def raw_path(yyyy: str, mm: str, filename: str) -> Path:
 
 def db_path() -> Path:
     return data_dir() / "keiba.db"
+
+
+def odds_db_path() -> Path:
+    """Separate SQLite file for scraped confirmed combination odds.
+
+    Kept apart from keiba.db so the large, write-heavy (and fully
+    re-scrapeable) odds dataset can never corrupt the irreplaceable
+    race/entry data. See db/odds_db.py.
+    """
+    env_val = os.getenv("KEIBA_ODDS_DB", "")
+    return Path(env_val) if env_val else data_dir() / "odds.db"
