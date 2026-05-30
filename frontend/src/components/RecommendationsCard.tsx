@@ -34,7 +34,7 @@ function OddsSourceBadge({ source }: { source: 'confirmed' | 'implied' | 'unknow
       <Badge
         variant="outline"
         className="ml-1 border-emerald-300 px-1 text-[10px] font-normal text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
-        title="確定オッズ（live_odds / payouts / entries.odds_win 由来）"
+        title="確定オッズ（payouts / entries.odds_win 由来）"
       >
         確定
       </Badge>
@@ -252,7 +252,7 @@ export function RecommendationsCard({
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
               {data.odds_source === 'live'
-                ? '※ 当日リアルオッズ。'
+                ? '※ 当日の市場オッズ（単勝由来）。'
                 : data.odds_source === 'past'
                   ? '※ 確定オッズ。'
                   : '※ オッズ取得待ち or 該当データなし。'}

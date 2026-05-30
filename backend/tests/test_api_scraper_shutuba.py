@@ -114,21 +114,29 @@ def test_run_shutuba_race_ids_without_date_passes_none_date_str(api_client: Test
     旧実装では date が省略されると今日の日付をデフォルト値として run_ingest_shutuba に
     渡していた。この修正後は date=None が渡され、HTML から抽出した日付が使われる。
     """
+    import threading
+
     stop_flag.clear_stopped()
 
     called_with: dict = {}
+    done = threading.Event()
 
     async def _capture(date_str, client, session, *, limit=None, race_ids=None) -> dict:
         called_with["date_str"] = date_str
         called_with["race_ids"] = race_ids
+        done.set()
         return {"fetched": 1, "skipped": 0, "errors": 0}
 
-    with patch("jobs.ingest_shutuba.run_ingest_shutuba", new=_capture):
+    # 202 後にバックグラウンドで _coro が走るので、_coro 完了まで patch を保持する
+    # 必要がある。また production の `from jobs.ingest_shutuba import run_ingest_shutuba`
+    # 経由で api.routers.scraper の名前空間に既に bind されているため、そこを patch する。
+    with patch("api.routers.scraper.run_ingest_shutuba", new=_capture):
         resp = api_client.post(
             "/api/scraper/run_shutuba",
             json={"race_ids": ["202506050911"]},
         )
-    assert resp.status_code == 202
+        assert resp.status_code == 202
+        assert done.wait(timeout=5.0), "background job did not invoke run_ingest_shutuba"
 
     # date が指定されていないので date_str は None であること
     assert called_with.get("date_str") is None, (

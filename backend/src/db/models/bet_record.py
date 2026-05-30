@@ -7,10 +7,15 @@ recommendation_id は将来の recommendations テーブル追加用の整数列
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import ForeignKey, Index, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
+
+if TYPE_CHECKING:
+    from db.models.race import Race
 
 
 class BetRecord(Base):
@@ -38,3 +43,7 @@ class BetRecord(Base):
         Index("ix_bet_records_created_at", "created_at"),
         Index("ix_bet_records_settled_at", "settled_at"),
     )
+
+    # SQLAlchemy unit-of-work が parent-first insert を解決できるよう scalar
+    # relationship を 1 本だけ張る (back_populates 等は意図的に省略)。
+    race: Mapped[Race] = relationship("Race", foreign_keys=[race_id])

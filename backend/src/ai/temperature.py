@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -104,7 +104,9 @@ def _eval_payback_win(
     """温度 T での単勝 payback を計算して返す。ベット 0 件なら -1.0 を返す。"""
     invested = 0.0
     gross = 0.0
-    for scores, positions, odds in zip(scores_per_race, finish_positions_per_race, odds_win_per_race):
+    for scores, positions, odds in zip(
+        scores_per_race, finish_positions_per_race, odds_win_per_race, strict=True,
+    ):
         win_probs = _softmax_with_temperature(scores, T)
         for i in range(len(scores)):
             o = float(odds[i]) if i < len(odds) else float("nan")
@@ -140,7 +142,7 @@ def _eval_payback_place(
     rng = np.random.default_rng(42)
 
     for scores, positions, payout_map in zip(
-        scores_per_race, finish_positions_per_race, payout_place_per_race
+        scores_per_race, finish_positions_per_race, payout_place_per_race, strict=True,
     ):
         if payout_map is None or len(payout_map) == 0:
             continue

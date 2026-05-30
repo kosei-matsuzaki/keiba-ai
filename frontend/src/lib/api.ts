@@ -21,7 +21,6 @@ import type {
   BulkPredictionsResponse,
   DiscoverThisWeekendRaceIdsResponse,
   DiscoverTodayRaceIdsResponse,
-  FetchLiveOddsRequest,
   HealthResponse,
   JobAccepted,
   JobInfo,
@@ -173,10 +172,6 @@ export function runShutubaScraper(body: ScraperRunShutubaRequest): Promise<JobAc
   return getClient().then((c) => c.post('scraper/run_shutuba', { json: body }).json<JobAccepted>());
 }
 
-export function fetchLiveOdds(body: FetchLiveOddsRequest): Promise<JobAccepted> {
-  return getClient().then((c) => c.post('scraper/fetch_live_odds', { json: body }).json<JobAccepted>());
-}
-
 export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceIdsResponse> {
   const searchParams: Record<string, string> = date ? { date } : {};
   return getClient().then((c) =>
@@ -318,6 +313,7 @@ export function runSimulation(req: SimulationRequest): Promise<SimulationRespons
   };
   if (req.start) searchParams.start = req.start;
   if (req.end) searchParams.end = req.end;
+  if (req.model_id != null) searchParams.model_id = req.model_id;
   return getClient().then((c) =>
     c
       .get('simulation/active_model', {
@@ -344,6 +340,7 @@ export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted>
   if (req.max_stake_per_race_yen && req.max_stake_per_race_yen > 0) {
     searchParams.max_stake_per_race_yen = req.max_stake_per_race_yen;
   }
+  if (req.model_id != null) searchParams.model_id = req.model_id;
   return getClient().then((c) =>
     c
       .post('simulation/start', { searchParams })
@@ -351,10 +348,17 @@ export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted>
   );
 }
 
-/** 保存済みシミュレーション実行の一覧を取得 (新しい順、最大 50 件)。 */
-export function listSimulationRuns(): Promise<SimulationRunListResponse> {
+/**
+ * 保存済みシミュレーション実行の一覧を取得 (新しい順、最大 50 件)。
+ * modelId を渡すとそのモデルの実行のみに絞る (モデル詳細画面用)。
+ */
+export function listSimulationRuns(
+  modelId?: number,
+): Promise<SimulationRunListResponse> {
+  const searchParams: Record<string, number> =
+    modelId != null ? { model_id: modelId } : {};
   return getClient().then((c) =>
-    c.get('simulation/runs').json<SimulationRunListResponse>()
+    c.get('simulation/runs', { searchParams }).json<SimulationRunListResponse>()
   );
 }
 

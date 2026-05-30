@@ -10,7 +10,6 @@ vi.mock('../lib/api', () => ({
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
-  fetchLiveOdds: vi.fn(),
   runShutubaScraper: vi.fn(),
   fetchJob: vi.fn(),
   createBet: vi.fn(),
@@ -24,7 +23,6 @@ import {
   fetchRaceDetail,
   fetchPredictions,
   fetchRecommendations,
-  fetchLiveOdds,
   runShutubaScraper,
   fetchJob,
 } from '../lib/api';
@@ -150,7 +148,6 @@ beforeEach(() => {
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
-  vi.mocked(fetchLiveOdds).mockResolvedValue({ job_id: 'odds-001', status: 'running', started_at: '2026-04-28T10:00:00' });
   vi.mocked(runShutubaScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
 });
@@ -170,14 +167,27 @@ describe('RaceDetail', () => {
     expect(screen.getByText('テスト馬B')).toBeInTheDocument();
   });
 
-  it('unified table contains prediction score column', async () => {
+  it('unified table contains prediction score column after running AI', async () => {
+    const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    // Score header
+    // Score header is always present
     expect(screen.getByRole('columnheader', { name: 'スコア' })).toBeInTheDocument();
-    // Score values for both horses
-    expect(screen.getByText('2.500')).toBeInTheDocument();
+    // 予想は自動では走らない — 実行前はスコア空欄
+    expect(screen.queryByText('2.500')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+
+    // Score values for both horses appear after running AI
+    expect(await screen.findByText('2.500')).toBeInTheDocument();
     expect(screen.getByText('1.800')).toBeInTheDocument();
+  });
+
+  it('does not fetch predictions automatically on mount', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    expect(vi.mocked(fetchPredictions)).not.toHaveBeenCalled();
+    expect(vi.mocked(fetchRecommendations)).not.toHaveBeenCalled();
   });
 
   it('unified table contains win_prob and place_prob columns', async () => {
@@ -196,11 +206,14 @@ describe('RaceDetail', () => {
     expect(postPositions.length).toBeGreaterThan(0);
   });
 
-  it('shows BUY badge when win EV > 1.1', async () => {
+  it('shows BUY badge when win EV > 1.1 after running AI', async () => {
     // テスト馬A: win_prob=0.45 * odds_win=3.5 = 1.575 > 1.1
     // テスト馬B: win_prob=0.20 * odds_win=8.0 = 1.60  > 1.1
+    const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
+    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await screen.findByText('2.500'); // wait for predictions
     const buyBadges = screen.getAllByText('BUY');
     expect(buyBadges.length).toBeGreaterThan(0);
   });
@@ -248,13 +261,25 @@ describe('RaceDetail', () => {
     });
   });
 
-  it('renders RecommendationsCard section', async () => {
+  it('does not render RecommendationsCard until AI is run', async () => {
     renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    expect(screen.queryByText('推奨買目')).not.toBeInTheDocument();
+  });
+
+  it('renders RecommendationsCard section after running AI', async () => {
+    const user = userEvent.setup();
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
     expect(await screen.findByText('推奨買目')).toBeInTheDocument();
   });
 
-  it('shows recommendation candidates from API', async () => {
+  it('shows recommendation candidates from API after running AI', async () => {
+    const user = userEvent.setup();
     renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
     await screen.findByText('推奨買目');
     expect(await screen.findByText('100,000 円')).toBeInTheDocument();
     expect(screen.getByText('単勝')).toBeInTheDocument();
@@ -312,8 +337,11 @@ describe('RaceDetail', () => {
   });
 
   it('BUY badge has descriptive title attribute', async () => {
+    const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
+    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await screen.findByText('2.500'); // wait for predictions
     const buyBadges = screen.getAllByText('BUY');
     expect(buyBadges.length).toBeGreaterThan(0);
     // Each BUY badge should carry a tooltip explaining the criterion
@@ -351,41 +379,25 @@ describe('RaceDetail', () => {
     expect(await screen.findByRole('heading', { name: '東京 G1' })).toBeInTheDocument();
   });
 
-  // ── オッズ更新ボタン ────────────────────────────────────────────────────────
+  // ── Shutuba fetch (button-driven) ─────────────────────────────────────────
 
-  it('renders オッズ更新 button when entries exist', async () => {
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-    expect(screen.getByRole('button', { name: 'オッズ更新' })).toBeInTheDocument();
-  });
-
-  it('calls fetchLiveOdds when オッズ更新 button is clicked', async () => {
-    const user = userEvent.setup();
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-    await user.click(screen.getByRole('button', { name: 'オッズ更新' }));
-    await waitFor(() => {
-      expect(vi.mocked(fetchLiveOdds)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_id: '202406010101' })
-      );
-    });
-  });
-
-  it('does not render オッズ更新 button when entries are empty', async () => {
+  it('does not auto-fire runShutubaScraper when entries are empty', async () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
+
     renderRaceDetail();
     await screen.findByText('レース概要');
-    expect(screen.queryByRole('button', { name: 'オッズ更新' })).not.toBeInTheDocument();
+    // 取得ボタンは出るが、自動では走らない
+    await screen.findByRole('button', { name: '出馬表を取得' });
+    expect(vi.mocked(runShutubaScraper)).not.toHaveBeenCalled();
   });
 
-  // ── Auto shutuba fetch ────────────────────────────────────────────────────
-
-  it('auto-fires runShutubaScraper when entries are empty', async () => {
+  it('fires runShutubaScraper when 出馬表を取得 button is clicked', async () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
     vi.mocked(fetchJob).mockResolvedValue(mockJobRunning);
+    const user = userEvent.setup();
 
     renderRaceDetail();
-    await screen.findByText('レース概要');
+    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
 
     await waitFor(() => {
       expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
@@ -394,12 +406,14 @@ describe('RaceDetail', () => {
     });
   });
 
-  it('shows 出馬表を取得中 banner while scraping', async () => {
+  it('shows 出馬表を取得中 banner while scraping after click', async () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
     // Keep job in running state so banner stays visible
     vi.mocked(fetchJob).mockResolvedValue(mockJobRunning);
+    const user = userEvent.setup();
 
     renderRaceDetail();
+    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
 
     await waitFor(() => {
       expect(screen.getByText(/出馬表を取得中/)).toBeInTheDocument();
@@ -409,49 +423,14 @@ describe('RaceDetail', () => {
   it('invalidates raceDetail cache after shutuba job completes', async () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
     vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
+    const user = userEvent.setup();
 
     renderRaceDetail();
-    await screen.findByText('レース概要');
+    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
 
     // fetchRaceDetail should be called again after job completes
     await waitFor(() => {
       expect(vi.mocked(fetchRaceDetail).mock.calls.length).toBeGreaterThan(1);
     });
-  });
-
-  // ── Auto live_odds fetch ──────────────────────────────────────────────────
-
-  it('auto-fires fetchLiveOdds when odds_source is unknown', async () => {
-    // entries exist, recommendations return unknown (no live and no past odds)
-    vi.mocked(fetchRecommendations).mockResolvedValue({
-      ...mockRecommendations,
-      odds_source: 'unknown',
-    });
-    vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
-
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-
-    await waitFor(() => {
-      expect(vi.mocked(fetchLiveOdds)).toHaveBeenCalledWith(
-        expect.objectContaining({ race_id: '202406010101' })
-      );
-    });
-  });
-
-  it('does not auto-fire fetchLiveOdds when odds_source is live', async () => {
-    vi.mocked(fetchRecommendations).mockResolvedValue({
-      ...mockRecommendations,
-      odds_source: 'live',
-    });
-
-    renderRaceDetail();
-    await screen.findByText('レース概要');
-
-    // Give enough time for any accidental auto-fire
-    await new Promise((r) => setTimeout(r, 50));
-    // fetchLiveOdds should NOT have been called automatically
-    // (only if user clicks the button — which we don't in this test)
-    expect(vi.mocked(fetchLiveOdds)).not.toHaveBeenCalled();
   });
 });

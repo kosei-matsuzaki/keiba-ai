@@ -17,7 +17,7 @@ Each NN model is stored under data/models/<YYYYMMDDTHHMMSS>-nn/ with:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -233,19 +233,19 @@ class ModelBundle:
     calibrator: IsotonicCalibrator | None = None
     combo_calibrators: ComboCalibrators | None = None
     # NN 経路 (torch は遅延 import のため型は文字列注釈のみ)
-    nn_model: "torch.nn.Module | None" = None
+    nn_model: torch.nn.Module | None = None
     nn_horse_feature_cols: list[str] | None = None
     nn_race_feature_cols: list[str] | None = None
     nn_preprocessor: NNPreprocessor | None = None
     # GBDT stacking: NN was trained on features augmented with this GBDT
     # bundle's predictions.  Inference must apply the same augmentation
     # before calling the NN.
-    nn_gbdt_bundle: "ModelBundle | None" = None
+    nn_gbdt_bundle: ModelBundle | None = None
     # GBDT ensemble (inference-time blending, no training-side coupling):
     # blend the per-horse (win_prob, place_prob) between NN and this GBDT
     # using ``nn_ensemble_weight`` (1.0 = pure NN, 0.0 = pure GBDT).
     # Ranking score stays as the NN's, so ordering doesn't change.
-    nn_ensemble_gbdt_bundle: "ModelBundle | None" = None
+    nn_ensemble_gbdt_bundle: ModelBundle | None = None
     nn_ensemble_weight: float = 1.0
     # Post-hoc isotonic calibrator for NN win_prob. Applied after the temperature
     # scaler / softmax to fix systematic over-confidence on longshots. None for

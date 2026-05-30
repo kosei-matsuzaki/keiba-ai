@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scraper.parsers.payout import PayoutRow, parse_payout, parse_payouts
 
 FIXTURES = Path(__file__).parent / "fixtures"

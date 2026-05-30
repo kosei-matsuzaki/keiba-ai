@@ -4,6 +4,7 @@ import { Dashboard } from './routes/Dashboard';
 import { Races } from './routes/Races';
 import { RaceDetail } from './routes/RaceDetail';
 import { Models } from './routes/Models';
+import { ModelDetail } from './routes/ModelDetail';
 import { Settings } from './routes/Settings';
 import { Ledger } from './routes/Ledger';
 
@@ -19,8 +20,9 @@ export const router = createBrowserRouter([
       // 既存ブックマーク互換: 旧 /upcoming /past は /races へ redirect
       { path: 'upcoming', element: <Navigate to="/races" replace /> },
       { path: 'past', element: <Navigate to="/races" replace /> },
-      // Models: 一覧 + Simulation を内部タブで統合
+      // Models: 一覧。各モデルの詳細 (/models/:id) でバックテストを実行する。
       { path: 'models', element: <Models /> },
+      { path: 'models/:model_id', element: <ModelDetail /> },
       // Settings: 一般 + Ingest を内部タブで統合
       { path: 'settings', element: <Settings /> },
       // 旧 /ingest は /settings (Ingest タブ) へ redirect

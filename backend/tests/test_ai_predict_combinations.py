@@ -18,7 +18,6 @@ from ai.predict import (
     predict_race_with_combinations_gbdt,
 )
 from ai.registry import load_model
-from db.base import Base
 from db.models.race import Race
 from features.builder import build_inference_frame
 from tests.synthetic import make_synthetic_db

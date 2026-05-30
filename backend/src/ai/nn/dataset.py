@@ -5,10 +5,8 @@ One sample = one race.  Variable-length races are padded inside collate_fn.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset

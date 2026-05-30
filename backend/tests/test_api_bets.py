@@ -55,7 +55,7 @@ def _insert_settled_bet(session: Session, race_id: str = "202406010101") -> BetR
 
 def _get_engine_and_session(app_with_temp_db):
     from core.paths import db_path
-    from db.session import make_engine, session_scope
+    from db.session import make_engine
     engine = make_engine(db_path())
     return engine
 

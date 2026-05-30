@@ -147,6 +147,8 @@ function GroupTable({ title, rows }: GroupTableProps) {
 // ── SavedRunsPanel: 保存済みシミュレーション一覧 ─────────────────────────────
 
 interface SavedRunsPanelProps {
+  /** このモデル (model_runs.id) の実行のみ表示する。 */
+  modelId: number;
   /** 表示中の result の run_id (highlight 用)。 */
   activeRunId: number | null;
   /** click した run の詳細を読み込む (親で setResult)。 */
@@ -167,11 +169,11 @@ function _formatRunTimestamp(iso: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
-function SavedRunsPanel({ activeRunId, onLoad, onDeleted }: SavedRunsPanelProps) {
+function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPanelProps) {
   const queryClient = useQueryClient();
   const listQuery = useQuery({
-    queryKey: ['simulation-runs'],
-    queryFn: listSimulationRuns,
+    queryKey: ['simulation-runs', modelId],
+    queryFn: () => listSimulationRuns(modelId),
     staleTime: 0,
   });
 
@@ -179,7 +181,7 @@ function SavedRunsPanel({ activeRunId, onLoad, onDeleted }: SavedRunsPanelProps)
     mutationFn: (runId: number) => deleteSimulationRun(runId),
     onSuccess: () => {
       toast.success('保存済み実行を削除しました');
-      queryClient.invalidateQueries({ queryKey: ['simulation-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['simulation-runs', modelId] });
       onDeleted();
     },
     onError: (err) => {
@@ -302,9 +304,14 @@ function SavedRunsPanel({ activeRunId, onLoad, onDeleted }: SavedRunsPanelProps)
 }
 
 
-// ── Main SimulationTab ────────────────────────────────────────────────────────
+// ── ModelSimulationPanel: 特定モデルのバックテスト ──────────────────────────
 
-export function SimulationTab() {
+interface ModelSimulationPanelProps {
+  /** バックテスト対象モデル (model_runs.id)。 */
+  modelId: number;
+}
+
+export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   const today = new Date();
   const defaultEnd = _isoDate(today);
   const defaultStart = _isoDate(_addMonths(today, -3));
@@ -369,7 +376,7 @@ export function SimulationTab() {
         getSimulationRun(runId).then((data) => {
           setResult(data);
           toast.success(`シミュレーション完了 (${data.n_settled_races} race) — 保存しました`);
-          queryClient.invalidateQueries({ queryKey: ['simulation-runs'] });
+          queryClient.invalidateQueries({ queryKey: ['simulation-runs', modelId] });
         }).catch((err) => {
           toast.error(`結果取得失敗: ${formatErrorMessageSync(err)}`);
         });
@@ -393,6 +400,7 @@ export function SimulationTab() {
         budget,
         strategy,
         max_stake_per_race_yen: maxStakePerRaceYen,
+        model_id: modelId,
       }),
     onSuccess: (data) => {
       setActiveJobId(data.job_id);
@@ -547,6 +555,7 @@ export function SimulationTab() {
 
       {/* Saved runs */}
       <SavedRunsPanel
+        modelId={modelId}
         activeRunId={result?.run_id ?? null}
         onLoad={(runId) => loadMutation.mutate(runId)}
         onDeleted={() => {
@@ -568,7 +577,7 @@ export function SimulationTab() {
           }
           description={
             isRunning
-              ? 'アクティブモデルで全レースを predict + recommend + settle しています。完了まで window のサイズ次第で数十秒〜数分。タブを閉じてもバックエンドで継続実行されます。'
+              ? 'このモデルで全レースを predict + recommend + settle しています。完了まで window のサイズ次第で数十秒〜数分。画面を離れてもバックエンドで継続実行されます。'
               : ''
           }
         />

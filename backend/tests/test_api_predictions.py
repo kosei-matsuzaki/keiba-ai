@@ -101,11 +101,12 @@ def test_predictions_success(
 
     # fake_df does not include top_features — router uses list(row.get(...) or []) fallback
     with (
-        patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
-        resp = client.get("/api/predictions/PRED_RACE1")
+        # include_combinations=false: combinations 経路は別テストで検証する
+        resp = client.get("/api/predictions/PRED_RACE1?include_combinations=false")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -138,10 +139,10 @@ def test_predictions_include_combinations_default(
     })
 
     with (
-        patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         patch(
-            "api.routers.predictions.predict_race_with_combinations_gbdt",
+            "api.routers.predictions.predict_race_with_combinations",
             return_value={
                 "単勝": [], "複勝": [], "馬連": [], "ワイド": [],
                 "馬単": [], "三連複": [], "三連単": [],
@@ -181,8 +182,8 @@ def test_predictions_include_combinations_false(
     })
 
     with (
-        patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get("/api/predictions/COMBO_RACE2?include_combinations=false")
@@ -238,8 +239,8 @@ def test_bulk_predictions_success(
     })
 
     with (
-        patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_gbdt", return_value=fake_df.head(3)),
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race", return_value=fake_df.head(3)),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.get(f"/api/predictions/bulk?race_ids={RACE_ID}&top_n=3")

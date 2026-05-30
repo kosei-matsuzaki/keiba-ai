@@ -137,7 +137,7 @@ def _compute_ndcg_nn(
             race_scores.append(scores[0, :n].cpu().tolist())
 
     ndcg_vals: list[float] = []
-    for (_, grp), scores in zip(frame.groupby("race_id", sort=True), race_scores):
+    for (_, grp), scores in zip(frame.groupby("race_id", sort=True), race_scores, strict=True):
         if len(grp) < 2:
             continue
         true_rel = grp["relevance"].values.reshape(1, -1)

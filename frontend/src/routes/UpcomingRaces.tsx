@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, RefreshCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CalendarClock, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
@@ -222,11 +222,9 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
   const lastUpdatedLabel = _relativeTimeJa(dataUpdatedAt);
 
   const [bootstrap, setBootstrap] = useState<BootstrapState>({ phase: 'idle' });
-  // Tracks whether auto-bootstrap has already been attempted this mount.
-  const autoFiredRef = useRef(false);
-  // 再取込ボタンが押された直後だけ「races>0 でも shutuba ingest を強制再実行」
-  // するためのフラグ。auto-bootstrap effect 内で使い終わったら自動で false に戻す。
-  const [forceReingest, setForceReingest] = useState(false);
+  // 一覧の「AI 予想」列は、開いた瞬間に全レース分の推論を裏で走らせず、
+  // ボタンを押して初めて取得する (ユーザー要望でボタン主導化)。
+  const [predictionsRequested, setPredictionsRequested] = useState(false);
 
   const runShutuba = useRunShutuba();
 
@@ -234,9 +232,13 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
     bootstrap.phase === 'scraping' ? bootstrap.jobId : null;
   const jobStatus = useJobStatus(scrapingJobId);
 
-  // Collect race IDs for bulk predictions — only when we have data
+  // Collect race IDs for bulk predictions — fetched only after the user opts in.
   const allRaceIds = data?.races.map((r) => r.race_id) ?? [];
-  const { data: bulkPredData } = useBulkPredictions(allRaceIds, 3);
+  const {
+    data: bulkPredData,
+    isFetching: isPredicting,
+    refetch: refetchPredictions,
+  } = useBulkPredictions(allRaceIds, 3, predictionsRequested);
   const predictions = bulkPredData?.predictions ?? {};
 
   // React to job reaching terminal state
@@ -253,21 +255,6 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
       toast.error(`レース情報の取得に失敗しました: ${msg}`);
     }
   }, [jobStatus.data, bootstrap.phase, refetch]);
-
-  // Auto-bootstrap: fire when races are empty OR forceReingest is set
-  useEffect(() => {
-    if (isPending || isError) return;
-    if (autoFiredRef.current) return;
-    if (bootstrap.phase !== 'idle') return;
-    // races が既にあって、かつ強制再取込フラグが立っていなければ skip
-    if (data && data.races.length > 0 && !forceReingest) return;
-
-    const wasForced = forceReingest;
-    autoFiredRef.current = true;
-    setForceReingest(false);  // consume the flag
-    runBootstrap(wasForced);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPending, isError, data, bootstrap.phase, forceReingest]);
 
   async function runBootstrap(forced: boolean = false) {
     setBootstrap({ phase: 'discovering' });
@@ -304,13 +291,21 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
     );
   }
 
-  function handleManualRefetch() {
-    // races > 0 でも shutuba ingest を強制再実行することで、馬体重・直前
-    // odds_win・除外馬・補欠繰上り等の最新化を反映できる。
-    autoFiredRef.current = false;
-    setBootstrap({ phase: 'idle' });
-    setForceReingest(true);
-    refetch();
+  function handleStartIngest(forced: boolean) {
+    // forced=true: races > 0 でも shutuba ingest を強制再実行し、馬体重・直前
+    // odds_win・除外馬・補欠繰上り等を最新化する (再取込ボタン)。
+    // forced=false: まだ取り込んでいない週末を初回取得する (空状態のボタン)。
+    if (isBootstrapping) return;
+    runBootstrap(forced);
+  }
+
+  function handleRunPredictions() {
+    if (allRaceIds.length === 0) return;
+    if (!predictionsRequested) {
+      setPredictionsRequested(true);
+    } else {
+      refetchPredictions();
+    }
   }
 
   function handleRowClick(race: RaceSummary) {
@@ -322,17 +317,33 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
 
   const daySections = data ? groupByDayAndCourse(data.races) : [];
 
-  const refetchButton = (
-    <Button
-      variant="outline"
-      size="sm"
-      disabled={isBootstrapping}
-      onClick={handleManualRefetch}
-      aria-label="再取込"
-    >
-      <RefreshCw className="mr-1.5 h-4 w-4" />
-      再取込
-    </Button>
+  const headerActions = (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={isPredicting || allRaceIds.length === 0}
+        onClick={handleRunPredictions}
+        aria-label="AI 予想を実行"
+      >
+        <Sparkles className="mr-1.5 h-4 w-4" />
+        {isPredicting
+          ? 'AI 予想 実行中...'
+          : predictionsRequested
+            ? 'AI 予想を再取得'
+            : 'AI 予想を実行'}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={isBootstrapping}
+        onClick={() => handleStartIngest(true)}
+        aria-label="再取込"
+      >
+        <RefreshCw className="mr-1.5 h-4 w-4" />
+        再取込
+      </Button>
+    </>
   );
 
   return (
@@ -348,7 +359,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
               最終更新: {lastUpdatedLabel}
             </span>
           )}
-          {refetchButton}
+          {headerActions}
         </PageHeader>
       )}
       {embedded && (
@@ -362,7 +373,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
                 最終更新: {lastUpdatedLabel}
               </span>
             )}
-            {refetchButton}
+            {headerActions}
           </div>
         </div>
       )}
@@ -398,9 +409,14 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
           <TableSkeleton />
         ) : (
           <EmptyState
-            message="今週末の予定レースはありません"
-            description="スクレイパーでデータを取り込んでください。"
-          />
+            message="今週末のレースは未取得です"
+            description="自動取得は行いません。下のボタンで今週末の JRA レースを取り込んでください。"
+          >
+            <Button onClick={() => handleStartIngest(false)} disabled={isBootstrapping}>
+              <RefreshCw className="mr-1.5 h-4 w-4" />
+              今週末のレースを取得
+            </Button>
+          </EmptyState>
         )
       ) : (
         <Tabs defaultValue={daySections[0].date} className="flex flex-col gap-6">

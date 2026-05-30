@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from scraper.robots import RobotsCache
 
 _ROBOTS_TXT = """\
@@ -23,7 +19,6 @@ def _make_cache_with_mock_fetch(robots_content: str, user_agent: str = "TestAgen
     cache = RobotsCache(user_agent=user_agent)
 
     def fake_load(robots_url: str):
-        from io import StringIO
         from urllib.robotparser import RobotFileParser
         rp = RobotFileParser()
         rp.set_url(robots_url)

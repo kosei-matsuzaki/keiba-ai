@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from sqlalchemy.orm import Session
 
 from db.models.bet_record import BetRecord

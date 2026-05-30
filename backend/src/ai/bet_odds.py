@@ -1,12 +1,8 @@
-"""Baseline odds estimation from historical payout data.
+"""Race-level odds dictionaries used by predict / simulation / evaluate.
 
-These functions compute average odds from the payouts table to serve as
-a proxy for current-day odds until live netkeiba combination odds scraping
-is implemented (separate Issue).
-
-The hardcoded fallback constants are placeholders only — real odds deviate
-significantly from these race-by-race, so EV figures computed with fallbacks
-are rough estimates at best.
+Entry point is :func:`compute_race_odds_with_sources` which merges three
+sources (live odds → past payouts → tansho-implied) into a single
+``{bet_type: {combo: odds}}`` dict alongside per-combo source markers.
 """
 
 from __future__ import annotations
@@ -15,7 +11,7 @@ import json
 from itertools import combinations, permutations
 
 import numpy as np
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai.calibrate import (
@@ -23,99 +19,8 @@ from ai.calibrate import (
     compute_analytical_combo_probs,
 )
 from db.models.entry import Entry
-from db.models.live_odds import LiveOdds
 from db.models.payout import Payout
 from db.models.race import Race
-
-# ---------------------------------------------------------------------------
-# Hardcoded fallback odds (amount in yen / 100 = odds multiplier).
-# Used when the payouts table has no rows for a given bet_type.
-# Replace these with live odds once scraping is available.
-# ---------------------------------------------------------------------------
-
-_FALLBACK_AMOUNTS: dict[str, int] = {
-    "単勝": 1000,
-    "複勝": 200,
-    "枠連": 3000,
-    "馬連": 5000,
-    "ワイド": 1500,
-    "馬単": 10000,
-    "三連複": 10000,
-    "三連単": 50000,
-}
-
-_ALL_BET_TYPES = list(_FALLBACK_AMOUNTS.keys())
-
-
-def _amounts_to_odds(amounts: dict[str, float]) -> dict[str, float]:
-    """Convert payout amounts (yen per 100-yen bet) to odds multiplier."""
-    return {bet_type: amt / 100.0 for bet_type, amt in amounts.items()}
-
-
-def _fallback_odds() -> dict[str, float]:
-    return _amounts_to_odds({k: float(v) for k, v in _FALLBACK_AMOUNTS.items()})
-
-
-def compute_baseline_odds(session: Session) -> dict[str, float]:
-    """Compute average odds per bet_type from the payouts table.
-
-    Aggregates over all races in the database. Returns a dict mapping
-    bet_type (e.g. '単勝', '馬連') to average odds (amount / 100).
-
-    If payouts table is empty or a bet_type has no rows, falls back to
-    hardcoded placeholder values defined in _FALLBACK_AMOUNTS.
-
-    NOTE: These are historical average payouts, not current-race odds.
-    They will be replaced by live pre-race odds once the scraper for
-    combination odds is implemented.
-    """
-    rows = session.execute(
-        select(Payout.bet_type, func.avg(Payout.amount).label("avg_amount"))
-        .group_by(Payout.bet_type)
-    ).all()
-
-    db_odds: dict[str, float] = {}
-    for row in rows:
-        db_odds[row.bet_type] = row.avg_amount / 100.0
-
-    result = _fallback_odds()
-    result.update(db_odds)
-    return result
-
-
-def compute_race_odds(
-    session: Session,
-    race_id: str,
-) -> dict[str, dict[str, float]]:
-    """live_odds テーブルから特定レースのオッズを返す。
-
-    live_odds テーブルに指定レースのデータが存在する場合のみ値を返す。
-    データが無い場合は空 dict を返す（baseline へのフォールバックは呼び出し側の責務）。
-
-    Args:
-        session: SQLAlchemy Session.
-        race_id: 対象レースの race_id。
-
-    Returns:
-        {bet_type: {combo: odds}} 形式の 2 段ネスト dict。
-        例: {'馬連': {'3-7': 25.4, '3-9': 18.2}, ...}
-        複勝/ワイドは最小オッズ (odds) を使用し、odds_max は含めない（EV 計算用の単一値）。
-        オッズ未確定 (odds=None) の combo は結果から除外する。
-    """
-    rows = session.execute(
-        select(LiveOdds.bet_type, LiveOdds.combo, LiveOdds.odds)
-        .where(LiveOdds.race_id == race_id)
-        .where(LiveOdds.odds.is_not(None))
-    ).all()
-
-    result: dict[str, dict[str, float]] = {}
-    for row in rows:
-        if row.bet_type not in result:
-            result[row.bet_type] = {}
-        # live_odds 側も将来的にスペース入りで来た場合に備えて正規化しておく
-        result[row.bet_type][_normalize_combo(row.combo)] = row.odds
-
-    return result
 
 
 def _normalize_combo(combo: str) -> str:
@@ -152,7 +57,7 @@ def compute_past_race_odds(
 
     Returns:
         {bet_type: {combo: odds}} 形式の 2 段ネスト dict。
-        compute_race_odds と同じ構造。
+        compute_race_odds_with_sources と同じ構造。
     """
     result: dict[str, dict[str, float]] = {}
 
@@ -229,57 +134,6 @@ def compute_past_race_odds(
         # 連系の combo は payouts テーブルだと "10 - 14" のように空白が入って
         # いるが、predict 側は "10-14" を生成するので空白を除去して合わせる。
         result[row.bet_type][_normalize_combo(row.combo)] = row.amount / 100.0
-
-    return result
-
-
-def compute_baseline_odds_by_class(
-    session: Session,
-    race_class: str | None = None,
-    surface: str | None = None,
-    distance: int | None = None,
-    min_samples: int = 30,
-) -> dict[str, float]:
-    """Compute average odds filtered by race conditions.
-
-    Filters payouts by race_class / surface / distance (any combination).
-    Falls back to the overall average (compute_baseline_odds) if the
-    filtered result has fewer than min_samples rows for a given bet_type,
-    which avoids unstable estimates from tiny sub-groups.
-
-    Args:
-        session: SQLAlchemy Session.
-        race_class: Filter by races.race_class if provided.
-        surface: Filter by races.surface if provided.
-        distance: Filter by races.distance if provided.
-        min_samples: Minimum rows required to use filtered estimate.
-            If fewer rows exist for a bet_type, falls back to overall average.
-    """
-    base_odds = compute_baseline_odds(session)
-
-    # Build filtered query joining races
-    q = (
-        select(
-            Payout.bet_type,
-            func.avg(Payout.amount).label("avg_amount"),
-            func.count(Payout.id).label("n"),
-        )
-        .join(Race, Race.race_id == Payout.race_id)
-        .group_by(Payout.bet_type)
-    )
-    if race_class is not None:
-        q = q.where(Race.race_class == race_class)
-    if surface is not None:
-        q = q.where(Race.surface == surface)
-    if distance is not None:
-        q = q.where(Race.distance == distance)
-
-    rows = session.execute(q).all()
-
-    result = dict(base_odds)  # start with overall averages as fallback
-    for row in rows:
-        if row.n >= min_samples:
-            result[row.bet_type] = row.avg_amount / 100.0
 
     return result
 
@@ -502,52 +356,6 @@ def compute_implied_combo_odds_from_tansho(
     return result
 
 
-def compute_past_race_odds_with_tansho_fill(
-    session: Session,
-    race_id: str,
-    n_samples: int = 10_000,
-) -> dict[str, dict[str, float]]:
-    """過去レースの確定オッズ + 単勝由来の推定オッズで未確定 combo を補完。
-
-    優先順位:
-      1. 確定オッズ（payouts / entries.odds_win / payout_place）— compute_past_race_odds
-      2. 上記で取れない combo は単勝由来の Plackett-Luce 推定オッズで埋める
-
-    確定オッズが既に存在する combo は **絶対に上書きしない**。
-
-    Args:
-        session: SQLAlchemy Session.
-        race_id: 対象レース。
-        n_samples: PL モンテカルロのサンプル数。
-
-    Returns:
-        compute_past_race_odds と同じ形式 {bet_type: {combo: odds}}。
-        単勝オッズが取れない場合は補完なしで確定オッズのみを返す。
-    """
-    confirmed = compute_past_race_odds(session, race_id)
-    tansho_odds = confirmed.get("単勝", {})
-
-    if not tansho_odds or len(tansho_odds) < 2:
-        # 単勝が無い / 1 頭分しかない → 推定不能。確定オッズだけ返す。
-        return confirmed
-
-    try:
-        implied = compute_implied_combo_odds_from_tansho(
-            tansho_odds, n_samples=n_samples
-        )
-    except ValueError:
-        return confirmed
-
-    # 未確定 combo のみマージ（確定値を上書きしない）
-    for bet_type, combos in implied.items():
-        if bet_type not in confirmed:
-            confirmed[bet_type] = {}
-        for combo, odds in combos.items():
-            confirmed[bet_type].setdefault(combo, odds)
-
-    return confirmed
-
-
 def compute_race_odds_with_sources(
     session: Session,
     race_id: str,
@@ -556,9 +364,8 @@ def compute_race_odds_with_sources(
     """確定オッズ + 単勝由来の推定オッズ統合版。レース時期を問わず使える。
 
     優先順位:
-      1. live_odds テーブル（今日のレース・取得済み）         → "confirmed"
-      2. payouts / entries.odds_win / payout_place（過去）   → "confirmed"
-      3. 残りの combo は単勝由来 Plackett-Luce 推定で補完     → "implied"
+      1. payouts / entries.odds_win / payout_place（過去）   → "confirmed"
+      2. 残りの combo は単勝由来 Plackett-Luce 推定で補完     → "implied"
 
     両方の odds と source は同一構造の 2 段ネスト dict で返す:
 
@@ -568,12 +375,8 @@ def compute_race_odds_with_sources(
 
     odds が空（単勝も取れない）→ ({}, {}) を返す。
     """
-    # Step 1: live を試す
-    confirmed = compute_race_odds(session, race_id)
-
-    # Step 2: live が無ければ過去レースの payout 系
-    if not confirmed:
-        confirmed = compute_past_race_odds(session, race_id)
+    # Step 1: 過去レースの payout / entries.odds_win 系の確定オッズ
+    confirmed = compute_past_race_odds(session, race_id)
 
     # confirmed 由来の combo に "confirmed" マーカーを付与
     sources: dict[str, dict[str, str]] = {
@@ -581,7 +384,7 @@ def compute_race_odds_with_sources(
         for bt, combos in confirmed.items()
     }
 
-    # Step 3: 単勝オッズから連系券種の推定オッズを生成
+    # Step 2: 単勝オッズから連系券種の推定オッズを生成
     tansho_odds = confirmed.get("単勝", {})
     if not tansho_odds:
         # confirmed に "単勝" が無い場合（live で連系のみ取得済み等）、

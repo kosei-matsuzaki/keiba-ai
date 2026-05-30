@@ -51,9 +51,11 @@ def _resolve_odds_source(
 ]:
     """Determine odds + per-combo source labels.
 
-    Priority: live > past > unknown for the high-level odds_source label.
-    Per-combo source label is "confirmed" / "implied" (set by
-    compute_race_odds_with_sources). Missing combos remain absent from the dict.
+    High-level label は日付ベース: 過去レース → "past"、当日レース → "live"、
+    オッズ皆無 → "unknown"。当日レースは payouts 確定前のため単勝(entries.odds_win)
+    由来の市場オッズが中心だが、UI 上は "live"(=現時点の市場オッズ)扱いとする。
+    Per-combo source label は "confirmed" / "implied" (compute_race_odds_with_sources
+    が付与)。取得できない combo は dict から欠落する。
 
     Returns:
         (race_odds, sources, odds_source_label).
@@ -63,13 +65,7 @@ def _resolve_odds_source(
     if not odds:
         return None, None, "unknown"
 
-    # high-level label: live data exists ⇄ live; otherwise past
-    has_live = any(
-        src == "confirmed"
-        for combos in sources.values()
-        for src in combos.values()
-    )
-    # ざっくり live と past を区別: 過去レース判定は date < today で行う
+    # 過去レース判定は date < today。当日レースは市場(単勝)オッズ由来でも "live" 扱い。
     from sqlalchemy import select as sa_select
 
     from db.models.race import Race as RaceModel
@@ -81,15 +77,7 @@ def _resolve_odds_source(
     today_str = datetime.date.today().isoformat()
     is_past = race_row is not None and race_row.date < today_str
 
-    label: Literal["live", "past", "unknown"]
-    if is_past:
-        label = "past"
-    elif has_live:
-        label = "live"
-    else:
-        # 当日レースだが live odds 取得前 → tansho-implied だけが入っている
-        label = "live"  # UI 上は "live" 扱いでよい (tansho 由来も market データ)
-
+    label: Literal["live", "past", "unknown"] = "past" if is_past else "live"
     return odds, sources, label
 
 
@@ -129,7 +117,7 @@ def get_recommendations(
 
     # Join post_position from frame so recommend_for_race can build top_pps.
     # predict_race returns horse_id-indexed rows without post_position.
-    pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values))
+    pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values, strict=True))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
     # Step 4: resolve confirmed + implied odds + per-combo source

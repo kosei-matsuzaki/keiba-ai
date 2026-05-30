@@ -7,10 +7,15 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from typing import TYPE_CHECKING
+
+from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
+
+if TYPE_CHECKING:
+    from db.models.model_run import ModelRun
 
 
 class SimulationRun(Base):
@@ -21,11 +26,24 @@ class SimulationRun(Base):
     # （migration 0007 で ix_simulation_runs_created_at として作成済み）
     created_at: Mapped[str] = mapped_column(String, nullable=False, index=True)  # ISO 8601 UTC
 
+    # 紐づくモデル (model_runs.id)。シミュレーションは必ずどれか 1 モデルに対する
+    # バックテストなので NOT NULL。モデル削除時は ON DELETE CASCADE で本行も消える。
+    # renumber_model_ids が model_runs.id を振り直すため ON UPDATE CASCADE も付け、
+    # 子の参照が追従するようにする (registry.renumber_model_ids 参照)。
+    # FK enforcement は db/session.py の PRAGMA foreign_keys=ON 前提。
+    model_run_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("model_runs.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     # Input parameters
     budget: Mapped[int] = mapped_column(Integer, nullable=False)
     strategy: Mapped[str] = mapped_column(String, nullable=False)      # conservative|balanced|aggressive
     window_start: Mapped[str | None] = mapped_column(String)           # YYYY-MM-DD
     window_end: Mapped[str | None] = mapped_column(String)
+    # 表示用フォールバック (モデル名やパスを後から引けるよう保持)。
     model_path: Mapped[str] = mapped_column(String, nullable=False)
 
     # Top-level result fields (FK 不要 / 検索用)
@@ -40,3 +58,7 @@ class SimulationRun(Base):
     by_race_class_json: Mapped[str] = mapped_column(String, nullable=False)
     by_course_json: Mapped[str] = mapped_column(String, nullable=False)
     bankroll_timeseries_json: Mapped[str] = mapped_column(String, nullable=False)
+
+    # SQLAlchemy unit-of-work が parent-first insert を解決できるよう scalar
+    # relationship を 1 本だけ張る (back_populates 等は意図的に省略)。
+    model_run: Mapped[ModelRun] = relationship("ModelRun", foreign_keys=[model_run_id])

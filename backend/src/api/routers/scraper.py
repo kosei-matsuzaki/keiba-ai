@@ -9,9 +9,6 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-# netkeiba の race_id は JST 基準で YYYYMMDD を含むので JST 起算の date を使う
-_JST = ZoneInfo("Asia/Tokyo")
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -22,7 +19,6 @@ from api.jobs import JobRegistry
 from api.schemas import (
     DiscoverThisWeekendRaceIdsResponse,
     DiscoverTodayRaceIdsResponse,
-    FetchLiveOddsRequest,
     JobAccepted,
     ScraperRecentActivity,
     ScraperRunRequest,
@@ -34,7 +30,6 @@ from core.dates import this_weekend_dates
 from core.paths import db_path
 from db.models.scrape_log import ScrapeLog
 from db.session import make_engine, session_scope
-from jobs.fetch_live_odds import _DEFAULT_TYPES, run_fetch_live_odds
 from jobs.ingest import run_ingest
 from jobs.ingest_shutuba import run_ingest_shutuba
 from scraper import stop_flag
@@ -47,6 +42,9 @@ from scraper.parsers.race_info_top import (
 from scraper.parsers.shutuba import extract_race_date_from_shutuba_html
 from scraper.rate_limiter import AsyncRateLimiter
 from scraper.robots import RobotsCache
+
+# netkeiba の race_id は JST 基準で YYYYMMDD を含むので JST 起算の date を使う
+_JST = ZoneInfo("Asia/Tokyo")
 
 router = APIRouter()
 
@@ -231,38 +229,6 @@ async def run_shutuba_scraper(
     )
 
 
-@router.post("/scraper/fetch_live_odds", response_model=JobAccepted, status_code=202)
-async def fetch_live_odds_endpoint(
-    body: FetchLiveOddsRequest,
-    session: Annotated[Session, Depends(get_session)],  # noqa: ARG001
-    registry: Annotated[JobRegistry, Depends(get_job_registry)],
-) -> JobAccepted:
-    """Fetch live combination odds for the specified race from netkeiba.
-
-    Returns 202 Accepted immediately; the actual fetch runs as a background job.
-    """
-    race_id = body.race_id
-    types = body.types or _DEFAULT_TYPES
-
-    async def _coro() -> None:
-        settings = load_settings()
-        rate_limiter = AsyncRateLimiter(settings)
-        robots_cache = RobotsCache(settings.user_agent)
-        engine = make_engine(db_path())
-
-        async with httpx.AsyncClient() as http_client:
-            client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
-            with session_scope(engine) as s:
-                await run_fetch_live_odds([race_id], types, client, s)
-
-    info = registry.start("fetch_live_odds", _coro)
-    return JobAccepted(
-        job_id=info.job_id,
-        status=info.status,
-        started_at=info.started_at,
-    )
-
-
 _RACE_INFO_TOP_URL = (
     "https://race.netkeiba.com/api/api_get_race_info_top.html?kaisai_date={date}"
 )
@@ -297,11 +263,8 @@ async def discover_today_race_ids(
     - 該当日の開催なし → race_ids=[] を返す（404 ではない）。
     - netkeiba 側の通信エラーや想定外レスポンスは 502 で返す。
     """
-    if date:
-        # YYYY-MM-DD → YYYYMMDD
-        kaisai_date = date.replace("-", "")
-    else:
-        kaisai_date = datetime.now(_JST).strftime("%Y%m%d")
+    # YYYY-MM-DD → YYYYMMDD (date 省略時は JST 当日)
+    kaisai_date = date.replace("-", "") if date else datetime.now(_JST).strftime("%Y%m%d")
 
     url = _RACE_INFO_TOP_URL.format(date=kaisai_date)
 

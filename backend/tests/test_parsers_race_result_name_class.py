@@ -122,6 +122,9 @@ class TestRomanNumeralNormalization:
 
     @staticmethod
     def _build_html(h1_text: str) -> str:
+        # _parse_entries は table の存在を必須要件とする (実 netkeiba ページは
+        # 必ず table を持つため)。race_class 検証だけしたいテストでも最小の
+        # 空テーブルを置かないと ParseError で先に進めない。
         return f'''<!DOCTYPE html><html><head><title>test</title></head>
 <body>
 <div class="data_intro">
@@ -134,6 +137,7 @@ class TestRomanNumeralNormalization:
   </dl>
   <p class="smalltxt">2024年07月14日 1回中京テスト</p>
 </div>
+<table class="race_table_01"></table>
 <a href="https://db.netkeiba.com/" title="競馬データベースTOP">競馬データベースTOP</a>
 </body></html>'''
 

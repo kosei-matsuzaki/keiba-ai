@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from ai.registry import get_active
+from ai.registry import _resolve_model_path
 from ai.simulation import (
     STRATEGY_PRESETS,
     SimulationResult,
@@ -42,6 +42,7 @@ from api.jobs import JobRegistry
 from api.schemas import JobAccepted
 from core.logging import get_logger
 from core.settings_store import SettingsStore
+from db.models.model_run import ModelRun
 from db.models.simulation_run import SimulationRun
 from db.session import session_scope
 
@@ -52,6 +53,32 @@ router = APIRouter()
 # 1 年 ≒ 3000 race で逐次 predict + settle すると 5 分以上かかり frontend HTTP
 # timeout に当たる。実用上は 6 か月 (~1500 race) が上限の目安。
 MAX_WINDOW_DAYS: int = 186
+
+
+def _resolve_target_model(
+    session: Session, model_id: int | None
+) -> tuple[Path, int]:
+    """シミュレーション対象モデルを解決し (resolved_path, model_run_id) を返す。
+
+    model_id 指定時はその ModelRun を引く (404 if not found)。未指定時は active
+    モデルにフォールバック (503 if none)。シミュレーションは必ずどれか 1 モデルに
+    紐づくため、いずれの経路でも model_run_id を確定して返す。
+    """
+    if model_id is not None:
+        run = session.get(ModelRun, model_id)
+        if run is None:
+            raise HTTPException(
+                status_code=404, detail=f"model id={model_id} が見つかりません",
+            )
+        return _resolve_model_path(run.model_path), run.id
+
+    active = session.query(ModelRun).filter(ModelRun.is_active == 1).first()
+    if active is None:
+        raise HTTPException(
+            status_code=503,
+            detail="アクティブなモデルがありません。Models 画面でモデルを active 化するか、model_id を指定してください。",
+        )
+    return _resolve_model_path(active.model_path), active.id
 
 
 class GroupStatsResponse(BaseModel):
@@ -82,6 +109,8 @@ class SimulationResponse(BaseModel):
     両方で使う。run_id は実行直後のみセット (保存済み詳細は別レスポンス) 。"""
     window: SimulationWindow
     model_path: str
+    # バックテストに使ったモデル (model_runs.id)。
+    model_run_id: int | None = None
     strategy: str
     budget: int
     n_races: int
@@ -101,6 +130,7 @@ class SimulationRunSummary(BaseModel):
     """保存済み実行の一覧表示用 (重い json は含めない)。"""
     id: int
     created_at: str
+    model_run_id: int | None
     budget: int
     strategy: str
     window_start: str | None
@@ -117,13 +147,16 @@ class SimulationRunListResponse(BaseModel):
 
 
 def _result_to_response(
-    r: SimulationResult, run_id: int | None = None
+    r: SimulationResult,
+    run_id: int | None = None,
+    model_run_id: int | None = None,
 ) -> SimulationResponse:
     """Convert SimulationResult dataclass to pydantic response model."""
     d = r.as_dict()
     return SimulationResponse(
         window=SimulationWindow(**d["window"]),
         model_path=d["model_path"],
+        model_run_id=model_run_id,
         strategy=d["strategy"],
         budget=d["budget"],
         n_races=d["n_races"],
@@ -146,6 +179,7 @@ def _row_to_response(row: SimulationRun) -> SimulationResponse:
     return SimulationResponse(
         window=SimulationWindow(start=row.window_start, end=row.window_end),
         model_path=row.model_path,
+        model_run_id=row.model_run_id,
         strategy=row.strategy,
         budget=row.budget,
         n_races=row.n_races,
@@ -172,6 +206,7 @@ def _row_to_summary(row: SimulationRun) -> SimulationRunSummary:
     return SimulationRunSummary(
         id=row.id,
         created_at=row.created_at,
+        model_run_id=row.model_run_id,
         budget=row.budget,
         strategy=row.strategy,
         window_start=row.window_start,
@@ -257,11 +292,15 @@ def run_simulation(
             "投資額をこの値で頭打ちにできる。",
         ),
     ] = None,
+    model_id: Annotated[
+        int | None,
+        Query(description="対象モデル (model_runs.id)。未指定で active モデル。"),
+    ] = None,
 ) -> SimulationResponse:
-    """Run end-to-end backtest with active model on the given window.
+    """Run end-to-end backtest on the given window.
 
     動作:
-      1. アクティブなモデルを load (binary + calibrator 含む)
+      1. 対象モデル (model_id 指定 or active) を load (binary + calibrator 含む)
       2. 期間内の全レースに対して predict + recommendation を生成
       3. 実 finish_position と payouts で settle
       4. bet_type / race_class / course でアグリゲート
@@ -270,26 +309,21 @@ def run_simulation(
     """
     _validate_request(start, end, strategy)
 
-    active_path = get_active(session)
-    if active_path is None:
-        raise HTTPException(
-            status_code=503,
-            detail="アクティブなモデルがありません。Models 画面でモデルを active 化してください。",
-        )
+    model_path, model_run_id = _resolve_target_model(session, model_id)
 
     # Settings の馬券種ターゲットを simulation でも反映する
     settings = settings_store.load()
     enabled_bet_types = settings.get("enabled_bet_types") or None
 
     logger.info(
-        "Simulation request: window=%s..%s, budget=%d, strategy=%s, "
-        "enabled_bet_types=%s",
-        start, end, budget, strategy, enabled_bet_types,
+        "Simulation request: model_run_id=%d, window=%s..%s, budget=%d, "
+        "strategy=%s, enabled_bet_types=%s",
+        model_run_id, start, end, budget, strategy, enabled_bet_types,
     )
 
     result = simulate_active_model(
         session=session,
-        model_path=Path(active_path),
+        model_path=model_path,
         start=start,
         end=end,
         budget=budget,
@@ -299,10 +333,10 @@ def run_simulation(
     )
 
     # 自動保存 (上限 50 件、超過したら古い順に削除)
-    saved = save_simulation_result(session, result)
+    saved = save_simulation_result(session, result, model_run_id)
     logger.info("Simulation result saved as run id=%d", saved.id)
 
-    return _result_to_response(result, run_id=saved.id)
+    return _result_to_response(result, run_id=saved.id, model_run_id=model_run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +351,16 @@ def run_simulation(
 def list_runs(
     session: Annotated[Session, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    model_id: Annotated[
+        int | None,
+        Query(description="このモデル (model_runs.id) の実行のみに絞る。"),
+    ] = None,
 ) -> SimulationRunListResponse:
-    """保存済みシミュレーション実行の一覧を新しい順で返す (重い json は含まない)。"""
-    runs = list_simulation_runs(session, limit=limit)
+    """保存済みシミュレーション実行の一覧を新しい順で返す (重い json は含まない)。
+
+    model_id を指定するとそのモデルの実行のみ返す (モデル詳細画面用)。
+    """
+    runs = list_simulation_runs(session, limit=limit, model_run_id=model_id)
     return SimulationRunListResponse(
         runs=[_row_to_summary(r) for r in runs],
         total=len(runs),
@@ -426,6 +467,10 @@ async def start_simulation_job(
             description="1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効。",
         ),
     ] = None,
+    model_id: Annotated[
+        int | None,
+        Query(description="対象モデル (model_runs.id)。未指定で active モデル。"),
+    ] = None,
 ) -> JobAccepted:
     """シミュレーションをバックグラウンド job として実行する。
 
@@ -437,26 +482,24 @@ async def start_simulation_job(
     asyncio.create_task を呼ぶため、event loop 上で動かす必要がある)。
     """
     _validate_request_bg(start, end, strategy)
-    active_path = get_active(session)
-    if active_path is None:
-        raise HTTPException(
-            status_code=503,
-            detail="アクティブなモデルがありません。",
-        )
+    # 対象モデルは submit 時点で確定する (job 実行時に active が変わっても、
+    # 投入時に選んだモデルでバックテストする)。
+    model_path, model_run_id = _resolve_target_model(session, model_id)
 
     settings = settings_store.load()
     enabled_bet_types = settings.get("enabled_bet_types") or None
 
     logger.info(
-        "Simulation job submit: window=%s..%s, budget=%d, strategy=%s, "
-        "enabled_bet_types=%s",
-        start, end, budget, strategy, enabled_bet_types,
+        "Simulation job submit: model_run_id=%d, window=%s..%s, budget=%d, "
+        "strategy=%s, enabled_bet_types=%s",
+        model_run_id, start, end, budget, strategy, enabled_bet_types,
     )
 
     # asyncio.create_task の中で session を作るため、Engine だけを capture。
     # request 由来の session を job loop 内で使うと scope が合わない。
     captured_engine = engine
-    captured_path = Path(active_path)
+    captured_path = model_path
+    captured_model_run_id = model_run_id
     captured_bet_types = enabled_bet_types
 
     def _run_simulation_blocking() -> int:
@@ -472,7 +515,9 @@ async def start_simulation_job(
                 max_stake_per_race_yen=max_stake_per_race_yen,
                 enabled_bet_types=captured_bet_types,
             )
-            saved = save_simulation_result(bg_session, result)
+            saved = save_simulation_result(
+                bg_session, result, captured_model_run_id
+            )
             saved_id = saved.id
         return saved_id
 

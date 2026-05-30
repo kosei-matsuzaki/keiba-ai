@@ -84,7 +84,6 @@ def test_augment_empty_frame_returns_empty_with_columns(gbdt_bundle):
 
 def test_augment_rejects_nn_bundle(gbdt_bundle, tmp_path):
     """Passing an NN bundle should raise ValueError, not silently misbehave."""
-    import torch
     from ai.nn.model import RaceTransformerModel
     from ai.registry import ModelBundle
 

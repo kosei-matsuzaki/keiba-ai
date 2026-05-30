@@ -141,8 +141,9 @@ def test_predict_race_applies_calibrator(tmp_path):
     np.testing.assert_allclose(preds["win_prob"].sum(), 1.0, atol=1e-6)
 
 
-def test_fit_and_save_rejects_gbdt(tmp_path):
-    """The CLI is NN-only — passing a GBDT directory raises."""
+def test_fit_and_save_gbdt_fits_place_only(tmp_path):
+    """GBDT モデルは place head のみ fit する (win head は binary head + calibrator.pkl
+    で既に較正済みなので二重較正を避ける)。"""
     from ai.gbm.train import train
     from ai.nn.fit_calibrator import fit_and_save
 
@@ -153,8 +154,11 @@ def test_fit_and_save_rejects_gbdt(tmp_path):
     result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
     gbdt_dir = Path(result["model_dir"])
 
-    with pytest.raises(ValueError):
-        fit_and_save(model_path=gbdt_dir, db=db_file)
+    out = fit_and_save(model_path=gbdt_dir, db=db_file)
+    assert out["model_type"] == "gbdt"
+    assert out["win"] is None  # GBDT skips win calibrator
+    assert out["place"] is not None
+    assert (gbdt_dir / "place_calibrator.pkl").exists()
 
 
 def test_module_importable():

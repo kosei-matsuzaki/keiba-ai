@@ -9,10 +9,18 @@ FK CASCADE policy (明示):
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import Float, ForeignKey, Index, Integer, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
+
+if TYPE_CHECKING:
+    from db.models.horse import Horse
+    from db.models.jockey import Jockey
+    from db.models.race import Race
+    from db.models.trainer import Trainer
 
 
 class Entry(Base):
@@ -56,3 +64,11 @@ class Entry(Base):
         Index("ix_entries_horse_id_finish_position", "horse_id", "finish_position"),
         UniqueConstraint("race_id", "horse_id", name="uq_entries_race_id_horse_id"),
     )
+
+    # Scalar relationships — declared so SQLAlchemy's unit-of-work can resolve
+    # parent-first INSERT order automatically (FK metadata alone is not enough).
+    # back_populates 等を張らないことで他コードへの影響を最小化している。
+    race: Mapped[Race] = relationship("Race", foreign_keys=[race_id])
+    horse: Mapped[Horse] = relationship("Horse", foreign_keys=[horse_id])
+    jockey: Mapped[Jockey | None] = relationship("Jockey", foreign_keys=[jockey_id])
+    trainer: Mapped[Trainer | None] = relationship("Trainer", foreign_keys=[trainer_id])

@@ -37,7 +37,7 @@ def get_job_registry(request: Request) -> JobRegistry:
     return request.app.state.job_registry
 
 
-def get_or_404(session: Session, model: type[T], pk: object, label: str | None = None) -> T:
+def get_or_404[T](session: Session, model: type[T], pk: object, label: str | None = None) -> T:
     """`session.get(model, pk)` の結果が None なら 404 を投げる。"""
     obj = session.get(model, pk)
     if obj is None:

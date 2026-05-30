@@ -7,7 +7,6 @@ import math
 from itertools import combinations, permutations
 
 import pandas as pd
-import pytest
 
 from ai.bet_strategy import (
     assign_stakes,

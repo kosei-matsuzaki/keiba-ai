@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import patch
 
@@ -17,7 +16,6 @@ async def test_acquire_enforces_min_delay():
     settings = Settings(rate_min_seconds=0.05, rate_max_seconds=0.05)
     limiter = AsyncRateLimiter(settings)
 
-    t0 = time.monotonic()
     await limiter.acquire()
     t1 = time.monotonic()
     await limiter.acquire()

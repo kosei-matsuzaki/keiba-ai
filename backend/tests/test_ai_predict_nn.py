@@ -9,7 +9,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 import torch
 
 from ai.nn.model import RaceModel
@@ -238,10 +237,9 @@ def test_predict_race_bundle_gbdt_path(tmp_path, monkeypatch):
     assert bundle.model_type == "gbdt"
     assert bundle.lambdarank is not None
 
-    import lightgbm as lgb
 
     from db.session import make_engine, session_scope
-    from features.builder import FEATURE_COLUMNS, build_training_frame
+    from features.builder import build_training_frame
 
     engine2 = make_engine(db_file)
     with session_scope(engine2) as session:

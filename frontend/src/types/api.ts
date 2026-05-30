@@ -209,13 +209,6 @@ export interface ScraperRunShutubaRequest {
   limit?: number;
 }
 
-export interface FetchLiveOddsRequest {
-  /** 12 桁 race_id（必須）。 */
-  race_id: string;
-  /** 取得する券種コード（b1/b3/b4/b5/b6/b7/b8）。省略時は全種類。 */
-  types?: string[];
-}
-
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {
@@ -250,7 +243,7 @@ export interface SettingsUpdate {
 
 /**
  * est_odds の出所:
- *   confirmed = live_odds / payouts / entries.odds_win 由来の確定値
+ *   confirmed = payouts / entries.odds_win 由来の確定値
  *   implied   = 単勝オッズから Plackett-Luce で推定した値
  *   unknown   = 推定不能（est_odds は null）
  */
@@ -280,7 +273,7 @@ export interface RecommendationsResponse {
   bankroll_at_decision: number;
   candidates: RecommendationCandidate[];
   /**
-   * 'live'    = 当日リアルオッズ（live_odds テーブルより）
+   * 'live'    = 当日レースの市場オッズ（entries.odds_win 由来。締切前の単勝オッズ）
    * 'past'    = 確定オッズ（payouts/entries より。外れ combo は null）
    * 'unknown' = オッズ取得待ち or 該当データなし
    */
@@ -402,6 +395,8 @@ export interface BankrollPoint {
 export interface SimulationResponse {
   window: { start: string | null; end: string | null };
   model_path: string;
+  /** バックテストに使ったモデル (model_runs.id)。 */
+  model_run_id: number | null;
   strategy: SimulationStrategy;
   /** 初期資産 (compounding wealth)。各 race ごとに残資産から Kelly stake を計算する。 */
   budget: number;
@@ -428,6 +423,8 @@ export interface SimulationRunSummary {
   id: number;
   /** ISO 8601 UTC */
   created_at: string;
+  /** バックテストに使ったモデル (model_runs.id)。 */
+  model_run_id: number | null;
   budget: number;
   strategy: SimulationStrategy;
   window_start: string | null;
@@ -450,4 +447,6 @@ export interface SimulationRequest {
   strategy: SimulationStrategy;
   /** 1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効 (% cap のみ)。 */
   max_stake_per_race_yen?: number;
+  /** 対象モデル (model_runs.id)。未指定で active モデル。 */
+  model_id?: number;
 }

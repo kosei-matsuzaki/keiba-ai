@@ -85,11 +85,12 @@ def test_predictions_top_features_non_empty(
     })
 
     with (
-        patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
-        resp = client.get("/api/predictions/TF_RACE1")
+        # top_features 専用テストなので combinations 経路は不要
+        resp = client.get("/api/predictions/TF_RACE1?include_combinations=false")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -128,11 +129,11 @@ def test_predictions_top_features_empty_fallback(
     })
 
     with (
-        patch("api.routers.predictions.load_model", return_value=MagicMock()),
-        patch("api.routers.predictions.predict_race_with_shap_gbdt", return_value=fake_df),
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race_with_shap", return_value=fake_df),
         TestClient(app_with_temp_db) as client,
     ):
-        resp = client.get("/api/predictions/TF_RACE2")
+        resp = client.get("/api/predictions/TF_RACE2?include_combinations=false")
 
     assert resp.status_code == 200
     for p in resp.json()["predictions"]:

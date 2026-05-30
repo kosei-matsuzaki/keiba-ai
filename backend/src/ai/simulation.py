@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-import pandas as pd
 from sqlalchemy.orm import Session
 
 from ai.bet_odds import (
@@ -357,7 +356,7 @@ def simulate_active_model(
             continue
 
         # Attach post_position (recommend_for_race needs it)
-        pp_map = dict(zip(race_frame["horse_id"].values, race_frame["post_position"].values))
+        pp_map = dict(zip(race_frame["horse_id"].values, race_frame["post_position"].values, strict=True))
         preds["post_position"] = preds["horse_id"].map(pp_map)
 
         # Combination predictions + odds (with implied fill)

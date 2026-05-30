@@ -38,7 +38,7 @@ horse i is still in the running.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 

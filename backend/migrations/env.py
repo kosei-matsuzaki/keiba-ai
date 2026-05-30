@@ -43,7 +43,10 @@ if not _current_url or "placeholder" in _current_url:
         pass
 
 if alembic_config.config_file_name is not None:
-    fileConfig(alembic_config.config_file_name)
+    # disable_existing_loggers=False に明示: デフォルト True だと caller の
+    # ロガー (e.g. scraper.parsers.*) が黙らされ、テストで caplog が捕捉
+    # できなくなる。alembic 自体は再構成されるので何もデグレしない。
+    fileConfig(alembic_config.config_file_name, disable_existing_loggers=False)
 
 
 def run_migrations_offline() -> None:

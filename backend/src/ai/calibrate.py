@@ -466,7 +466,7 @@ def compute_analytical_combo_probs(scores: np.ndarray) -> dict:
                 continue
             base_ij = base_i * p[j] / denom_ij
             for k in range(n):
-                if k == i or k == j:
+                if k in (i, j):
                     continue
                 ordered_triple[i, j, k] = base_ij * p[k]
 
@@ -649,7 +649,7 @@ class ConditionalIsotonicCalibrator:
 
         # Group by (surface, bin).
         # Build a structured array of (surface_str, bin_int) keys.
-        unique_keys = set(zip(surfaces.tolist(), bins.tolist()))
+        unique_keys = set(zip(surfaces.tolist(), bins.tolist(), strict=True))
         for surf, b in unique_keys:
             mask = (surfaces == surf) & (bins == b)
             count = int(mask.sum())
@@ -689,7 +689,7 @@ class ConditionalIsotonicCalibrator:
         bins = conditions["n_runners"].apply(_n_runners_bin).values
         surfaces = conditions["surface"].values
 
-        for i, (surf, b) in enumerate(zip(surfaces.tolist(), bins.tolist())):
+        for i, (surf, b) in enumerate(zip(surfaces.tolist(), bins.tolist(), strict=True)):
             iso = self._calibrators.get((surf, b), self._global)
             result[i] = float(iso.predict(raw_arr[i : i + 1])[0])
 
@@ -867,7 +867,7 @@ def fit_combo_calibrators(
     # conditions per record: (surface_str, n_runners_int)
     cond_records: dict[str, list[tuple[str, int]]] = {bt: [] for bt in bet_types}
 
-    for race_id, race_frame in valid_frame.groupby("race_id"):
+    for _race_id, race_frame in valid_frame.groupby("race_id"):
         if len(race_frame) < 4:
             continue
         if race_frame["post_position"].isna().any():
@@ -959,7 +959,7 @@ def fit_combo_calibrators_bundle(
     records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
     cond_records: dict[str, list[tuple[str, int]]] = {bt: [] for bt in bet_types}
 
-    for race_id, race_frame in valid_frame.groupby("race_id"):
+    for _race_id, race_frame in valid_frame.groupby("race_id"):
         if len(race_frame) < 4:
             continue
         if race_frame["post_position"].isna().any():
