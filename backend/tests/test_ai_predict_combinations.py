@@ -447,3 +447,30 @@ def test_predict_combinations_fukusho_combo_is_post_position(trained_combo_model
         assert p.combo == str(p.post_positions[0]), (
             f"複勝 combo {p.combo!r} does not match post_positions[0]={p.post_positions[0]}"
         )
+
+
+def test_predict_combinations_accepts_scraped_source(trained_combo_model):
+    """odds.db 由来の est_odds_source='scraped' が CombinationPrediction を通る。
+
+    回帰: EstOddsSource Literal に 'scraped' を追加し忘れると pydantic
+    ValidationError で連系予想が全滅する (compute_race_odds_with_sources が
+    odds.db 実オッズを 'scraped' で返すため)。
+    """
+    engine, db_file, model_dir = trained_combo_model
+    model = load_model(model_dir)
+
+    with Session(engine) as session:
+        race_id = session.scalars(select(Race.race_id).limit(1)).first()
+        frame = build_inference_frame(session, race_id)
+        pps = [str(int(pp)) for pp in frame["post_position"].tolist()]
+        race_odds = {"単勝": {pp: 5.0 for pp in pps}}
+        race_odds_sources = {"単勝": {pp: "scraped" for pp in pps}}
+        result = predict_race_with_combinations_gbdt(
+            model, frame, session=session,
+            race_odds=race_odds, race_odds_sources=race_odds_sources,
+            n_samples=_N_SAMPLES, rng=np.random.default_rng(7),
+        )
+
+    tansho = result["単勝"]
+    assert tansho, "expected 単勝 predictions"
+    assert any(p.est_odds_source == "scraped" for p in tansho)

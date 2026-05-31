@@ -11,7 +11,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-EstOddsSource = Literal["confirmed", "implied", "unknown"]
+# "scraped" = odds.db に取り込んだ実市場オッズ（全 combo 確定オッズ）。
+# "confirmed" = payouts / entries.odds_win 由来（連系は当選 combo のみ）。
+# "implied"   = 単勝からの Plackett-Luce 推定。"unknown" = est_odds 取得不能。
+EstOddsSource = Literal["confirmed", "scraped", "implied", "unknown"]
 
 
 class CombinationPrediction(BaseModel):

@@ -28,7 +28,7 @@ class RecommendationCandidate(BaseModel):
     pattern: str
     prob: float
     est_odds: float | None
-    est_odds_source: Literal["confirmed", "implied", "unknown"] = "unknown"
+    est_odds_source: Literal["confirmed", "scraped", "implied", "unknown"] = "unknown"
     ev: float | None
     stake: int
     post_positions: list[int]
