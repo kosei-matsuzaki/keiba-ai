@@ -43,6 +43,7 @@ from ai.calibrate import (
     top_k_cumulative_prob,
 )
 from ai.types import CombinationPrediction
+from core.bet_types import COMBINATION_BET_TYPES
 from features.builder import CATEGORICAL_FEATURES, FEATURE_COLUMNS
 
 if TYPE_CHECKING:
@@ -296,10 +297,7 @@ def predict_race_with_combinations_gbdt(
         Each list is sorted by ev descending (None ev rows are placed last).
     """
     if frame.empty:
-        return {
-            bt: []
-            for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
-        }
+        return {bt: [] for bt in COMBINATION_BET_TYPES}
 
     # post_position が 1 つでも欠けると combo 文字列を作れず int(None) で
     # crash する (shutuba 取込中の半端なデータで起こる)。combinations は
@@ -307,10 +305,7 @@ def predict_race_with_combinations_gbdt(
     # bet_type で空リストを返す。caller (route) は HTTPException でなく
     # 静かに「組合わせ予想なし」を返せる。
     if frame["post_position"].isna().any():
-        return {
-            bt: []
-            for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
-        }
+        return {bt: [] for bt in COMBINATION_BET_TYPES}
 
     base_df = predict_race_gbdt(
         model, frame,
@@ -797,10 +792,7 @@ def predict_race_with_combinations(
         # the GBDT combination path with the NN scores directly.
         base_df = _predict_race_nn(bundle, frame)
         if frame.empty or frame["post_position"].isna().any():
-            return {
-                bt: []
-                for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]
-            }
+            return {bt: [] for bt in COMBINATION_BET_TYPES}
         # Build a surrogate frame aligned with base_df for the combination engine.
         # predict_race_with_combinations_gbdt expects the original frame (with post_position),
         # so we use it directly but pass a dummy GBDT model.  Instead, we replicate

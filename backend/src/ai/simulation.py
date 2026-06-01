@@ -31,6 +31,7 @@ from ai.bet_odds import (
 from ai.bet_strategy import recommend_for_race
 from ai.predict import predict_race, predict_race_with_combinations
 from ai.registry import ModelBundle, load_model_full
+from core.bet_types import COMBINATION_BET_TYPES
 from core.logging import get_logger
 from db.odds_db import init_odds_db, make_odds_engine
 from features.builder import build_training_frame
@@ -47,9 +48,7 @@ STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
 }
 
 # 単勝 / 複勝 / 連系 すべての券種を simulation 対象とする
-DEFAULT_BET_TYPES: list[str] = [
-    "単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単",
-]
+DEFAULT_BET_TYPES: list[str] = list(COMBINATION_BET_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +242,7 @@ def _settle_candidates(
             "stake": int(cand.stake),
             "payout": float(payout),
             "hit": 1 if hit else 0,
+            "source": getattr(cand, "est_odds_source", "unknown"),
         })
 
     return settlements
@@ -266,6 +266,7 @@ def simulate_active_model(
     max_stake_per_race_yen: int | None = None,
     *,
     bundle: ModelBundle | None = None,
+    bet_sink: list[dict] | None = None,
 ) -> SimulationResult:
     """Run end-to-end backtest using active model + recommendations.
 
@@ -476,6 +477,16 @@ def simulate_active_model(
                 if math.isfinite(float(s["payout"]))
                 else 0.0
             )
+            # Optional per-bet record sink (CI / source-coverage analysis).
+            if bet_sink is not None:
+                bet_sink.append({
+                    "race_id": race_id,
+                    "bet_type": s["bet_type"],
+                    "stake": int(s["stake"]),
+                    "payout": s_payout,
+                    "hit": int(s["hit"]),
+                    "source": s.get("source", "unknown"),
+                })
             # global summary
             result.summary.n_bets += 1
             result.summary.invested += s["stake"]

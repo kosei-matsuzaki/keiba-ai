@@ -32,6 +32,7 @@ from sqlalchemy import select
 
 from ai.predict import predict_race_with_combinations
 from ai.registry import load_model_full
+from core.bet_types import RENKEI_BET_TYPES
 from core.logging import get_logger
 from core.paths import db_path
 from db.models.entry import Entry
@@ -39,9 +40,6 @@ from db.session import make_engine, session_scope
 from features.builder import build_training_frame
 
 log = get_logger(__name__)
-
-
-_BET_TYPES = ["馬連", "ワイド", "馬単", "三連複", "三連単"]
 
 
 def _get_top3(session, race_id: str) -> list[tuple[int, int]]:
@@ -115,7 +113,7 @@ def diagnose_combo_calibration(
         return {"n_races": 0, "results": {}, "model_path": str(model_path)}
 
     # bet_type ごとに (predicted_prob, hit, est_odds) を蓄積
-    records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in _BET_TYPES}
+    records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in RENKEI_BET_TYPES}
 
     n_races = 0
     n_skipped_no_top3 = 0
@@ -141,7 +139,7 @@ def diagnose_combo_calibration(
                 continue
 
             n_races += 1
-            for bt in _BET_TYPES:
+            for bt in RENKEI_BET_TYPES:
                 for cp in combo_map.get(bt, []):
                     records[bt].append(
                         (float(cp.prob), 1 if _is_hit(bt, cp.combo, top3) else 0)

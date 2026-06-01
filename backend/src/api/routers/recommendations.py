@@ -14,6 +14,7 @@ from ai.bet_strategy import recommend_for_race
 from ai.predict import predict_race, predict_race_with_combinations
 from ai.registry import get_active, load_model_full
 from api.deps import build_inference_frame_or_404, get_session, get_settings_store
+from core.bet_types import DEFAULT_ENABLED_BET_TYPES
 from core.logging import get_logger
 from core.settings_store import SettingsStore
 
@@ -142,7 +143,7 @@ def get_recommendations(
     bankroll: int = int(settings.get("bankroll", 100_000))
     kelly_fraction: float = float(settings.get("kelly_fraction", 0.25))
     max_stake_per_race_pct: float = float(settings.get("max_stake_per_race_pct", 0.05))
-    enabled_bet_types: list[str] = list(settings.get("enabled_bet_types", ["単勝", "複勝", "ワイド", "馬連"]))
+    enabled_bet_types: list[str] = list(settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES))
 
     result = recommend_for_race(
         predictions=predictions,

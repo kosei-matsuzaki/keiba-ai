@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from api.deps import get_settings_store
 from api.schemas import SettingsResponse, SettingsUpdate
+from core.bet_types import DEFAULT_ENABLED_BET_TYPES
 from core.settings_store import SettingsStore
 
 router = APIRouter()
@@ -25,7 +26,7 @@ def _dict_to_response(data: dict) -> SettingsResponse:
         bankroll=int(data.get("bankroll", 100_000)),
         kelly_fraction=float(data.get("kelly_fraction", 0.25)),
         max_stake_per_race_pct=float(data.get("max_stake_per_race_pct", 0.05)),
-        enabled_bet_types=list(data.get("enabled_bet_types", ["単勝", "複勝", "ワイド", "馬連"])),
+        enabled_bet_types=list(data.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)),
     )
 
 
