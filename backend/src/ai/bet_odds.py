@@ -26,6 +26,13 @@ from db.odds_db import load_race_odds
 # odds.db に格納される非券種マーカー（no-odds レースの sentinel）。scraped 層では無視する。
 _ODDS_SENTINEL_PREFIX = "__"
 
+# SELECTION（EV 計算）に使ってよい confirmed 券種。単勝は entries.odds_win＝
+# 締切オッズで pre-race なので安全。複勝(payout_place)・連系(payouts)は **レース後の
+# 払戻** 由来＝締切時点で知り得ない情報で、選択 EV に混ぜると look-ahead リークになる
+# （過去 backtest で入着馬/的中 combo の実払戻が EV に乗り、的中率・ROI が嘘になる）。
+# それらは scraped(odds.db, pre-race) → implied(PL) で賄い、payout 由来は決済専用とする。
+_PRE_RACE_CONFIRMED_BET_TYPES = frozenset({"単勝"})
+
 
 def _normalize_combo(combo: str) -> str:
     """payouts テーブルの combo 文字列を predict 側と同じ表記に正規化する。
@@ -391,10 +398,12 @@ def compute_race_odds_with_sources(
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, str]]]:
     """確定オッズ + 実オッズ + 単勝由来の推定オッズ統合版。レース時期を問わず使える。
 
-    優先順位:
-      1. payouts / entries.odds_win / payout_place（過去）        → "confirmed"
-      2. odds.db にスクレイプ済みの全 combo 確定オッズ（あれば）   → "scraped"
+    SELECTION 用なので pre-race オッズのみで構成する（look-ahead 防止）。優先順位:
+      1. 単勝 entries.odds_win（締切オッズ＝pre-race のみ）         → "confirmed"
+      2. odds.db にスクレイプ済みの全 combo 実オッズ（あれば）     → "scraped"
       3. 残りの combo は単勝由来 Plackett-Luce 推定で補完          → "implied"
+    複勝(payout_place)・連系(payouts) の払戻由来オッズはレース後の情報なので
+    ここには含めない（決済は compute_past_race_odds を直接使う）。
 
     両方の odds と source は同一構造の 2 段ネスト dict で返す:
 
@@ -411,8 +420,15 @@ def compute_race_odds_with_sources(
 
     odds が空（単勝も取れない）→ ({}, {}) を返す。
     """
-    # Step 1: 過去レースの payout / entries.odds_win 系の確定オッズ
-    confirmed = compute_past_race_odds(session, race_id)
+    # Step 1: 過去レースの確定オッズ。ただし SELECTION に混ぜてよいのは pre-race
+    # （締切時点で知り得る）オッズのみ＝単勝(odds_win)だけ。複勝/連系の払戻由来は
+    # look-ahead リークになるため除外し、scraped → implied で賄う（決済は別途
+    # compute_past_race_odds を直接使う）。
+    confirmed = {
+        bt: combos
+        for bt, combos in compute_past_race_odds(session, race_id).items()
+        if bt in _PRE_RACE_CONFIRMED_BET_TYPES
+    }
 
     # confirmed 由来の combo に "confirmed" マーカーを付与
     sources: dict[str, dict[str, str]] = {

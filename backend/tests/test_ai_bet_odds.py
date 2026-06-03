@@ -389,14 +389,16 @@ def test_scraped_layer_priority(tmp_path):
             keiba, "R1", odds_session=odds_session
         )
 
-    # confirmed wins over scraped for 1-2 (payout value 30.0, not scraped 99.0)
-    assert odds["馬連"]["1-2"] == 30.0
-    assert sources["馬連"]["1-2"] == "confirmed"
-    # the other pairs come from scraped, not implied
+    # 馬連の payout(レース後) は look-ahead なので SELECTION には入らない。
+    # → 全ペアが scraped(pre-race 実オッズ) 由来。1-2 は payout 30.0 ではなく scraped 99.0。
+    assert odds["馬連"]["1-2"] == 99.0
+    assert sources["馬連"]["1-2"] == "scraped"
     assert odds["馬連"]["1-3"] == 12.5
     assert odds["馬連"]["2-3"] == 20.0
     assert sources["馬連"]["1-3"] == "scraped"
     assert sources["馬連"]["2-3"] == "scraped"
+    # 単勝(odds_win=締切オッズ) は pre-race なので confirmed として残る
+    assert sources["単勝"]["1"] == "confirmed"
 
 
 def test_without_odds_session_falls_back_to_implied(tmp_path):
@@ -405,7 +407,10 @@ def test_without_odds_session_falls_back_to_implied(tmp_path):
     keiba = _keiba_session_with_race()
     odds, sources = compute_race_odds_with_sources(keiba, "R1")
 
-    # no odds_session → non-winner pairs are PL-implied, never "scraped"
-    assert sources["馬連"]["1-2"] == "confirmed"
+    # no odds_session かつ 馬連 payout は look-ahead 除外 → 連系は全て PL-implied。
+    # 単勝のみ pre-race confirmed (odds_win)。
+    assert sources["単勝"]["1"] == "confirmed"
+    assert sources["馬連"]["1-2"] == "implied"
     assert sources["馬連"]["1-3"] == "implied"
     assert "scraped" not in {s for combos in sources.values() for s in combos.values()}
+    assert "confirmed" not in {s for s in sources["馬連"].values()}
