@@ -189,11 +189,19 @@ def test_horse_weight_pct_bounded(syn_engine):
 
 
 def test_feature_columns_count():
-    """FEATURE_COLUMNS should have exactly 51 columns:
-    24 original + 14 (PR-C extensions) + 3 (Q4 race-level) + 5 (Phase B margin/passing)
-    + 5 (Phase C 脚質/瞬発/クラス・斤量の動き).
+    """FEATURE_COLUMNS should have exactly 46 columns.
+
+    2026-06 audit で冗長な 5 特徴を削除 (51→46): post_position_ratio,
+    log_odds_win, odds_win_rank, jockey_recent_win_rate_vs_field,
+    odds_win_diff_from_favorite (いずれも残す特徴と相関 r≥0.94)。
     """
-    assert len(FEATURE_COLUMNS) == 51
+    assert len(FEATURE_COLUMNS) == 46
+    # 削除済み特徴は FEATURE_COLUMNS に含まれない
+    for col in (
+        "post_position_ratio", "log_odds_win", "odds_win_rank",
+        "jockey_recent_win_rate_vs_field", "odds_win_diff_from_favorite",
+    ):
+        assert col not in FEATURE_COLUMNS
 
 
 def test_phase_c_features_present():
