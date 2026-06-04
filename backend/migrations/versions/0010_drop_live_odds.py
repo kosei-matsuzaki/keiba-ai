@@ -24,9 +24,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_index("uq_live_odds_race_id_bet_type_combo", table_name="live_odds")
-    op.drop_index("ix_live_odds_race_id_bet_type", table_name="live_odds")
-    op.drop_index("ix_live_odds_race_id", table_name="live_odds")
+    # SQLite では DROP TABLE がテーブルに紐づく全インデックスを自動削除する。
+    # UNIQUE 制約が独立インデックス (create_index) ではなくテーブル制約
+    # (create_all 由来の sqlite_autoindex_*) として作られた DB でも通るよう、
+    # 個別の drop_index は行わずテーブル削除のみとする。
     op.drop_table("live_odds")
 
 

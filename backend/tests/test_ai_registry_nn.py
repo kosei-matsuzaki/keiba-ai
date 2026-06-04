@@ -117,8 +117,8 @@ def test_load_model_full_nn_feature_columns(tmp_path):
     assert bundle.nn_race_feature_cols == race_cols
 
 
-def test_load_model_full_nn_gbdt_fields_none(tmp_path):
-    """NN bundle has None for GBDT-specific fields."""
+def test_load_model_full_nn_optional_fields_none(tmp_path):
+    """NN bundle has None for optional calibrator/scaler fields when absent."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
     model = _make_small_race_model(len(horse_cols), len(race_cols))
@@ -126,10 +126,10 @@ def test_load_model_full_nn_gbdt_fields_none(tmp_path):
 
     bundle = load_model_full(model_dir)
 
-    assert bundle.lambdarank is None
-    assert bundle.binary is None
-    assert bundle.calibrator is None
     assert bundle.combo_calibrators is None
+    assert bundle.nn_calibrator is None
+    assert bundle.place_calibrator is None
+    assert bundle.temperature_scaler is None
 
 
 def test_load_model_full_nn_model_eval_mode(tmp_path):
@@ -278,26 +278,3 @@ def test_load_model_full_nn_arch_v2(tmp_path):
 
     assert bundle.model_type == "nn"
     assert isinstance(bundle.nn_model, RaceTransformerModel)
-
-
-def test_load_model_full_gbdt_not_affected(tmp_path, monkeypatch):
-    """load_model_full on a GBDT dir still returns GBDT ModelBundle."""
-    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
-
-    from sqlalchemy import create_engine
-
-    from ai.gbm.train import train
-    from tests.synthetic import make_synthetic_db
-
-    db_file = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_file}", future=True)
-    make_synthetic_db(engine, n_races=30, n_horses_per_race=8, days_back=180, seed=99)
-    engine.dispose()
-
-    result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-    model_dir = Path(result["model_dir"])
-
-    bundle = load_model_full(model_dir)
-
-    assert bundle.model_type == "gbdt"
-    assert bundle.lambdarank is not None

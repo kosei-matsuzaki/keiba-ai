@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai.gbm.train import train
+from ai.nn.train_nn import train_nn
 from ai.registry import delete_model_files, renumber_model_ids, set_active_by_id
 from api.deps import get_job_registry, get_or_404, get_session
 from api.jobs import JobRegistry
@@ -131,7 +131,7 @@ async def train_model(
 ) -> JobAccepted:
     async def _coro() -> None:
         await asyncio.to_thread(
-            train,
+            train_nn,
             train_end=body.train_end,
             valid_months=body.valid_months or 12,
             test_months=body.test_months or 6,

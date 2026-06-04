@@ -1,7 +1,7 @@
 [project]
 name = "keiba-ai"
 version = "0.1.0"
-description = "netkeiba scraper and LightGBM prediction backend (personal research)"
+description = "netkeiba scraper and NN prediction backend (personal research)"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27",
@@ -9,12 +9,9 @@ dependencies = [
     "lxml>=5.2",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
-    "lightgbm>=4.0",
     "pandas>=2.0",
     "numpy>=1.26",
     "scikit-learn>=1.4",
-    "shap>=0.45",
-    "optuna>=3.6",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
     "pydantic-settings>=2.0",

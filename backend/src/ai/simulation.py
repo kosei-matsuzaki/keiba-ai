@@ -361,7 +361,7 @@ def simulate_active_model(
         try:
             preds = predict_race(bundle, race_frame)
         except Exception as exc:  # noqa: BLE001
-            log.warning("predict_race_gbdt failed for %s: %s", race_id, exc)
+            log.warning("predict_race failed for %s: %s", race_id, exc)
             continue
 
         # Attach post_position (recommend_for_race needs it)
@@ -381,7 +381,7 @@ def simulate_active_model(
                 race_odds_sources=race_odds_sources,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("predict_race_with_combinations_gbdt failed for %s: %s", race_id, exc)
+            log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
             continue
 
         # Apply min_ev filter (strategy preset)

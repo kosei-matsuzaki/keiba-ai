@@ -7,14 +7,12 @@ end-to-end on a tiny synthetic GBDT model and returns the expected schema.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from sqlalchemy import create_engine
 
 import db.models  # noqa: F401
 from ai.combo_calibration_diagnosis import _is_hit, diagnose_combo_calibration
-from ai.gbm.train import train
-from tests.synthetic import make_synthetic_db
+from tests.synthetic import make_synthetic_db, train_synthetic_nn
 
 # ---------------------------------------------------------------------------
 # _is_hit unit cases — sanity checks on combo string parsing
@@ -64,25 +62,23 @@ def test_is_hit_invalid_combo_returns_false():
 
 
 # ---------------------------------------------------------------------------
-# End-to-end smoke test (bundle-first, GBDT path)
+# End-to-end smoke test (bundle-first, NN path)
 # ---------------------------------------------------------------------------
 
 
-def test_diagnose_combo_calibration_runs_via_bundle_on_gbdt(tmp_path):
-    """End-to-end: 合成 DB に対して tiny GBDT を学習し、
+def test_diagnose_combo_calibration_runs_via_bundle_on_nn(tmp_path):
+    """End-to-end: 合成 DB に対して tiny NN を学習し、
     diagnose_combo_calibration を bundle 経由で実行する。
 
-    bundle-first refactor のリグレッション gate。GBDT bundle で
-    predict_race_with_combinations が動くことを担保する。NN モデルは torch
-    依存なのでこのテストでは扱わない。
+    bundle-first refactor のリグレッション gate。NN bundle で
+    predict_race_with_combinations が動くことを担保する。
     """
     db_file = tmp_path / "test.db"
     engine = create_engine(f"sqlite:///{db_file}", future=True)
     make_synthetic_db(engine, n_races=30, n_horses_per_race=10, days_back=180, seed=42)
 
     os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
-    result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-    model_dir = Path(result["model_dir"])
+    model_dir = train_synthetic_nn(db_file)
 
     diag = diagnose_combo_calibration(model_path=model_dir, db=db_file)
 

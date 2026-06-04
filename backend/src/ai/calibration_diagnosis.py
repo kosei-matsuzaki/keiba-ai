@@ -166,16 +166,7 @@ def diagnose_calibration(
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
     bundle = load_model_full(model_path)
-    log.info(
-        "Diagnosing %s model (model_type=%s)",
-        bundle.model_type, bundle.model_type,
-    )
-    if bundle.model_type == "gbdt":
-        if bundle.binary is not None and bundle.calibrator is not None:
-            log.info("Using binary classifier + isotonic calibrator for win_prob")
-        else:
-            log.info("Using softmax(lambdarank) for win_prob (legacy / uncalibrated model)")
-
+    log.info("Diagnosing NN model at %s", model_path)
     log.info(
         "Building evaluation frame from %s in window %s..%s",
         resolved_db, start, end,
