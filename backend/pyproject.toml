@@ -26,6 +26,7 @@ nn = [
 [project.scripts]
 keiba-ingest = "jobs.ingest:cli_main"
 keiba-ingest-shutuba = "jobs.ingest_shutuba:cli_main"
+keiba-backup = "jobs.backup_db:cli_main"
 
 [dependency-groups]
 dev = [

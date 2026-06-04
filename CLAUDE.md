@@ -36,6 +36,7 @@ uv run python -m ai.nn.train_nn --train-end 2025-04-30 --valid-months 6 --test-m
 uv run python -m ai.evaluate --model data/models/<ts>-nn --persist    # 評価 + metrics_json 書き戻し
 uv run keiba-ingest --date 2024-12-28                                       # 単日 ingest
 uv run python -m jobs.ingest_range --start ... --end ...           # 期間 ingest（中断後の resume 対応）
+uv run keiba-backup                                                # keiba.db + odds.db を data/backups/ に世代バックアップ
 uv run alembic upgrade head
 ```
 
