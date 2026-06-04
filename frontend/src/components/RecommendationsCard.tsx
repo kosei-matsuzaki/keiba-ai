@@ -28,7 +28,7 @@ import type { RecommendationCandidate, RecommendationsResponse, BetType } from '
  * - implied  (推定): 黄系で「推」表記。tooltip に詳細
  * - unknown  : なし（— が表示されている前提）
  */
-function OddsSourceBadge({ source }: { source: 'confirmed' | 'implied' | 'unknown' }) {
+function OddsSourceBadge({ source }: { source: 'confirmed' | 'scraped' | 'implied' | 'unknown' }) {
   if (source === 'confirmed') {
     return (
       <Badge
@@ -37,6 +37,17 @@ function OddsSourceBadge({ source }: { source: 'confirmed' | 'implied' | 'unknow
         title="確定オッズ（payouts / entries.odds_win 由来）"
       >
         確定
+      </Badge>
+    );
+  }
+  if (source === 'scraped') {
+    return (
+      <Badge
+        variant="outline"
+        className="ml-1 border-sky-300 px-1 text-[10px] font-normal text-sky-700 dark:border-sky-700 dark:text-sky-400"
+        title="実市場オッズ（odds.db に取り込んだ全 combo 確定オッズ）"
+      >
+        実
       </Badge>
     );
   }

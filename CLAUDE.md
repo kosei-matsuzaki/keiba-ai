@@ -84,14 +84,14 @@ core / settings は横断
 - active は `model_runs.is_active` で管理。`registry._resolve_model_path` が **basename 比較** で WSL/Windows パス差を吸収する (`/mnt/c/...` と `C:\...` のどちらでも当たる)
 
 ### 特徴量とリーク防止
-- `features/builder.py` の `FEATURE_COLUMNS` (38 列) が単一の真実
+- `features/builder.py` の `FEATURE_COLUMNS` (51 列) が単一の真実
 - ID 系 (`horse_id` / `jockey_id` / `trainer_id`) は **絶対に FEATURE_COLUMNS に入れない**
 - `build_training_frame` / `build_inference_frame` ともに **race_date より厳密に過去** の情報しか参照しない (`_build_entry_row` 内で SQL 条件)。新規特徴量を足すときも同じ制約を維持すること
 - `KEIBA_EXCLUDE_ODDS_FEATURES=1` で `ODDS_FEATURE_COLUMNS` を除外した特徴量リストになる (オッズ未確定時の検証用)
 
 ### DB スキーマの方針
 - `race_id` / `horse_id` / `jockey_id` / `trainer_id` は **TEXT**。netkeiba ID は構造化文字列 (年+回+場+日+R) で算術対象ではない
-- Alembic は `migrations/versions/0001` ~ `0003` (最新: `0003_add_scrape_log_fetched_at_index`)
+- Alembic は `migrations/versions/0001` ~ `0010` (最新: `0010_drop_live_odds`)
 - FK CASCADE: `entries.race_id` / `payouts.race_id` は CASCADE、`horse_id` は RESTRICT、`jockey_id` / `trainer_id` は SET NULL
 
 ### ジョブはインメモリ

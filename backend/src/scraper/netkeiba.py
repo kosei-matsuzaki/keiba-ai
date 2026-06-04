@@ -44,12 +44,18 @@ class NetkeibaClient:
         url: str,
         *,
         use_cache: bool = True,
+        write_to_cache: bool = True,
         cache_max_age_hours: float = 24 * 30,
     ) -> str:
         """Fetch URL, returning HTML.
 
         Checks local cache first, then robots.txt, then applies rate limiting
         and performs the actual HTTP request with retry logic.
+
+        ``write_to_cache=False`` skips persisting the response to the on-disk
+        HTML cache. Used by high-volume fetchers (e.g. the odds backfill, which
+        stores parsed results in odds.db) to avoid bloating the cache with
+        hundreds of thousands of one-time-use responses.
         """
         if use_cache:
             cached = cache_module.read_cache(url, max_age_hours=cache_max_age_hours)
@@ -64,7 +70,8 @@ class NetkeibaClient:
             raise ScraperStopped("stop flag set before fetching")
 
         html = await self._fetch_with_retry(url)
-        cache_module.write_cache(url, html)
+        if write_to_cache:
+            cache_module.write_cache(url, html)
         return html
 
     async def _fetch_with_retry(self, url: str) -> str:

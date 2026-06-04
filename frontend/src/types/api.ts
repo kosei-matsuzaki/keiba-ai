@@ -244,10 +244,11 @@ export interface SettingsUpdate {
 /**
  * est_odds の出所:
  *   confirmed = payouts / entries.odds_win 由来の確定値
+ *   scraped   = odds.db に取り込んだ実市場オッズ（全 combo 確定オッズ）
  *   implied   = 単勝オッズから Plackett-Luce で推定した値
  *   unknown   = 推定不能（est_odds は null）
  */
-export type EstOddsSource = 'confirmed' | 'implied' | 'unknown';
+export type EstOddsSource = 'confirmed' | 'scraped' | 'implied' | 'unknown';
 
 export interface RecommendationCandidate {
   bet_type: string;

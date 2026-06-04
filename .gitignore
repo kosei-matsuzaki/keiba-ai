@@ -28,6 +28,7 @@ data/*.db-wal
 data/*.db-shm
 data/*.db.bak
 data/*.db.corrupt*
+data/*.db.*
 data/*.log
 data/settings.json
 data/lgb_params_prod.json
@@ -36,6 +37,9 @@ data-snapshot/
 # 調査用に curl で取得した HTML サンプル（コミット対象外）
 *_sample.html
 *_ped.html
+
+# ── Local agent state (Claude Code) ───────────────────────────────────────────
+.claude/
 
 # ── OS / editor noise ─────────────────────────────────────────────────────────
 .DS_Store

@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
+from core.bet_types import RENKEI_BET_TYPES
+
 
 def softmax_within_race(scores: np.ndarray) -> np.ndarray:
     """Convert raw LightGBM lambdarank scores to win probabilities via softmax.
@@ -706,9 +708,6 @@ class ConditionalIsotonicCalibrator:
 # ---------------------------------------------------------------------------
 
 
-_RENKEI_BET_TYPES: tuple[str, ...] = ("馬連", "ワイド", "馬単", "三連複", "三連単")
-
-
 class ComboCalibrators:
     """連系 馬券種ごとに isotonic 補正を持つコンテナ。
 
@@ -862,7 +861,7 @@ def fit_combo_calibrators(
     # NOTE: 循環 import を避けるため、predict_race_with_combinations_gbdt の import は遅延。
     from ai.predict import predict_race_with_combinations_gbdt
 
-    bet_types = list(_RENKEI_BET_TYPES)
+    bet_types = list(RENKEI_BET_TYPES)
     records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
     # conditions per record: (surface_str, n_runners_int)
     cond_records: dict[str, list[tuple[str, int]]] = {bt: [] for bt in bet_types}
@@ -955,7 +954,7 @@ def fit_combo_calibrators_bundle(
     """
     from ai.predict import predict_race_with_combinations  # noqa: PLC0415
 
-    bet_types = list(_RENKEI_BET_TYPES)
+    bet_types = list(RENKEI_BET_TYPES)
     records: dict[str, list[tuple[float, int]]] = {bt: [] for bt in bet_types}
     cond_records: dict[str, list[tuple[str, int]]] = {bt: [] for bt in bet_types}
 

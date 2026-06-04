@@ -21,6 +21,17 @@ from ai.calibrate import (
 from db.models.entry import Entry
 from db.models.payout import Payout
 from db.models.race import Race
+from db.odds_db import load_race_odds
+
+# odds.db に格納される非券種マーカー（no-odds レースの sentinel）。scraped 層では無視する。
+_ODDS_SENTINEL_PREFIX = "__"
+
+# SELECTION（EV 計算）に使ってよい confirmed 券種。単勝は entries.odds_win＝
+# 締切オッズで pre-race なので安全。複勝(payout_place)・連系(payouts)は **レース後の
+# 払戻** 由来＝締切時点で知り得ない情報で、選択 EV に混ぜると look-ahead リークになる
+# （過去 backtest で入着馬/的中 combo の実払戻が EV に乗り、的中率・ROI が嘘になる）。
+# それらは scraped(odds.db, pre-race) → implied(PL) で賄い、payout 由来は決済専用とする。
+_PRE_RACE_CONFIRMED_BET_TYPES = frozenset({"単勝"})
 
 
 def _normalize_combo(combo: str) -> str:
@@ -356,27 +367,68 @@ def compute_implied_combo_odds_from_tansho(
     return result
 
 
+def _scraped_combo_odds(
+    odds_session: Session,
+    race_id: str,
+) -> dict[str, dict[str, float]]:
+    """odds.db の実オッズを {bet_type: {combo: odds}} に落とす。
+
+    格納値は ``[v1, v2, popularity]``。単一オッズ券種は v1、レンジ券種（複勝/
+    ワイド）は v1 = 下限を採用する（選択 EV を過大評価しない保守側）。``__none__``
+    等の sentinel bet_type は除外する。
+    """
+    raw = load_race_odds(odds_session, race_id)
+    result: dict[str, dict[str, float]] = {}
+    for bet_type, combos in raw.items():
+        if bet_type.startswith(_ODDS_SENTINEL_PREFIX):
+            continue
+        result[bet_type] = {
+            combo: float(vals[0])
+            for combo, vals in combos.items()
+            if vals and vals[0] is not None
+        }
+    return result
+
+
 def compute_race_odds_with_sources(
     session: Session,
     race_id: str,
     n_samples: int = 10_000,
+    odds_session: Session | None = None,
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, str]]]:
-    """確定オッズ + 単勝由来の推定オッズ統合版。レース時期を問わず使える。
+    """確定オッズ + 実オッズ + 単勝由来の推定オッズ統合版。レース時期を問わず使える。
 
-    優先順位:
-      1. payouts / entries.odds_win / payout_place（過去）   → "confirmed"
-      2. 残りの combo は単勝由来 Plackett-Luce 推定で補完     → "implied"
+    SELECTION 用なので pre-race オッズのみで構成する（look-ahead 防止）。優先順位:
+      1. 単勝 entries.odds_win（締切オッズ＝pre-race のみ）         → "confirmed"
+      2. odds.db にスクレイプ済みの全 combo 実オッズ（あれば）     → "scraped"
+      3. 残りの combo は単勝由来 Plackett-Luce 推定で補完          → "implied"
+    複勝(payout_place)・連系(payouts) の払戻由来オッズはレース後の情報なので
+    ここには含めない（決済は compute_past_race_odds を直接使う）。
 
     両方の odds と source は同一構造の 2 段ネスト dict で返す:
 
+    Args:
+        session: keiba.db セッション。
+        race_id: 対象レース。
+        n_samples: PL 推定の MC サンプル数（解析式モードでは未使用）。
+        odds_session: odds.db セッション。渡すと scraped 層（実オッズ）で
+            未確定 combo を埋める。None なら従来通り confirmed→implied のみ。
+
     Returns:
         odds:    {bet_type: {combo: odds}}
-        sources: {bet_type: {combo: "confirmed" | "implied"}}
+        sources: {bet_type: {combo: "confirmed" | "scraped" | "implied"}}
 
     odds が空（単勝も取れない）→ ({}, {}) を返す。
     """
-    # Step 1: 過去レースの payout / entries.odds_win 系の確定オッズ
-    confirmed = compute_past_race_odds(session, race_id)
+    # Step 1: 過去レースの確定オッズ。ただし SELECTION に混ぜてよいのは pre-race
+    # （締切時点で知り得る）オッズのみ＝単勝(odds_win)だけ。複勝/連系の払戻由来は
+    # look-ahead リークになるため除外し、scraped → implied で賄う（決済は別途
+    # compute_past_race_odds を直接使う）。
+    confirmed = {
+        bt: combos
+        for bt, combos in compute_past_race_odds(session, race_id).items()
+        if bt in _PRE_RACE_CONFIRMED_BET_TYPES
+    }
 
     # confirmed 由来の combo に "confirmed" マーカーを付与
     sources: dict[str, dict[str, str]] = {
@@ -384,7 +436,18 @@ def compute_race_odds_with_sources(
         for bt, combos in confirmed.items()
     }
 
-    # Step 2: 単勝オッズから連系券種の推定オッズを生成
+    # Step 2: odds.db の実オッズで未確定 combo を埋める（あれば最優先で implied より上）
+    if odds_session is not None:
+        scraped = _scraped_combo_odds(odds_session, race_id)
+        for bet_type, combos in scraped.items():
+            confirmed.setdefault(bet_type, {})
+            sources.setdefault(bet_type, {})
+            for combo, odds in combos.items():
+                if combo not in confirmed[bet_type]:
+                    confirmed[bet_type][combo] = odds
+                    sources[bet_type][combo] = "scraped"
+
+    # Step 3: 単勝オッズから連系券種の推定オッズを生成
     tansho_odds = confirmed.get("単勝", {})
     if not tansho_odds:
         # confirmed に "単勝" が無い場合（live で連系のみ取得済み等）、

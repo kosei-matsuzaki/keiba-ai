@@ -81,15 +81,15 @@ FEATURE_COLUMNS: list[str] = [
     "distance",
     "n_runners",
     "post_position",
-    "post_position_ratio",
+    # 2026-06 audit: post_position_ratio は post_position と r=0.94 で冗長 → 削除
     # Entry basics
     "age",
     "horse_weight",
     "horse_weight_diff",
-    # Odds / market
+    # Odds / market (audit: odds_win が gain 84%。log_odds_win/odds_win_rank/
+    # odds_win_diff_from_favorite は odds_win・popularity と r≥0.94 で冗長 → 削除)
     "odds_win",
     "popularity",
-    "log_odds_win",
     # Horse history (original)
     "recent_avg_finish",
     "recent_n_starts",
@@ -126,12 +126,11 @@ FEATURE_COLUMNS: list[str] = [
     "recent_avg_position_change",
     "recent_passing_volatility",
     # Within-race relative features (PR-C)
+    # audit: odds_win_rank(=popularity r=1.00)/odds_win_diff_from_favorite(=odds_win
+    # r=1.00)/jockey_recent_win_rate_vs_field(=jockey_recent_win_rate r=0.95) を冗長削除
     "horse_weight_pct",
-    "odds_win_rank",
     "weight_carried_pct",
-    "jockey_recent_win_rate_vs_field",
     "course_place_rate_vs_field",
-    "odds_win_diff_from_favorite",
     # Pedigree (PR-C)
     "sire_progeny_win_rate",
     "dam_progeny_win_rate",
@@ -168,9 +167,6 @@ HIGH_CARDINALITY_ID_FEATURES: list[str] = [
 ODDS_FEATURE_COLUMNS: list[str] = [
     "odds_win",
     "popularity",
-    "log_odds_win",
-    "odds_win_rank",
-    "odds_win_diff_from_favorite",
 ]
 
 

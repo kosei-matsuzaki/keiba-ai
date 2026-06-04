@@ -29,7 +29,6 @@ nn = [
 [project.scripts]
 keiba-ingest = "jobs.ingest:cli_main"
 keiba-ingest-shutuba = "jobs.ingest_shutuba:cli_main"
-keiba-fetch-live-odds = "jobs.fetch_live_odds:cli_main"
 
 [dependency-groups]
 dev = [

@@ -344,3 +344,73 @@ def test_compute_implied_combo_odds_raises_for_single_horse():
     """1 頭しか単勝が無いと連系券種が組めず ValueError。"""
     with pytest.raises(ValueError):
         compute_implied_combo_odds_from_tansho({"1": 2.0})
+
+
+# ---------------------------------------------------------------------------
+# odds.db scraped layer integration
+# ---------------------------------------------------------------------------
+
+
+def _keiba_session_with_race():
+    """In-memory keiba session: one race, 3 horses with 単勝, one 馬連 winner payout."""
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    session.add(Race(race_id="R1", date="2025-01-01", course="東京", surface="芝", distance=2000))
+    for pp, odds in [(1, 2.0), (2, 4.0), (3, 8.0)]:
+        session.add(Horse(horse_id=f"H{pp}", name=f"h{pp}"))
+        session.add(Entry(race_id="R1", horse_id=f"H{pp}", post_position=pp, odds_win=odds))
+    # confirmed 馬連 winner 1-2 → amount 3000 → odds 30.0
+    session.add(Payout(race_id="R1", bet_type="馬連", combo="1-2", amount=3000, popularity=1))
+    session.commit()
+    return session
+
+
+def test_scraped_layer_priority(tmp_path):
+    from ai.bet_odds import compute_race_odds_with_sources
+    from db.odds_db import (
+        init_odds_db,
+        make_odds_engine,
+        odds_session_scope,
+        upsert_race_odds,
+    )
+
+    odds_engine = make_odds_engine(tmp_path / "odds.db")
+    init_odds_db(odds_engine)
+    with odds_session_scope(odds_engine) as os:
+        # scraped 馬連 covers all 3 pairs (incl. the confirmed 1-2 with a different value)
+        upsert_race_odds(os, "R1", "馬連", "dt", {
+            "1-2": [99.0, 0.0, 1], "1-3": [12.5, 0.0, 2], "2-3": [20.0, 0.0, 3],
+        })
+
+    keiba = _keiba_session_with_race()
+    with odds_session_scope(odds_engine) as odds_session:
+        odds, sources = compute_race_odds_with_sources(
+            keiba, "R1", odds_session=odds_session
+        )
+
+    # 馬連の payout(レース後) は look-ahead なので SELECTION には入らない。
+    # → 全ペアが scraped(pre-race 実オッズ) 由来。1-2 は payout 30.0 ではなく scraped 99.0。
+    assert odds["馬連"]["1-2"] == 99.0
+    assert sources["馬連"]["1-2"] == "scraped"
+    assert odds["馬連"]["1-3"] == 12.5
+    assert odds["馬連"]["2-3"] == 20.0
+    assert sources["馬連"]["1-3"] == "scraped"
+    assert sources["馬連"]["2-3"] == "scraped"
+    # 単勝(odds_win=締切オッズ) は pre-race なので confirmed として残る
+    assert sources["単勝"]["1"] == "confirmed"
+
+
+def test_without_odds_session_falls_back_to_implied(tmp_path):
+    from ai.bet_odds import compute_race_odds_with_sources
+
+    keiba = _keiba_session_with_race()
+    odds, sources = compute_race_odds_with_sources(keiba, "R1")
+
+    # no odds_session かつ 馬連 payout は look-ahead 除外 → 連系は全て PL-implied。
+    # 単勝のみ pre-race confirmed (odds_win)。
+    assert sources["単勝"]["1"] == "confirmed"
+    assert sources["馬連"]["1-2"] == "implied"
+    assert sources["馬連"]["1-3"] == "implied"
+    assert "scraped" not in {s for combos in sources.values() for s in combos.values()}
+    assert "confirmed" not in {s for s in sources["馬連"].values()}

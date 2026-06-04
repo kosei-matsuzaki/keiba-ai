@@ -30,6 +30,7 @@ from pathlib import Path
 
 from ai.calibrate import fit_combo_calibrators_bundle
 from ai.registry import load_model_full
+from core.bet_types import RENKEI_BET_TYPES
 from core.paths import db_path
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
@@ -105,7 +106,7 @@ def fit_and_save(
     log.info("Saved combo calibrators to %s", target)
 
     # Report which bet types were actually fitted (sample threshold inside fit).
-    fitted: dict[str, bool] = {bt: cal.has(bt) for bt in ("馬連", "ワイド", "馬単", "三連複", "三連単")}
+    fitted: dict[str, bool] = {bt: cal.has(bt) for bt in RENKEI_BET_TYPES}
 
     return {
         "model_path": str(model_path),

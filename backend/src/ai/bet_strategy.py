@@ -35,8 +35,6 @@ from ai.types import BetCandidate, CombinationPrediction, RecommendationResult
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_VALID_BET_TYPES = frozenset(["単勝", "複勝", "枠連", "馬連", "ワイド", "馬単", "三連複", "三連単"])
-
 # Bet types for which nagashi / formation produce meaningful output
 _NAGASHI_SUPPORTED = frozenset(["馬連", "ワイド", "馬単", "三連複"])
 _FORMATION_SUPPORTED = frozenset(["馬単", "三連単", "三連複"])

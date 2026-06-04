@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from core.bet_types import DEFAULT_ENABLED_BET_TYPES
 from core.paths import data_dir
 
 _DEFAULTS: dict = {
@@ -22,7 +23,7 @@ _DEFAULTS: dict = {
     "bankroll": 100_000,
     "kelly_fraction": 0.25,
     "max_stake_per_race_pct": 0.05,
-    "enabled_bet_types": ["単勝", "複勝", "ワイド", "馬連"],
+    "enabled_bet_types": list(DEFAULT_ENABLED_BET_TYPES),
 }
 
 

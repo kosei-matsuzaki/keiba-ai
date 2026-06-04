@@ -79,7 +79,7 @@ def test_predictions_top_features_non_empty(
         "place_prob": [0.7, 0.5, 0.3],
         "top_features": [
             ["odds_win", "distance", "age"],
-            ["log_odds_win", "post_position", "horse_weight"],
+            ["recent_avg_finish", "post_position", "horse_weight"],
             ["popularity", "n_runners", "distance"],
         ],
     })

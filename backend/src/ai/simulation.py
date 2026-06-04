@@ -31,7 +31,9 @@ from ai.bet_odds import (
 from ai.bet_strategy import recommend_for_race
 from ai.predict import predict_race, predict_race_with_combinations
 from ai.registry import ModelBundle, load_model_full
+from core.bet_types import COMBINATION_BET_TYPES
 from core.logging import get_logger
+from db.odds_db import init_odds_db, make_odds_engine
 from features.builder import build_training_frame
 
 log = get_logger(__name__)
@@ -46,9 +48,7 @@ STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
 }
 
 # 単勝 / 複勝 / 連系 すべての券種を simulation 対象とする
-DEFAULT_BET_TYPES: list[str] = [
-    "単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単",
-]
+DEFAULT_BET_TYPES: list[str] = list(COMBINATION_BET_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +242,7 @@ def _settle_candidates(
             "stake": int(cand.stake),
             "payout": float(payout),
             "hit": 1 if hit else 0,
+            "source": getattr(cand, "est_odds_source", "unknown"),
         })
 
     return settlements
@@ -265,6 +266,7 @@ def simulate_active_model(
     max_stake_per_race_yen: int | None = None,
     *,
     bundle: ModelBundle | None = None,
+    bet_sink: list[dict] | None = None,
 ) -> SimulationResult:
     """Run end-to-end backtest using active model + recommendations.
 
@@ -342,6 +344,13 @@ def simulate_active_model(
     # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
     daily_buckets: dict[str, dict[str, float | int]] = {}
 
+    # odds.db の実オッズで EV 選択を実測ベースにする。未 backfill のレースは
+    # load_race_odds が {} を返し、従来の Plackett-Luce 推定へフォールバックする
+    # （後方互換）。読み取り専用なので close は loop 後にまとめて行う。
+    odds_engine = make_odds_engine()
+    init_odds_db(odds_engine)
+    odds_session = Session(bind=odds_engine)
+
     n_settled = 0
     for race_id in race_ids:
         race_frame = frame[frame["race_id"] == race_id]
@@ -360,7 +369,9 @@ def simulate_active_model(
         preds["post_position"] = preds["horse_id"].map(pp_map)
 
         # Combination predictions + odds (with implied fill)
-        race_odds, race_odds_sources = compute_race_odds_with_sources(session, race_id)
+        race_odds, race_odds_sources = compute_race_odds_with_sources(
+            session, race_id, odds_session=odds_session
+        )
         try:
             combos_by_type = predict_race_with_combinations(
                 bundle,
@@ -466,6 +477,16 @@ def simulate_active_model(
                 if math.isfinite(float(s["payout"]))
                 else 0.0
             )
+            # Optional per-bet record sink (CI / source-coverage analysis).
+            if bet_sink is not None:
+                bet_sink.append({
+                    "race_id": race_id,
+                    "bet_type": s["bet_type"],
+                    "stake": int(s["stake"]),
+                    "payout": s_payout,
+                    "hit": int(s["hit"]),
+                    "source": s.get("source", "unknown"),
+                })
             # global summary
             result.summary.n_bets += 1
             result.summary.invested += s["stake"]
@@ -495,6 +516,8 @@ def simulate_active_model(
             crs_grp.invested += s["stake"]
             crs_grp.payout += s_payout
             crs_grp.hits += s["hit"]
+
+    odds_session.close()
 
     result.n_settled_races = n_settled
     result.final_bankroll = current_bankroll
