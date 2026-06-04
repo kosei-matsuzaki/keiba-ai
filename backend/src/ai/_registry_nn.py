@@ -10,10 +10,29 @@ torch は遅延 import — torch が入っていない環境でも、GBDT 経路
 
 from __future__ import annotations
 
+import pickle
 import shutil
 from pathlib import Path
 
-from ai._registry_gbdt import _pickle_load
+
+class _LegacyUnpickler(pickle.Unpickler):
+    """`keiba_ai.*` 旧パスで pickle 化された artifact を、refactor 後の新パスへ
+    透過的にリマップする Unpickler。再学習なしで旧 .pkl を読めるようにする。
+
+    対象は combo_calibrators.pkl / temperature_scaler.pkl / nn_calibrator.pkl 等。
+    """
+
+    def find_class(self, module: str, name: str):
+        if module.startswith("keiba_ai."):
+            module = module[len("keiba_ai."):]
+        elif module == "keiba_ai":
+            raise ImportError("keiba_ai は廃止済みパッケージです")
+        return super().find_class(module, name)
+
+
+def _pickle_load(fp) -> object:
+    """旧 keiba_ai.* パス対応の pickle.load ラッパー。"""
+    return _LegacyUnpickler(fp).load()
 
 
 def save_nn_artifacts(state_dict_path: Path, model_dir: Path) -> None:
@@ -109,17 +128,6 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         with nn_cal_path.open("rb") as f:
             nn_calibrator = _pickle_load(f)
 
-    # GBDT stacking: if the NN was trained with --gbdt-model-path, load that
-    # GBDT bundle so the inference path can augment incoming frames with the
-    # same gbdt_* columns the NN saw at train time.
-    nn_gbdt_bundle = None
-    gbdt_path_str = meta.get("gbdt_model_path")
-    if gbdt_path_str:
-        gbdt_path = Path(gbdt_path_str)
-        if gbdt_path.exists():
-            from ai.registry import load_model_full  # noqa: PLC0415 — lazy to break cycle
-            nn_gbdt_bundle = load_model_full(gbdt_path)
-
     return {
         "nn_model": race_model,
         "nn_horse_feature_cols": horse_feature_cols,
@@ -127,6 +135,5 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         "nn_preprocessor": nn_preprocessor,
         "temperature_scaler": temperature_scaler,
         "combo_calibrators": combo_calibrators,
-        "nn_gbdt_bundle": nn_gbdt_bundle,
         "nn_calibrator": nn_calibrator,
     }

@@ -68,13 +68,9 @@ def _collect_predictions(
     engine = make_engine(resolved_db)
     bundle = load_model_full(model_path)
     # Re-fit must operate on uncalibrated output so we strip any existing
-    # calibrators before collecting probabilities.
-    #   NN  : win head = nn_calibrator, place head = place_calibrator (fit both).
-    #   GBDT: win head is already calibrated by the binary head + calibrator.pkl,
-    #         so we only re-fit the place head (place_calibrator). Stripping the
-    #         GBDT win calibrator here would force a double calibration at predict.
-    if bundle.model_type == "nn":
-        bundle.nn_calibrator = None
+    # calibrators before collecting probabilities (win head = nn_calibrator,
+    # place head = place_calibrator — fit both).
+    bundle.nn_calibrator = None
     bundle.place_calibrator = None
 
     log.info("Building feature frame from %s in window %s..%s", resolved_db, start, end)
@@ -191,30 +187,23 @@ def fit_and_save(
         return {"before": {"brier": b_brier, "ece": b_ece},
                 "after": {"brier": a_brier, "ece": a_ece}, "saved_to": str(target)}
 
-    # GBDT win_prob is already calibrated (binary head + calibrator.pkl), so we
-    # only fit the place head for GBDT. NN gets both heads.
-    bundle_meta_type = bundle_meta.get("model_type", "nn")
+    # NN fits both heads: win (nn_calibrator) and place (place_calibrator).
     place_diag = _fit_head(data["place_prob"], data["placed"], place_target, "place")
-    if bundle_meta_type == "nn":
-        win_diag = _fit_head(data["win_prob"], data["is_winner"], win_target, "win")
-    else:
-        log.info("GBDT model: skipping win calibrator (already calibrated by binary head).")
-        win_diag = None
+    win_diag = _fit_head(data["win_prob"], data["is_winner"], win_target, "win")
 
     out: dict = {
         "model_path": str(model_path),
-        "model_type": bundle_meta_type,
+        "model_type": "nn",
         "n_races": n_races,
         "n_entries": int(len(data["win_prob"])),
         "window": {"start": start, "end": end},
         "win": win_diag,
         "place": place_diag,
     }
-    if win_diag is not None:
-        # backward-compat top-level keys mirror the win head (NN only)
-        out["before"] = win_diag["before"]
-        out["after"] = win_diag["after"]
-        out["saved_to"] = win_diag["saved_to"]
+    # backward-compat top-level keys mirror the win head
+    out["before"] = win_diag["before"]
+    out["after"] = win_diag["after"]
+    out["saved_to"] = win_diag["saved_to"]
     return out
 
 

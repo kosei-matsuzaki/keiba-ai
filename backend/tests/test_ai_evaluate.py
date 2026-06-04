@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -12,19 +11,27 @@ from sqlalchemy import create_engine
 
 import db.models  # noqa: F401
 from ai.evaluate import evaluate
-from ai.gbm.train import train
-from tests.synthetic import make_synthetic_db
+from tests.synthetic import make_synthetic_db, train_synthetic_nn
 
 
-@pytest.fixture()
-def trained_scenario(tmp_path):
+@pytest.fixture(scope="module")
+def trained_scenario(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("evaluate")
     db_file = tmp_path / "test.db"
     engine = create_engine(f"sqlite:///{db_file}", future=True)
     make_synthetic_db(engine, n_races=30, n_horses_per_race=10, days_back=180, seed=99)
 
+    # Set KEIBA_DATA_DIR only while training so the model lands under tmp;
+    # restore afterwards to avoid leaking into other test modules.
+    prev = os.environ.get("KEIBA_DATA_DIR")
     os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
-    result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-    model_dir = Path(result["model_dir"])
+    try:
+        model_dir = train_synthetic_nn(db_file)
+    finally:
+        if prev is None:
+            os.environ.pop("KEIBA_DATA_DIR", None)
+        else:
+            os.environ["KEIBA_DATA_DIR"] = prev
     return db_file, model_dir
 
 

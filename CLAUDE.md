@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-netkeiba スクレイピング + LightGBM / NN による競馬予想ツール (個人研究用)。FastAPI バックエンド + React 管理画面の単一リポジトリで、`scripts/dev.sh` が両方を一発起動する。直近コミット `62d59c2` で monorepo (`games/keiba-ai/...`) から単独リポジトリ構成へ再編成されているため、古いパスを参照するコードや設定が散見されたら更新候補と疑うこと。
+netkeiba スクレイピング + NN (Set Transformer ランキング) による競馬予想ツール (個人研究用)。FastAPI バックエンド + React 管理画面の単一リポジトリで、`scripts/dev.sh` が両方を一発起動する。直近コミット `62d59c2` で monorepo (`games/keiba-ai/...`) から単独リポジトリ構成へ再編成されているため、古いパスを参照するコードや設定が散見されたら更新候補と疑うこと。
 
 詳しい仕様は `docs/` 配下 (`spec.md` / `design.md` / `ai-model.md` / `data-pipeline.md` / `operations.md`) を参照。本ファイルは「コード全体を読まないと掴めない big picture」のみを要約する。
 
@@ -32,10 +32,8 @@ cd frontend && pnpm build          # tsc -b && vite build
 
 ### CLI エントリ (backend/)
 ```bash
-uv run python -m ai.gbm.train                                          # 学習
-uv run python -m ai.gbm.train --loss plackett_luce                     # GBDT を PL モードで学習
-uv run python -m ai.evaluate --model data/models/<ts> --persist    # 評価 + metrics_json 書き戻し
-uv run python -m ai.gbm.tune --n-trials 50                             # Optuna ハイパラ探索
+uv run python -m ai.nn.train_nn --train-end 2025-04-30 --valid-months 6 --test-months 6  # NN 学習
+uv run python -m ai.evaluate --model data/models/<ts>-nn --persist    # 評価 + metrics_json 書き戻し
 uv run keiba-ingest --date 2024-12-28                                       # 単日 ingest
 uv run python -m jobs.ingest_range --start ... --end ...           # 期間 ingest（中断後の resume 対応）
 uv run alembic upgrade head
@@ -68,19 +66,17 @@ core / settings は横断
 ```
 `ai` は `scraper` を直接呼ばない (循環禁止)。`api/routers/*.py` はビジネスロジックを持たず、下層モジュールを呼ぶだけ。
 
-### 推論パスは bundle 経由で必ず GBDT/NN 切替
-- `registry.load_model_full(path)` が `ModelBundle` を返し、`bundle.model_type` が `"gbdt"` か `"nn"`
-- GBDT は `bundle.lambdarank`、NN は `bundle.nn_model` を持つ (片側は None)
-- 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/predict.py`)。内部で `bundle.model_type` を見て GBDT / NN に分岐する
-- 低レイヤの `predict_race_gbdt` / `predict_race_with_combinations_gbdt` / `predict_race_with_shap_gbdt` は Booster を直接受け取る学習時専用 (train.py / calibrate.py / evaluate.py の内部用)
-- SHAP TreeExplainer は GBDT 専用。NN 経路では `top_features=[]` を返す (ルーターで分岐)
+### 推論パスは bundle 経由 (NN 専用)
+- `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceModel、`nn_preprocessor` / `temperature_scaler` / `combo_calibrators` / `nn_calibrator` / `place_calibrator` は optional
+- 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/predict.py`)
+- combo 確率は NN スコア → 解析的 Plackett-Luce で導出し、`combo_calibrators.pkl` (連系券種ごとの isotonic) で校正する。校正の post-hoc fit は `scripts/fit_nn_combo_calibrators.py`
+- SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (旧 GBDT TreeExplainer の名残でルーター互換のため残置)
 
 ### NN は optional dep
-`torch` / `lightning` は `pyproject.toml` の `[project.optional-dependencies].nn`。インストールしていない環境で NN モデルを active にすると `registry._load_nn_bundle` が `ModuleNotFoundError`。導入は `uv pip install -e ".[nn]"`。
+`torch` / `lightning` は `pyproject.toml` の `[project.optional-dependencies].nn`。未インストール環境では `load_model_full` / 予測系が `ModuleNotFoundError`。導入は `uv pip install -e ".[nn]"`。scraper/ingest だけなら torch 不要。
 
 ### モデル保存レイアウト
-- GBDT: `data/models/<YYYYMMDD-HHMMSS>/` に `model.txt` (lambdarank 必須) + `binary.txt` / `calibrator.pkl` / `combo_calibrators.pkl` / `temperature_scaler.pkl` (optional) + `meta.json`
-- NN: `data/models/<YYYYMMDDTHHMMSS>-nn/` に `model.pt` + `meta.json` (`model_type="nn"`)
+- NN: `data/models/<YYYYMMDDTHHMMSS>-nn/` に `model.pt` + `meta.json` (`model_type="nn"`) + optional `preprocessor.pkl` / `temperature_scaler.pkl` / `combo_calibrators.pkl` / `nn_calibrator.pkl` / `place_calibrator.pkl`
 - active は `model_runs.is_active` で管理。`registry._resolve_model_path` が **basename 比較** で WSL/Windows パス差を吸収する (`/mnt/c/...` と `C:\...` のどちらでも当たる)
 
 ### 特徴量とリーク防止
@@ -117,4 +113,4 @@ core / settings は横断
 - 環境変数 `KEIBA_DATA_DIR` で `data/` の場所を切り替え可能。テストでは `tmp_path` ベースで上書きする (`conftest.py` 参照)
 - `core/paths.py` の `data_dir()` を経由してパスを組み立てる。`data/` 配下の直書きは避ける
 - WSL から Windows venv の Python を呼ばない (パス・改行・ロックの問題が出る)。Windows uvicorn が動いているときに WSL で `uv sync` する場合は別 `UV_PROJECT_ENVIRONMENT` を渡す
-- `lambdarank` / `plackett_luce` の 2 モードはチェックポイントの `meta.json.loss_type` で識別。確率変換ロジックが分岐するので、新しいモードを追加するときは `predict_race` 内の分岐と calibrator まわりを揃えること
+- NN の損失は `plackett_luce` (default) / `listmle` / `time_margin` を `--loss` で選択し `meta.json.loss_type` に記録。win_prob は softmax(score / T_win)、place_prob は PL Monte Carlo。新しい損失を足すときも `predict_race` の確率変換は共通なので学習側 (`ai/nn/loss.py`) だけ拡張すれば足りる

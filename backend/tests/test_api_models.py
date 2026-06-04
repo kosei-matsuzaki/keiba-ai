@@ -117,7 +117,7 @@ def test_train_endpoint_returns_job_accepted(
         return {}
 
     with (
-        patch("api.routers.models.train", return_value={}),
+        patch("api.routers.models.train_nn", return_value={}),
         TestClient(app_with_temp_db) as client,
     ):
         resp = client.post("/api/models/train", json={})

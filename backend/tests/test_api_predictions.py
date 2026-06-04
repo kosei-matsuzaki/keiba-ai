@@ -91,7 +91,7 @@ def test_predictions_success(
         _seed_race_and_entries(session, "PRED_RACE1", n_horses=3)
         _seed_active_model(session, str(tmp_path / "fake_model"))
 
-    # Mock out load_model and predict_race_gbdt so we don't need a real LightGBM model
+    # Mock out load_model_full and predict_race so we don't need a real LightGBM model
     fake_df = pd.DataFrame({
         "horse_id": ["HP_PRED_RACE1_0", "HP_PRED_RACE1_1", "HP_PRED_RACE1_2"],
         "score": [2.0, 1.5, 1.0],

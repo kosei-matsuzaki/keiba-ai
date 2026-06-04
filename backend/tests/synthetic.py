@@ -129,3 +129,28 @@ def make_synthetic_db(
                 session.add(entry)
 
         session.commit()
+
+
+def train_synthetic_nn(db_file, *, train_end=None, valid_months=2, test_months=1, max_epochs=5):
+    """Train a tiny NN model on a synthetic DB and return its model_dir.
+
+    Shared test helper for integration tests that need a real model bundle
+    (evaluate / diagnosis). Uses few epochs + cpu and skips temperature /
+    combo calibrator fitting for speed. Callers must set KEIBA_DATA_DIR so the
+    model is saved under a temp dir.
+    """
+    from pathlib import Path
+
+    from ai.nn.train_nn import train_nn
+
+    result = train_nn(
+        db=db_file,
+        train_end=train_end,
+        valid_months=valid_months,
+        test_months=test_months,
+        max_epochs=max_epochs,
+        device="cpu",
+        fit_temperature=False,
+        fit_combo_calibrators=False,
+    )
+    return Path(result["model_dir"])

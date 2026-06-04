@@ -5,15 +5,13 @@ from __future__ import annotations
 import json
 import math
 import os
-from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from ai.evaluate import _parse_payout_place, evaluate
-from ai.gbm.train import train
 from db.models.race import Race
-from tests.synthetic import make_synthetic_db
+from tests.synthetic import make_synthetic_db, train_synthetic_nn
 
 
 class TestParsePdayoutPlace:
@@ -52,8 +50,7 @@ class TestPaybackPlace:
 
         os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
 
-        result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-        model_dir = Path(result["model_dir"])
+        model_dir = train_synthetic_nn(db_file)
 
         metrics = evaluate(model_path=model_dir, db=db_file)
 
@@ -71,8 +68,7 @@ class TestPaybackPlace:
 
         os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
 
-        result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-        model_dir = Path(result["model_dir"])
+        model_dir = train_synthetic_nn(db_file)
 
         metrics = evaluate(model_path=model_dir, db=db_file)
         assert metrics["place_bets"] == 0
@@ -95,8 +91,7 @@ class TestPaybackPlace:
                     race.payout_place = None
             s.commit()
 
-        result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-        model_dir = Path(result["model_dir"])
+        model_dir = train_synthetic_nn(db_file)
 
         metrics = evaluate(model_path=model_dir, db=db_file)
         assert "place_bets" in metrics

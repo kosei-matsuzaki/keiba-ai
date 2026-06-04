@@ -140,27 +140,6 @@ def test_predict_race_applies_calibrator(tmp_path):
     # Re-normalised in _predict_race_nn → sum is 1 within float tolerance.
     np.testing.assert_allclose(preds["win_prob"].sum(), 1.0, atol=1e-6)
 
-
-def test_fit_and_save_gbdt_fits_place_only(tmp_path):
-    """GBDT モデルは place head のみ fit する (win head は binary head + calibrator.pkl
-    で既に較正済みなので二重較正を避ける)。"""
-    from ai.gbm.train import train
-    from ai.nn.fit_calibrator import fit_and_save
-
-    db_file = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_file}", future=True)
-    make_synthetic_db(engine, n_races=30, n_horses_per_race=10, days_back=180, seed=11)
-    os.environ["KEIBA_DATA_DIR"] = str(tmp_path / "data")
-    result = train(db=db_file, train_end=None, valid_months=2, test_months=1)
-    gbdt_dir = Path(result["model_dir"])
-
-    out = fit_and_save(model_path=gbdt_dir, db=db_file)
-    assert out["model_type"] == "gbdt"
-    assert out["win"] is None  # GBDT skips win calibrator
-    assert out["place"] is not None
-    assert (gbdt_dir / "place_calibrator.pkl").exists()
-
-
 def test_module_importable():
     """Smoke: module imports without side effects."""
     mod = importlib.import_module("ai.nn.fit_calibrator")

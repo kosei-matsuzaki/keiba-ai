@@ -1,7 +1,7 @@
 """Bet pattern generation and Kelly fractional stake calculation.
 
 This module is pure-function: no database access, no I/O.  All functions
-operate on CombinationPrediction lists produced by predict_race_with_combinations_gbdt
+operate on CombinationPrediction lists produced by predict_race_with_combinations
 and return BetCandidate lists.
 
 Supported buy patterns:
