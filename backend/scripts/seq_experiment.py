@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import time
 
@@ -37,9 +38,14 @@ from sklearn.metrics import ndcg_score
 
 from core.paths import db_path
 
-TRAIN_END = "2025-01-05"
-VALID_END = "2025-07-05"
-OOS_START = "2025-10-01"
+# KEIBA_SEQ_WITH_ODDS=1 appends [log(odds_win), 1/odds_win] to the race context,
+# turning the no-odds GRU into a with-odds GRU (to test if the history sequence
+# adds anything ON TOP of the market odds vs the with-odds GBDT ~0.33).
+_WITH_ODDS = os.environ.get("KEIBA_SEQ_WITH_ODDS", "0") == "1"
+
+TRAIN_END = "2023-11-01"   # 2-year OOS split (NN direction, matches GBDT verifications)
+VALID_END = "2024-05-01"
+OOS_START = "2024-05-01"
 OOS_END = "2026-04-30"
 
 MAX_HIST = 15  # most recent N past races per horse (career median 6, p90 21)
@@ -100,7 +106,7 @@ CTX_NUM = [
     "distance", "class_rank", "field_size", "age", "weight_carried",
     "days_since_last", "career_len", "post_position",
 ]
-CTX_DIM = len(CTX_NUM) + SURF_DIM
+CTX_DIM = len(CTX_NUM) + SURF_DIM + (2 if _WITH_ODDS else 0)
 
 
 def _surf_onehot(surface: str | None) -> list[float]:
@@ -120,7 +126,8 @@ def load_history_and_samples(db: str, limit_train_races: int | None):
         """
         SELECT e.horse_id, e.race_id, r.date, e.finish_position, e.finish_time,
                e.margin, e.agari_3f, e.passing, e.weight_carried, e.horse_weight,
-               e.age, e.post_position, r.distance, r.surface, r.race_class, r.n_runners
+               e.age, e.post_position, r.distance, r.surface, r.race_class, r.n_runners,
+               e.odds_win
         FROM entries e JOIN races r ON r.race_id = e.race_id
         WHERE e.finish_position IS NOT NULL AND r.date IS NOT NULL
         ORDER BY e.horse_id, r.date, e.race_id
@@ -141,7 +148,7 @@ def load_history_and_samples(db: str, limit_train_races: int | None):
 
     def token(row, prev_date) -> list[float]:
         (_hid, rid, date, fin, ftime, margin, agari, passing, wcar, hw, _age,
-         _pp, dist, surf, rclass, _nr) = row
+         _pp, dist, surf, rclass, _nr, _ow) = row
         fs = field.get(rid, 1)
         days = np.nan
         if prev_date is not None:
@@ -178,7 +185,7 @@ def load_history_and_samples(db: str, limit_train_races: int | None):
             date = row[2]
             hist = toks[max(0, i - MAX_HIST):i]  # strictly past (indices < i)
             (_h, rid, _d, fin, _ft, _m, _a, _ps, wcar, _hw, age, pp,
-             dist, surf, rclass, _nr) = row
+             dist, surf, rclass, _nr, ow) = row
             fs = field.get(rid, 1)
             days_last = (np.datetime64(date) - np.datetime64(dates[i - 1])).astype("timedelta64[D]").astype(float)
             ctx = [
@@ -191,6 +198,9 @@ def load_history_and_samples(db: str, limit_train_races: int | None):
                 float(i),  # career_len (# prior races)
                 float(pp) if pp is not None else np.nan,
             ] + _surf_onehot(surf)
+            if _WITH_ODDS:
+                o = float(ow) if ow is not None and ow > 0 else np.nan
+                ctx += [np.log(o) if o == o else np.nan, (1.0 / o) if o == o else np.nan]
             sample = {
                 "race_id": rid, "hist": np.array(hist, dtype=np.float32),
                 "ctx": np.array(ctx, dtype=np.float32),
