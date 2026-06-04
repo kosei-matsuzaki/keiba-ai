@@ -206,11 +206,30 @@ backend/data/models/
 
 ### バックアップ方針
 
+DB のバックアップは `keiba-backup` コマンドで取得する。SQLite の **online backup API**
+を使うため、ingest 稼働中でも一貫したスナップショットが安全に取れる（`cp` は WAL の
+途中状態を拾う恐れがあるため使わない）。出力先は `data/backups/<name>-<YYYYMMDD-HHMMSS>.db`、
+DB ごとに最新 N 世代（既定 7）を保持し古いものは自動削除される。
+
+```bash
+cd backend
+uv run keiba-backup                 # keiba.db + odds.db、各 7 世代
+uv run keiba-backup --db keiba      # keiba.db のみ
+uv run keiba-backup --keep 14       # 保持世代数を変更
+```
+
+WSL から `/mnt/c` 上の DB を開くと WAL の mmap 問題で失敗することがある（drvfs）。
+バックアップは Windows 側から実行するのが確実。
+
 | 対象 | 推奨頻度 | 備考 |
 |---|---|---|
-| `data/keiba.db`（SQLite） | 取り込み完了直後 + 週次 | `.gitignore` 対象。スキーマは Alembic で管理（8 テーブル） |
+| `data/keiba.db`（SQLite） | 取り込み完了直後 + 週次 | `keiba-backup` で `data/backups/keiba-*.db` に保存。スキーマは Alembic 管理 |
+| `data/odds.db`（確定オッズ） | 取り込み完了直後 | `keiba-backup` で `data/backups/odds-*.db` に保存。再スクレイプ可能なため優先度は中 |
 | `data/models/`（モデルファイル） | 月次再学習後 + 重要モデル随時 | active モデルは失うと再学習が必要 |
 | `data/raw/<yyyy>/<mm>/`（レース結果 HTML） | 任意 | 再フェッチ可能なため低優先。misc/ は ingest_range が自動削除するためバックアップ対象外 |
+
+ログ: 長時間ジョブのログを残すには `KEIBA_LOG_DIR=data/logs` を設定して実行する
+（`data/logs/<script>-<ts>.log` に出力）。未設定ならコンソールのみ（従来どおり）。
 
 
 ---
