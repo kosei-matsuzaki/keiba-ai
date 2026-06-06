@@ -290,3 +290,99 @@ def test_train_nn_no_fit_temperature(syn_engine_small, tmp_path, monkeypatch):
     assert meta.get("has_temperature_scaler") is False, (
         f"has_temperature_scaler should be False, got: {meta.get('has_temperature_scaler')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Real-odds ROI monitor + log_growth betting loss (decision-focused)
+# ---------------------------------------------------------------------------
+
+
+def test_train_nn_roi_metrics_present(syn_engine_small, tmp_path, monkeypatch):
+    """metrics dict exposes real-odds 単勝/複勝 ROI and the chosen monitor."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="plackett_luce", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu",
+        fit_combo_calibrators=False, monitor="valid_tansho_roi",
+    )
+
+    for key in ("valid_tansho_roi", "valid_fukusho_roi", "test_tansho_roi"):
+        assert key in result, f"{key} missing from metrics"
+
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta.get("monitor") == "valid_tansho_roi"
+
+
+def test_train_nn_log_growth_loss(syn_engine_small, tmp_path, monkeypatch):
+    """train_nn() trains end-to-end with the log_growth betting loss."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu",
+        fit_combo_calibrators=False, monitor="valid_tansho_roi",
+    )
+
+    model_dir = Path(result["model_dir"])
+    assert (model_dir / "model.pt").exists()
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("loss_type") == "log_growth"
+
+
+def test_train_nn_invalid_monitor_raises(syn_engine_small, tmp_path, monkeypatch):
+    """An unknown monitor name is rejected early."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    with pytest.raises(ValueError, match="Unknown monitor"):
+        train_nn(
+            db=db_file, train_end=None, valid_months=2, test_months=1,
+            loss="plackett_luce", hidden_dim=16, embed_dim=8, n_heads=2,
+            batch_size=4, max_epochs=1, device="cpu",
+            fit_combo_calibrators=False, monitor="valid_bogus",
+        )
+
+
+def test_train_nn_init_from_warm_start(syn_engine_small, tmp_path, monkeypatch):
+    """Two-stage: PL pretrain → log_growth fine-tune via init_from warm-start."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    base = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="plackett_luce", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu", fit_combo_calibrators=False,
+    )
+
+    tuned = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu", fit_combo_calibrators=False,
+        monitor="valid_tansho_roi",
+        init_from=Path(base["model_dir"]),
+    )
+
+    meta = json.loads((Path(tuned["model_dir"]) / "meta.json").read_text())
+    assert meta["params"]["init_from"] == base["model_dir"]
+    assert meta["loss_type"] == "log_growth"
+
+
+def test_train_nn_log_growth_place_loss(syn_engine_small, tmp_path, monkeypatch):
+    """train_nn() trains end-to-end with the 複勝 log_growth_place loss."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth_place", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu", fit_combo_calibrators=False,
+        monitor="valid_fukusho_roi",
+    )
+    model_dir = Path(result["model_dir"])
+    assert (model_dir / "model.pt").exists()
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta.get("loss_type") == "log_growth_place"
