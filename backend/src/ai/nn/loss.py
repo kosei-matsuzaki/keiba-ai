@@ -121,6 +121,131 @@ def listmle_loss(
     return (total_loss / n_valid).squeeze()
 
 
+def log_growth_loss(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    odds_win: torch.Tensor,
+    mask: torch.Tensor,
+    kelly_fraction: float = 0.25,
+) -> torch.Tensor:
+    """Fractional-Kelly log-growth (decision-focused) loss for 単勝 betting.
+
+    Each race is treated as a 単勝 portfolio.  A softmax over the model scores
+    gives per-horse allocation weights ``p_i``; we stake a fraction
+    ``kelly_fraction`` of bankroll spread by ``p_i`` and keep the rest in cash.
+    The realised wealth multiple of the race is::
+
+        W = 1 + kelly_fraction * (p_winner * odds_winner - 1)
+
+    and the loss is ``-mean(log W)`` over races.  Maximising this maximises
+    expected log-growth of bankroll (the Kelly objective) using **real odds**,
+    so the model is rewarded for concentrating mass where ``p * odds > 1`` and
+    penalised when it does not — i.e. it optimises betting return directly
+    rather than ranking accuracy.
+
+    The cash term (``kelly_fraction < 1``) is what keeps ``odds_winner`` in the
+    gradient; with full-Kelly (kf=1, no cash) the odds factor degenerates to a
+    constant and the objective collapses to plain winner cross-entropy.
+
+    Args:
+        scores:           [B, N]
+        finish_positions: [B, N]  NaN = exclude; winner is position == 1
+        odds_win:         [B, N]  **raw** 単勝 odds (NaN = unknown)
+        mask:             [B, N]  bool
+        kelly_fraction:   fraction of bankroll staked per race, in (0, 1).
+
+    Returns:
+        Scalar loss (mean over races with a known, odds-carrying winner).
+    """
+    device = scores.device
+    kf = float(kelly_fraction)
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(finish_positions[b])
+        if valid.sum() < 2:
+            continue
+
+        s = scores[b][valid]                 # [K]
+        pos = finish_positions[b][valid]     # [K]
+        o = odds_win[b][valid]               # [K]
+
+        # Winner = finishing position 1.  Skip races with no clean winner or
+        # whose winner has no recorded odds (can't price the payoff).
+        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
+        if winner_idx.numel() == 0:
+            continue
+        w = winner_idx[0]
+        o_w = o[w]
+        if torch.isnan(o_w) or o_w <= 0:
+            continue
+
+        p = torch.softmax(s, dim=0)          # [K] allocation weights
+        p_w = p[w]
+
+        wealth = 1.0 + kf * (p_w * o_w - 1.0)  # > 1 - kf > 0 for kf < 1
+        total_loss = total_loss - torch.log(wealth)
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
+def log_growth_place_loss(
+    scores: torch.Tensor,
+    place_returns: torch.Tensor,
+    mask: torch.Tensor,
+    kelly_fraction: float = 0.25,
+) -> torch.Tensor:
+    """Fractional-Kelly log-growth loss for 複勝 (place) betting.
+
+    Mirrors :func:`log_growth_loss` but pays off on **placing** (in-the-money)
+    rather than winning.  ``place_returns[i]`` is the realised payoff multiple of
+    a 複勝 bet on horse i (= payout_yen / 100 if it placed, else 0), supplied
+    pre-computed so the loss stays a pure tensor op.
+
+    Each race stakes ``kelly_fraction`` of bankroll spread by softmax(scores);
+    realised wealth = ``1 + kf * (Σ_i p_i * place_returns_i - 1)`` and the loss
+    is ``-mean(log wealth)``.  This rewards putting mass on horses that place and
+    pay well — directly optimising 複勝 return, the lower-variance market.
+
+    Args:
+        scores:        [B, N]
+        place_returns: [B, N]  payoff multiple if placed, 0 otherwise (NaN→0)
+        mask:          [B, N]  bool
+        kelly_fraction: bankroll fraction staked per race, in (0, 1).
+
+    Returns:
+        Scalar loss (mean over races with >= 2 valid horses).
+    """
+    device = scores.device
+    kf = float(kelly_fraction)
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b]
+        if valid.sum() < 2:
+            continue
+
+        s = scores[b][valid]
+        pr = torch.nan_to_num(place_returns[b][valid], nan=0.0)
+        if pr.sum() <= 0:
+            continue  # no recorded place payoff in this race → skip
+
+        p = torch.softmax(s, dim=0)
+        expected = (p * pr).sum()
+        wealth = 1.0 + kf * (expected - 1.0)  # > 1 - kf > 0 for kf < 1
+        total_loss = total_loss - torch.log(wealth)
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
 def time_margin_loss(
     scores: torch.Tensor,
     finish_positions: torch.Tensor,

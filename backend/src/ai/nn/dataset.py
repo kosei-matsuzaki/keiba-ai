@@ -34,12 +34,19 @@ class RaceDataset(Dataset):
         race_feature_cols: list[str],
         label_col: str = "finish_position",
         time_col: str = "finish_time",
+        odds_col: str = "odds_win_raw",
+        place_return_col: str = "place_ret_raw",
     ) -> None:
         self.feature_cols = feature_cols
         # Only keep race feature cols that are actually present in the frame
         self.race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
         self.label_col = label_col
         self.time_col = time_col
+        # Raw (un-standardised) 単勝 odds for betting-return losses.  Kept as a
+        # separate non-feature column so NNPreprocessor never standardises it.
+        self.odds_col = odds_col
+        # Per-horse 複勝 payoff multiple (payout/100 if placed, else 0).
+        self.place_return_col = place_return_col
 
         self._races: list[pd.DataFrame] = [
             group for _, group in frame.groupby("race_id", sort=True)
@@ -69,12 +76,16 @@ class RaceDataset(Dataset):
 
         finish_positions = _col_to_tensor(self.label_col)
         finish_times = _col_to_tensor(self.time_col)
+        odds_win = _col_to_tensor(self.odds_col)
+        place_return = _col_to_tensor(self.place_return_col)
 
         return {
             "horse_features": horse_features,
             "race_features": race_features,
             "finish_positions": finish_positions,
             "finish_times": finish_times,
+            "odds_win": odds_win,
+            "place_return": place_return,
             "n_horses": len(race),
         }
 
@@ -103,6 +114,8 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     race_features_out = torch.zeros(B, race_feat_dim)
     finish_positions_out = torch.full((B, max_n_horses), float("nan"))
     finish_times_out = torch.full((B, max_n_horses), float("nan"))
+    odds_win_out = torch.full((B, max_n_horses), float("nan"))
+    place_return_out = torch.full((B, max_n_horses), float("nan"))
     mask_out = torch.zeros(B, max_n_horses, dtype=torch.bool)
 
     for i, sample in enumerate(batch):
@@ -111,6 +124,8 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         race_features_out[i] = sample["race_features"]
         finish_positions_out[i, :n] = sample["finish_positions"]
         finish_times_out[i, :n] = sample["finish_times"]
+        odds_win_out[i, :n] = sample["odds_win"]
+        place_return_out[i, :n] = sample["place_return"]
         mask_out[i, :n] = True
 
     return {
@@ -118,5 +133,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         "race_features": race_features_out,
         "finish_positions": finish_positions_out,
         "finish_times": finish_times_out,
+        "odds_win": odds_win_out,
+        "place_return": place_return_out,
         "mask": mask_out,
     }

@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import logging
 import math
@@ -29,7 +30,13 @@ from torch.utils.data import DataLoader
 from ai.calibrate import ComboCalibrators, fit_combo_calibrators_bundle
 from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
-from ai.nn.loss import listmle_loss, plackett_luce_loss, time_margin_loss
+from ai.nn.loss import (
+    listmle_loss,
+    log_growth_loss,
+    log_growth_place_loss,
+    plackett_luce_loss,
+    time_margin_loss,
+)
 from ai.nn.model import RaceTransformerModel
 from ai.nn.preprocess import NNPreprocessor
 from ai.registry import ModelBundle, save_nn_model
@@ -146,9 +153,136 @@ def _compute_ndcg_nn(
     return float(np.mean(ndcg_vals)) if ndcg_vals else float("nan")
 
 
+# Outcome / payoff columns captured *before* NNPreprocessor.transform so that
+# real-odds ROI (and temperature payback) use raw odds, not standardised values.
+# odds_win is a FEATURE column → transform standardises it (2.0 → -0.64); reading
+# it post-transform yields garbage.  finish_position / payout_place are not
+# features and are unaffected, but we capture them together for alignment.
+_OUTCOME_COLS: list[str] = [
+    "race_id",
+    "horse_id",
+    "finish_position",
+    "odds_win",
+    "payout_place",
+]
+
+
+def _capture_raw_outcomes(frame: pd.DataFrame) -> pd.DataFrame:
+    """Subset of outcome/payoff columns, taken before preprocessing.
+
+    Row order is preserved so that ``frame.groupby('race_id', sort=True)`` on the
+    returned frame aligns row-for-row (and group-for-group) with a RaceDataset
+    built from the corresponding transformed frame.
+    """
+    if frame.empty:
+        return frame
+    cols = [c for c in _OUTCOME_COLS if c in frame.columns]
+    return frame[cols].copy()
+
+
+def _parse_payout_place_cell(raw: object) -> dict[int, int] | None:
+    """Parse a payout_place JSON cell ({finish_position: payout_yen}) → dict."""
+    if raw is None or (isinstance(raw, float) and math.isnan(raw)):
+        return None
+    try:
+        d = json.loads(raw)
+        return {int(k): int(v) for k, v in d.items()}
+    except (ValueError, TypeError):
+        return None
+
+
+def _add_place_return_column(frame: pd.DataFrame) -> None:
+    """Add per-horse 複勝 payoff multiple column ``place_ret_raw`` in place.
+
+    For each horse, place_ret = payout_place[finish_position] / 100 if it placed
+    (finish in the race's payout_place dict), else 0.  Non-feature column → never
+    standardised; consumed by the log_growth_place loss via RaceDataset.
+    """
+    if frame.empty or "payout_place" not in frame.columns:
+        frame["place_ret_raw"] = 0.0
+        return
+    frame["place_ret_raw"] = 0.0
+    for _rid, sub in frame.groupby("race_id", sort=False):
+        pm = _parse_payout_place_cell(sub["payout_place"].iloc[0])
+        if not pm:
+            continue
+        ret = sub["finish_position"].map(
+            lambda x, _pm=pm: _pm.get(int(x), 0) / 100.0 if not pd.isna(x) else 0.0
+        )
+        frame.loc[sub.index, "place_ret_raw"] = ret.values
+
+
+def _compute_winplace_roi_nn(
+    model: torch.nn.Module,
+    frame: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    horse_feature_cols: list[str],
+    race_feature_cols: list[str],
+    device: torch.device,
+) -> tuple[float, float]:
+    """Top-1 flat-stake 単勝 / 複勝 ROI on real odds across all races in frame.
+
+    Per race, stake 1 unit on the highest-score horse:
+      - 単勝: return = odds_win   if it finished 1st        else 0
+      - 複勝: return = payout/100 if it finished in-the-money else 0
+
+    `raw_df` must carry **un-standardised** odds_win / payout_place columns
+    (captured via _capture_raw_outcomes before NNPreprocessor.transform), aligned
+    row-for-row with `frame`.  Returns (tansho_roi, fukusho_roi); NaN when no
+    eligible bets exist.
+    """
+    if frame.empty or raw_df.empty:
+        return float("nan"), float("nan")
+
+    dataset = RaceDataset(frame, horse_feature_cols, race_feature_cols)
+
+    model.eval()
+    t_inv = t_gross = 0.0
+    f_inv = f_gross = 0.0
+
+    with torch.no_grad():
+        for i, (_race_id, grp) in enumerate(raw_df.groupby("race_id", sort=True)):
+            if len(grp) < 2:
+                continue
+
+            sample = dataset[i]
+            n = sample["n_horses"]
+            hf = sample["horse_features"].unsqueeze(0).to(device)
+            rf = sample["race_features"].unsqueeze(0).to(device)
+            mask_single = torch.zeros(1, n, dtype=torch.bool, device=device)
+            mask_single[0, :n] = True
+
+            scores = model(hf, rf, mask_single)[0, :n].cpu().numpy()
+            top = int(np.argmax(scores))
+
+            positions = grp["finish_position"].values
+            pos = float(positions[top]) if top < len(positions) else float("nan")
+
+            # 単勝
+            if "odds_win" in grp.columns:
+                o = float(grp["odds_win"].values[top])
+                if not (np.isnan(o) or o <= 0.0):
+                    t_inv += 1.0
+                    if not np.isnan(pos) and int(pos) == 1:
+                        t_gross += o
+
+            # 複勝
+            if "payout_place" in grp.columns:
+                payout_map = _parse_payout_place_cell(grp["payout_place"].values[top])
+                if payout_map:
+                    f_inv += 1.0
+                    if not np.isnan(pos) and int(pos) in payout_map:
+                        f_gross += payout_map[int(pos)] / 100.0
+
+    tansho = t_gross / t_inv if t_inv > 0 else float("nan")
+    fukusho = f_gross / f_inv if f_inv > 0 else float("nan")
+    return tansho, fukusho
+
+
 def _fit_temperature_scaler_nn(
     model: torch.nn.Module,
     valid_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
     horse_feature_cols: list[str],
     race_feature_cols: list[str],
     device: torch.device,
@@ -160,7 +294,11 @@ def _fit_temperature_scaler_nn(
 
     Args:
         model: Trained RaceModel (already in eval mode).
-        valid_df: Validation DataFrame with finish_position, odds_win, payout_place.
+        valid_df: Transformed validation DataFrame (used only for model forward
+            via RaceDataset).
+        raw_df: Pre-transform outcome frame (raw odds_win / payout_place /
+            finish_position), aligned row-for-row with valid_df.  Reading odds
+            from valid_df would use standardised values (odds_win is a feature).
         horse_feature_cols: Horse-level feature columns.
         race_feature_cols: Race-level feature columns.
         device: Torch device for inference.
@@ -177,9 +315,10 @@ def _fit_temperature_scaler_nn(
 
     model.eval()
     # Iterate dataset by integer index — same groupby("race_id", sort=True) order
-    # as RaceDataset._races, so grp and dataset[i] are always aligned.
+    # as RaceDataset._races, so grp and dataset[i] are always aligned.  Odds are
+    # read from raw_df (un-standardised); valid_df only drives the model forward.
     with torch.no_grad():
-        for i, (_race_id, grp) in enumerate(valid_df.groupby("race_id", sort=True)):
+        for i, (_race_id, grp) in enumerate(raw_df.groupby("race_id", sort=True)):
             if len(grp) < 2:
                 continue
 
@@ -262,6 +401,10 @@ def _compute_loss_on_dataset(
 
             if loss_fn_name == "time_margin":
                 loss = loss_fn(scores, fp, ft, mask)
+            elif loss_fn_name == "log_growth":
+                loss = loss_fn(scores, fp, batch["odds_win"].to(device), mask)
+            elif loss_fn_name == "log_growth_place":
+                loss = loss_fn(scores, batch["place_return"].to(device), mask)
             else:
                 loss = loss_fn(scores, fp, mask)
 
@@ -272,15 +415,26 @@ def _compute_loss_on_dataset(
     return total_loss / n_batches if n_batches > 0 else float("nan")
 
 
-def _build_loss_fn(loss_name: str):
-    """Return the loss callable for the given name."""
+def _build_loss_fn(loss_name: str, kelly_fraction: float = 0.25):
+    """Return the loss callable for the given name.
+
+    kelly_fraction only affects the log_growth betting loss (bankroll fraction
+    staked per race); ignored by the ranking losses.
+    """
     if loss_name == "plackett_luce":
         return plackett_luce_loss
     if loss_name == "listmle":
         return listmle_loss
     if loss_name == "time_margin":
         return time_margin_loss
-    raise ValueError(f"Unknown loss: {loss_name!r}. Choose from plackett_luce, listmle, time_margin")
+    if loss_name == "log_growth":
+        return functools.partial(log_growth_loss, kelly_fraction=kelly_fraction)
+    if loss_name == "log_growth_place":
+        return functools.partial(log_growth_place_loss, kelly_fraction=kelly_fraction)
+    raise ValueError(
+        f"Unknown loss: {loss_name!r}. Choose from plackett_luce, listmle, "
+        "time_margin, log_growth, log_growth_place"
+    )
 
 
 class RaceLitModule(pl.LightningModule):
@@ -323,6 +477,15 @@ class RaceLitModule(pl.LightningModule):
                 batch["finish_times"],
                 batch["mask"],
             )
+        elif self.loss_fn_name == "log_growth":
+            loss = self.loss_fn(
+                scores,
+                batch["finish_positions"],
+                batch["odds_win"],
+                batch["mask"],
+            )
+        elif self.loss_fn_name == "log_growth_place":
+            loss = self.loss_fn(scores, batch["place_return"], batch["mask"])
         else:
             loss = self.loss_fn(scores, batch["finish_positions"], batch["mask"])
         return loss
@@ -387,6 +550,52 @@ class _NDCG3Callback(pl.Callback):
         pl_module.log("valid_ndcg3", ndcg3, prog_bar=True)
 
 
+class _WinPlaceROICallback(pl.Callback):
+    """Log real-odds top-1 単勝 / 複勝 ROI on the validation set each epoch.
+
+    Logged as ``valid_tansho_roi`` / ``valid_fukusho_roi`` so EarlyStopping can
+    monitor a betting-return metric directly (the deployment objective) instead
+    of the NDCG ranking proxy.
+    """
+
+    def __init__(
+        self,
+        valid_df: pd.DataFrame,
+        valid_raw_df: pd.DataFrame,
+        horse_feature_cols: list[str],
+        race_feature_cols: list[str],
+        device: torch.device,
+    ) -> None:
+        self.valid_df = valid_df
+        self.valid_raw_df = valid_raw_df
+        self.horse_feature_cols = horse_feature_cols
+        self.race_feature_cols = race_feature_cols
+        self.device = device
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if self.valid_df.empty:
+            return
+        tansho, fukusho = _compute_winplace_roi_nn(
+            pl_module.model,
+            self.valid_df,
+            self.valid_raw_df,
+            self.horse_feature_cols,
+            self.race_feature_cols,
+            self.device,
+        )
+        # Always log both keys (substitute a floor for NaN) so EarlyStopping can
+        # monitor either without crashing when a degenerate epoch yields no
+        # eligible bets.  mode="max", so -1.0 is never selected as the best.
+        pl_module.log("valid_tansho_roi", tansho if not math.isnan(tansho) else -1.0, prog_bar=True)
+        pl_module.log("valid_fukusho_roi", fukusho if not math.isnan(fukusho) else -1.0, prog_bar=True)
+
+
+# EarlyStopping monitors — all maximised (mode="max")
+_VALID_MONITORS: frozenset[str] = frozenset(
+    {"valid_ndcg3", "valid_tansho_roi", "valid_fukusho_roi"}
+)
+
+
 def train_nn(
     db: Path | None = None,
     train_end: str | None = None,
@@ -408,14 +617,36 @@ def train_nn(
     early_stopping_patience: int = 10,
     fit_combo_calibrators: bool = True,
     combo_calibrators_n_samples: int = 5_000,
+    monitor: str = "valid_ndcg3",
+    prebuilt_frame: pd.DataFrame | None = None,
+    init_from: Path | None = None,
 ) -> dict:
-    """Run the full NN training pipeline. Returns metrics dict."""
+    """Run the full NN training pipeline. Returns metrics dict.
+
+    monitor: EarlyStopping metric (all maximised).  One of valid_ndcg3 (default,
+        ranking proxy), valid_tansho_roi or valid_fukusho_roi (real-odds betting
+        return — aligns model selection with the deployment objective).
+    prebuilt_frame: optional pre-built training frame (output of
+        build_training_frame).  When provided, the expensive feature build is
+        skipped — useful for sweeping multiple configs over the same data.
+    init_from: optional path to a saved NN model dir; its model.pt state_dict is
+        loaded into the fresh model before training (two-stage / fine-tuning,
+        e.g. PL-pretrain → log_growth fine-tune).  Architecture must match.
+    """
+    if monitor not in _VALID_MONITORS:
+        raise ValueError(
+            f"Unknown monitor {monitor!r}. Choose from {sorted(_VALID_MONITORS)}"
+        )
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
-    log.info("Building feature frame from %s", resolved_db)
-    with session_scope(engine) as session:
-        frame = build_training_frame(session)
+    if prebuilt_frame is not None:
+        log.info("Using prebuilt feature frame (%d rows)", len(prebuilt_frame))
+        frame = prebuilt_frame
+    else:
+        log.info("Building feature frame from %s", resolved_db)
+        with session_scope(engine) as session:
+            frame = build_training_frame(session)
 
     if frame.empty:
         raise RuntimeError("No training data found in the database.")
@@ -458,6 +689,17 @@ def train_nn(
     preprocessor = NNPreprocessor.fit(
         train_df, horse_feature_cols, race_feature_cols
     )
+    # Capture raw odds / payoff columns BEFORE transform standardises odds_win.
+    valid_raw_df = _capture_raw_outcomes(valid_df)
+    test_raw_df = _capture_raw_outcomes(test_df)
+    # Persist a raw, non-feature copy of 単勝 odds so RaceDataset (and the
+    # log_growth betting loss) read un-standardised odds.  Not in feature_cols,
+    # so NNPreprocessor.transform leaves it intact.
+    for _df in (train_df, valid_df, test_df):
+        if not _df.empty and "odds_win" in _df.columns:
+            _df["odds_win_raw"] = _df["odds_win"]
+        # Per-horse 複勝 payoff multiple for the log_growth_place loss.
+        _add_place_return_column(_df)
     train_df = preprocessor.transform(train_df)
     if not valid_df.empty:
         valid_df = preprocessor.transform(valid_df)
@@ -523,6 +765,18 @@ def train_nn(
         n_transformer_layers=n_transformer_layers,
     )
 
+    # Two-stage / fine-tuning: warm-start weights from a previously saved model.
+    if init_from is not None:
+        init_pt = Path(init_from) / "model.pt"
+        log.info("Warm-starting weights from %s", init_pt)
+        state = torch.load(init_pt, map_location="cpu")
+        missing, unexpected = race_model.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            log.warning(
+                "init_from partial load — missing=%s unexpected=%s",
+                list(missing), list(unexpected),
+            )
+
     lit_module = RaceLitModule(
         model=race_model,
         loss_fn_name=loss,
@@ -534,8 +788,8 @@ def train_nn(
     # Trainer callbacks
     callbacks: list[pl.Callback] = []
     if val_loader is not None and not valid_df.empty:
-        # Compute NDCG@3 every validation epoch so EarlyStopping monitors the
-        # ranking metric directly rather than the PL loss proxy.
+        # Always log both the NDCG ranking metric and the real-odds betting ROI
+        # every validation epoch, so either can be monitored / reported.
         callbacks.append(
             _NDCG3Callback(
                 valid_df=valid_df,
@@ -545,12 +799,22 @@ def train_nn(
             )
         )
         callbacks.append(
+            _WinPlaceROICallback(
+                valid_df=valid_df,
+                valid_raw_df=valid_raw_df,
+                horse_feature_cols=horse_feature_cols,
+                race_feature_cols=race_feature_cols,
+                device=torch.device(device),
+            )
+        )
+        callbacks.append(
             EarlyStopping(
-                monitor="valid_ndcg3",
+                monitor=monitor,
                 patience=early_stopping_patience,
                 mode="max",
             )
         )
+        log.info("EarlyStopping monitor: %s (mode=max)", monitor)
 
     torch_device = torch.device(device)
     accelerator = "gpu" if device.startswith("cuda") else "cpu"
@@ -578,10 +842,10 @@ def train_nn(
     # Evaluate
     log.info("Evaluating…")
     valid_loss = _compute_loss_on_dataset(
-        race_model, valid_df, horse_feature_cols, race_feature_cols, loss, torch_device
+        race_model, valid_df, horse_feature_cols, race_feature_cols, loss, torch_device,
     )
     test_loss = _compute_loss_on_dataset(
-        race_model, test_df, horse_feature_cols, race_feature_cols, loss, torch_device
+        race_model, test_df, horse_feature_cols, race_feature_cols, loss, torch_device,
     )
 
     valid_ndcg1 = _compute_ndcg_nn(
@@ -597,6 +861,20 @@ def train_nn(
         race_model, test_df, horse_feature_cols, race_feature_cols, 3, torch_device
     ) if not test_df.empty else float("nan")
 
+    # Real-odds top-1 単勝/複勝 ROI (deployment objective) on valid + test.
+    valid_tansho_roi, valid_fukusho_roi = (
+        _compute_winplace_roi_nn(
+            race_model, valid_df, valid_raw_df,
+            horse_feature_cols, race_feature_cols, torch_device,
+        ) if not valid_df.empty else (float("nan"), float("nan"))
+    )
+    test_tansho_roi, test_fukusho_roi = (
+        _compute_winplace_roi_nn(
+            race_model, test_df, test_raw_df,
+            horse_feature_cols, race_feature_cols, torch_device,
+        ) if not test_df.empty else (float("nan"), float("nan"))
+    )
+
     metrics = {
         "valid_loss": valid_loss,
         "test_loss": test_loss,
@@ -606,6 +884,11 @@ def train_nn(
         "test_ndcg3": test_ndcg3,
         "ndcg1": test_ndcg1 if not math.isnan(test_ndcg1) else valid_ndcg1,
         "ndcg3": test_ndcg3 if not math.isnan(test_ndcg3) else valid_ndcg3,
+        "valid_tansho_roi": valid_tansho_roi,
+        "valid_fukusho_roi": valid_fukusho_roi,
+        "test_tansho_roi": test_tansho_roi,
+        "test_fukusho_roi": test_fukusho_roi,
+        "monitor": monitor,
     }
     log.info("Metrics: %s", metrics)
 
@@ -620,6 +903,7 @@ def train_nn(
                 temperature_scaler = _fit_temperature_scaler_nn(
                     model=race_model,
                     valid_df=valid_df,
+                    raw_df=valid_raw_df,
                     horse_feature_cols=horse_feature_cols,
                     race_feature_cols=race_feature_cols,
                     device=torch_device,
@@ -729,6 +1013,7 @@ def train_nn(
         "model_type": "nn",
         "arch_version": 2,
         "loss_type": loss,
+        "monitor": monitor,
         "params": {
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
@@ -741,6 +1026,7 @@ def train_nn(
             "weight_decay": weight_decay,
             "gradient_clip_val": gradient_clip_val,
             "device": device,
+            "init_from": str(init_from) if init_from is not None else None,
         },
         "metrics": metrics,
         "feature_columns": all_feature_cols,
@@ -796,9 +1082,16 @@ def _cli() -> None:
     parser.add_argument("--test-months", type=int, default=6, help="Test window (months)")
     parser.add_argument(
         "--loss",
-        choices=["plackett_luce", "listmle", "time_margin"],
+        choices=[
+            "plackett_luce", "listmle", "time_margin",
+            "log_growth", "log_growth_place",
+        ],
         default="plackett_luce",
-        help="Ranking loss function",
+        help=(
+            "Loss function. plackett_luce/listmle/time_margin = ranking; "
+            "log_growth = fractional-Kelly 単勝 return; log_growth_place = "
+            "fractional-Kelly 複勝 return (decision-focused)."
+        ),
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
     parser.add_argument("--embed-dim", type=int, default=32, help="Embedding dimension")
@@ -834,7 +1127,26 @@ def _cli() -> None:
         "--early-stopping-patience",
         type=int,
         default=10,
-        help="EarlyStopping patience (epochs) on valid_ndcg3",
+        help="EarlyStopping patience (epochs) on the --monitor metric",
+    )
+    parser.add_argument(
+        "--monitor",
+        choices=["valid_ndcg3", "valid_tansho_roi", "valid_fukusho_roi"],
+        default="valid_ndcg3",
+        help=(
+            "EarlyStopping / model-selection metric (all maximised). "
+            "valid_ndcg3 = ranking proxy (default); valid_tansho_roi / "
+            "valid_fukusho_roi = real-odds betting return (deployment objective)."
+        ),
+    )
+    parser.add_argument(
+        "--init-from",
+        type=Path,
+        default=None,
+        help=(
+            "Warm-start weights from a saved NN model dir (two-stage fine-tuning, "
+            "e.g. PL-pretrain → log_growth fine-tune).  Architecture must match."
+        ),
     )
     parser.add_argument(
         "--device",
@@ -890,6 +1202,8 @@ def _cli() -> None:
         early_stopping_patience=args.early_stopping_patience,
         fit_combo_calibrators=not args.no_fit_combo_calibrators,
         combo_calibrators_n_samples=args.combo_calibrators_n_samples,
+        monitor=args.monitor,
+        init_from=args.init_from,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
