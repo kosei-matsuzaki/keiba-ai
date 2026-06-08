@@ -114,4 +114,5 @@ core / settings は横断
 - 環境変数 `KEIBA_DATA_DIR` で `data/` の場所を切り替え可能。テストでは `tmp_path` ベースで上書きする (`conftest.py` 参照)
 - `core/paths.py` の `data_dir()` を経由してパスを組み立てる。`data/` 配下の直書きは避ける
 - WSL から Windows venv の Python を呼ばない (パス・改行・ロックの問題が出る)。Windows uvicorn が動いているときに WSL で `uv sync` する場合は別 `UV_PROJECT_ENVIRONMENT` を渡す
-- NN の損失は `plackett_luce` (default) / `listmle` / `time_margin` を `--loss` で選択し `meta.json.loss_type` に記録。win_prob は softmax(score / T_win)、place_prob は PL Monte Carlo。新しい損失を足すときも `predict_race` の確率変換は共通なので学習側 (`ai/nn/loss.py`) だけ拡張すれば足りる
+- NN の損失は **`log_growth` (default)** / `log_growth_place` / `plackett_luce` / `listmle` / `time_margin` を `--loss` で選択し `meta.json.loss_type` に記録。既定は ROI 志向 (decision-focused): `log_growth` は実オッズの単勝回収率を fractional-Kelly log-growth で直接最適化し、モデル選択も `--monitor valid_tansho_roi` (検証単勝ROI) で行う。`log_growth_place` は複勝版。最良構成は **二段階** (`plackett_luce` 事前学習 → `--init-from <model_dir>` で `log_growth` fine-tune)。OOS で単複ROIは順位損失・市場の人気1番を有意に上回るが依然 <1.0 (詳細 `docs/ai-model.md`)
+- ROI系損失・監視・温度スケーラは **標準化前の生オッズ**を使う必要があるため `odds_win_raw` / `place_ret_raw` を非特徴列として dataset/collate に通す (`odds_win` は特徴量で標準化される)。win_prob は softmax(score / T_win)、place_prob は PL Monte Carlo。新しい損失を足すときも `predict_race` の確率変換は共通なので学習側 (`ai/nn/loss.py`) だけ拡張すれば足りる
