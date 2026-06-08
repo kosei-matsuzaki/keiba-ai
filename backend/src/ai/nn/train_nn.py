@@ -1,9 +1,19 @@
-"""CLI: Train a PyTorch NN (Set Transformer) ranking model.
+"""CLI: Train a PyTorch NN (Set Transformer) model.
+
+The default objective is **decision-focused (ROI-targeted)**: the model is
+trained to maximise real-odds betting return (``log_growth``, a fractional-Kelly
+log-growth loss) and selected on validation 単勝 ROI, rather than ranking
+accuracy.  On OOS backtests this beats the ranking losses and the market
+favourite on 単複 ROI (still <1.0 — see docs/ai-model.md).  The legacy ranking
+losses (``plackett_luce`` / ``listmle`` / ``time_margin``) remain available, and
+are used as the first stage of the recommended **two-stage** recipe
+(PL pretrain → ``--init-from`` → ``log_growth`` fine-tune).
 
 Usage:
     python -m ai.nn.train_nn \\
         --train-end YYYY-MM-DD --valid-months 12 --test-months 6 \\
-        --loss {plackett_luce,listmle,time_margin} \\
+        --loss {log_growth,log_growth_place,plackett_luce,listmle,time_margin} \\
+        --monitor {valid_tansho_roi,valid_fukusho_roi,valid_ndcg3} \\
         --hidden-dim 64 --embed-dim 32 --n-heads 4 \\
         --batch-size 32 --max-epochs 100 --learning-rate 1e-3 \\
         --device {cpu,cuda} \\
@@ -601,7 +611,7 @@ def train_nn(
     train_end: str | None = None,
     valid_months: int = 12,
     test_months: int = 6,
-    loss: str = "plackett_luce",
+    loss: str = "log_growth",
     hidden_dim: int = 64,
     embed_dim: int = 32,
     n_heads: int = 4,
@@ -617,15 +627,15 @@ def train_nn(
     early_stopping_patience: int = 10,
     fit_combo_calibrators: bool = True,
     combo_calibrators_n_samples: int = 5_000,
-    monitor: str = "valid_ndcg3",
+    monitor: str = "valid_tansho_roi",
     prebuilt_frame: pd.DataFrame | None = None,
     init_from: Path | None = None,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict.
 
-    monitor: EarlyStopping metric (all maximised).  One of valid_ndcg3 (default,
-        ranking proxy), valid_tansho_roi or valid_fukusho_roi (real-odds betting
-        return — aligns model selection with the deployment objective).
+    monitor: EarlyStopping metric (all maximised).  Default valid_tansho_roi
+        (real-odds betting return — aligns model selection with the deployment
+        objective); also valid_fukusho_roi or the legacy valid_ndcg3 ranking proxy.
     prebuilt_frame: optional pre-built training frame (output of
         build_training_frame).  When provided, the expensive feature build is
         skipped — useful for sweeping multiple configs over the same data.
@@ -1075,7 +1085,10 @@ def train_nn(
 
 
 def _cli() -> None:
-    parser = argparse.ArgumentParser(description="Train keiba-ai NN (Set Transformer) ranking model")
+    parser = argparse.ArgumentParser(
+        description="Train keiba-ai NN (Set Transformer); default objective is "
+        "ROI-targeted (log_growth + valid_tansho_roi)."
+    )
     parser.add_argument("--db", type=Path, default=None, help="Path to SQLite DB")
     parser.add_argument("--train-end", default=None, help="Training end date YYYY-MM-DD")
     parser.add_argument("--valid-months", type=int, default=12, help="Validation window (months)")
@@ -1083,14 +1096,15 @@ def _cli() -> None:
     parser.add_argument(
         "--loss",
         choices=[
-            "plackett_luce", "listmle", "time_margin",
             "log_growth", "log_growth_place",
+            "plackett_luce", "listmle", "time_margin",
         ],
-        default="plackett_luce",
+        default="log_growth",
         help=(
-            "Loss function. plackett_luce/listmle/time_margin = ranking; "
-            "log_growth = fractional-Kelly 単勝 return; log_growth_place = "
-            "fractional-Kelly 複勝 return (decision-focused)."
+            "Loss function (default: log_growth). log_growth = fractional-Kelly "
+            "単勝 return; log_growth_place = fractional-Kelly 複勝 return "
+            "(decision-focused, ROI-targeted). plackett_luce/listmle/time_margin "
+            "= legacy ranking losses (also used as the two-stage pretrain)."
         ),
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
@@ -1131,12 +1145,13 @@ def _cli() -> None:
     )
     parser.add_argument(
         "--monitor",
-        choices=["valid_ndcg3", "valid_tansho_roi", "valid_fukusho_roi"],
-        default="valid_ndcg3",
+        choices=["valid_tansho_roi", "valid_fukusho_roi", "valid_ndcg3"],
+        default="valid_tansho_roi",
         help=(
-            "EarlyStopping / model-selection metric (all maximised). "
-            "valid_ndcg3 = ranking proxy (default); valid_tansho_roi / "
-            "valid_fukusho_roi = real-odds betting return (deployment objective)."
+            "EarlyStopping / model-selection metric, all maximised "
+            "(default: valid_tansho_roi). valid_tansho_roi / valid_fukusho_roi = "
+            "real-odds betting return (deployment objective; pair with "
+            "log_growth / log_growth_place). valid_ndcg3 = legacy ranking proxy."
         ),
     )
     parser.add_argument(

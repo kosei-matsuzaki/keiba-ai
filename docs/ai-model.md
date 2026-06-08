@@ -172,15 +172,55 @@ flowchart TD
 | RaceModel | Set Transformer 1 層 + 出力ヘッド | 同じレースに出走している馬同士の相互作用を self-attention で表現する。「16 頭立てで突出した強い馬がいるレース」と「8 頭立ての横一線レース」では各馬のスコア解釈が変わる、という効果を構造的に取り込む |
 | マスク | bool 行列 | 異なる頭数のレースを 1 つのバッチにまとめるために、最大頭数までゼロ埋めしたパディング部分を attention から除外する |
 
-### 学習
+### 学習（既定は ROI 志向 = decision-focused）
 
-PyTorch Lightning の `Trainer` で動かす。損失関数は 3 種類用意してあり `--loss` で切り替える。
+PyTorch Lightning の `Trainer` で動かす。**既定の損失は順位予測ではなく実オッズの馬券回収率（ROI）を直接最適化する `log_growth`** で、モデル選択（early-stopping）も検証 ROI（`valid_tansho_roi`）で行う。これは「ランキング精度を上げても +EV の馬券に直結しない」ギャップを埋めるためで、OOS バックテストで順位損失と市場の人気1番をいずれも上回る（後述）。
 
-| 損失 | 概要 |
+`--loss` で切り替える。
+
+| 損失 | 種別 | 概要 |
+|---|---|---|
+| `log_growth`（**既定**） | ROI志向 | 各レースを単勝ポートフォリオとみなし、`W = 1 + kelly·(p_winner·odds_winner − 1)` の `−mean(log W)` を最小化する fractional-Kelly log-growth 損失。**実オッズ**で「賭けて殖えるか」を直接学習。cash項により odds が勾配に残る（full-Kelly だと winner CE に退化）。kelly_fraction は 0.25 固定 |
+| `log_growth_place` | ROI志向 | 複勝版。各馬の複勝払戻 `payout/100`（在着時）を使い同形の log-growth を最小化。低分散な複勝市場を直接最適化 |
+| `plackett_luce` | 順位（legacy） | 着順の起こりやすさを直接モデル化する確率モデル。**二段階学習の事前学習**に使う（下記） |
+| `listmle` | 順位（legacy） | リストワイズの順位学習損失。PL とほぼ同等だが計算経路がわずかに違う |
+| `time_margin` | 順位（legacy） | 着差秒数を重みにしたペアワイズ損失。1 着→2 着の同シグナル化という順位損失の弱点を補う |
+
+**`--monitor`（モデル選択指標、すべて最大化）**
+
+| 指標 | 概要 |
 |---|---|
-| `plackett_luce`（既定） | GBDT の PL モードと同じ確率モデル。NN 版ではこちらを既定にする |
-| `listmle` | リストワイズの順位学習損失。PL とほぼ同等だが計算経路がわずかに違う |
-| `time_margin` | 着差秒数を重みにしたペアワイズ損失。「2 馬身差」と「ハナ差」の両方を 1 着 → 2 着の同じシグナルとして扱う既存ランキング損失の弱点を補う |
+| `valid_tansho_roi`（**既定**） | 検証セットでの実オッズ top-1 単勝 ROI。賭けリターン損失と整合 |
+| `valid_fukusho_roi` | 同・複勝 ROI（`log_growth_place` と組む） |
+| `valid_ndcg3` | 旧来のランキング指標（legacy） |
+
+実オッズ（`odds_win` / 複勝払戻）は特徴量として標準化される一方、損失・監視・ROI 計測には **標準化前の生値**を使う必要があるため、`odds_win_raw` / `place_ret_raw` を非特徴列として dataset/collate に通している。
+
+#### 推奨レシピ：二段階学習（PL 事前学習 → log_growth fine-tune）
+
+単段の `log_growth` でも順位損失を上回るが、**最良は二段階**：まず `plackett_luce` で表現を学習し、その重みを `--init-from <model_dir>` で読み込んで `log_growth` / `log_growth_place` に fine-tune する。ランキング能力（NDCG）を保ったまま賭けリターンを最大化でき、複勝で最良の結果になる。
+
+```bash
+# 1) PL 事前学習
+uv run python -m ai.nn.train_nn --loss plackett_luce --monitor valid_ndcg3 ...
+# 2) log_growth で fine-tune（単勝）
+uv run python -m ai.nn.train_nn --loss log_growth --monitor valid_tansho_roi \
+    --init-from data/models/<PLモデル> --learning-rate 1e-4 --max-epochs 30 ...
+# 複勝特化なら --loss log_growth_place --monitor valid_fukusho_roi
+```
+
+#### 性能（OOS test 19ヶ月・5,176レース・top-1 平場買い・実オッズ）
+
+| モデル | 単勝ROI | 複勝ROI |
+|---|---|---|
+| 人気1番（市場） | 0.789 | 0.850 |
+| 順位損失（PL） | 0.799 | 0.861 |
+| log_growth 単勝（二段階） | **0.856** | 0.894 |
+| log_growth_place 複勝（二段階） | 0.843 | **0.912**（CI [0.885, 0.939]、人気1番と非重複＝有意） |
+
+ROI 志向損失は順位損失・市場の人気1番をいずれも**有意かつ seed 堅牢に**上回る。ただし **回収率は依然 1.0 未満**（控除率20%の壁の内側で最適化されただけで黒字ではない）。オッズ特徴を外すと優位は消える＝現特徴量に市場独立の alpha は無く、1.0 超えには新特徴量（pace/sectional/condition）が必要、という切り分けが済んでいる。
+
+> 補足：`log_growth` 系の導入に伴い、温度スケーラが**標準化済みオッズ**で payback グリッドサーチしていたバグ（生オッズを使うべき箇所）も修正済み。
 
 ### 単勝確率・複勝確率・連系確率の出し方
 
@@ -427,12 +467,21 @@ uv run python -m ai.gbm.train --train-end 2025-12-31 --valid-months 6 --test-mon
 ### NN
 
 ```bash
-# 既定（Plackett-Luce 損失、CPU、3 層 32 次元）
+# 既定（ROI志向: log_growth 損失 + valid_tansho_roi 監視、CPU）
 uv run python -m ai.nn.train_nn
 
-# 損失関数の切り替え
-uv run python -m ai.nn.train_nn --loss listmle
-uv run python -m ai.nn.train_nn --loss time_margin
+# 複勝特化
+uv run python -m ai.nn.train_nn --loss log_growth_place --monitor valid_fukusho_roi
+
+# 推奨：二段階（PL 事前学習 → log_growth fine-tune）
+uv run python -m ai.nn.train_nn --loss plackett_luce --monitor valid_ndcg3   # 1)
+uv run python -m ai.nn.train_nn --loss log_growth --monitor valid_tansho_roi \
+    --init-from data/models/<上で保存されたPLモデル> --learning-rate 1e-4 --max-epochs 30  # 2)
+
+# legacy 順位損失
+uv run python -m ai.nn.train_nn --loss plackett_luce --monitor valid_ndcg3
+uv run python -m ai.nn.train_nn --loss listmle --monitor valid_ndcg3
+uv run python -m ai.nn.train_nn --loss time_margin --monitor valid_ndcg3
 
 # 隠れ層・埋め込み次元・ヘッド数の調整
 uv run python -m ai.nn.train_nn \
