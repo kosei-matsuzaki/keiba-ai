@@ -41,6 +41,7 @@ from ai.calibrate import ComboCalibrators, fit_combo_calibrators_bundle
 from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import (
+    combo_nll_loss,
     listmle_loss,
     log_growth_combo_loss,
     log_growth_loss,
@@ -449,6 +450,8 @@ def _compute_loss_on_dataset(
                 loss = loss_fn(scores, batch["place_return"].to(device), mask)
             elif loss_fn_name == "log_growth_combo":
                 loss = loss_fn(scores, fp, batch["combo_payoff"].to(device), mask)
+            elif loss_fn_name == "combo_nll":
+                loss = loss_fn(scores, fp, mask)
             else:
                 loss = loss_fn(scores, fp, mask)
 
@@ -482,9 +485,11 @@ def _build_loss_fn(
         return functools.partial(
             log_growth_combo_loss, bet_type=combo_bet_type, kelly_fraction=kelly_fraction
         )
+    if loss_name == "combo_nll":
+        return functools.partial(combo_nll_loss, bet_type=combo_bet_type)
     raise ValueError(
         f"Unknown loss: {loss_name!r}. Choose from plackett_luce, listmle, "
-        "time_margin, log_growth, log_growth_place, log_growth_combo"
+        "time_margin, log_growth, log_growth_place, log_growth_combo, combo_nll"
     )
 
 
@@ -545,6 +550,8 @@ class RaceLitModule(pl.LightningModule):
                 batch["combo_payoff"],
                 batch["mask"],
             )
+        elif self.loss_fn_name == "combo_nll":
+            loss = self.loss_fn(scores, batch["finish_positions"], batch["mask"])
         else:
             loss = self.loss_fn(scores, batch["finish_positions"], batch["mask"])
         return loss
@@ -1081,7 +1088,9 @@ def train_nn(
         "arch_version": 2,
         "loss_type": loss,
         "monitor": monitor,
-        "combo_bet_type": combo_bet_type if loss == "log_growth_combo" else None,
+        "combo_bet_type": (
+            combo_bet_type if loss in ("log_growth_combo", "combo_nll") else None
+        ),
         "params": {
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
@@ -1154,23 +1163,27 @@ def _cli() -> None:
     parser.add_argument(
         "--loss",
         choices=[
-            "log_growth", "log_growth_place", "log_growth_combo",
+            "log_growth", "log_growth_place", "log_growth_combo", "combo_nll",
             "plackett_luce", "listmle", "time_margin",
         ],
         default="log_growth",
         help=(
             "Loss function (default: log_growth). log_growth = fractional-Kelly "
-            "単勝 return; log_growth_place = 複勝; log_growth_combo = 連系 (馬連/馬単/"
-            "三連複/三連単, analytic-PL combo prob — folds calibration into the NN, "
-            "no external combo_calibrators). plackett_luce/listmle/time_margin = "
+            "単勝 return; log_growth_place = 複勝; log_growth_combo = 連系 betting "
+            "return; combo_nll = 連系 calibration (proper scoring rule on the "
+            "analytic-PL combo prob — folds combo calibration into the NN, no "
+            "external combo_calibrators). plackett_luce/listmle/time_margin = "
             "legacy ranking losses (also used as the two-stage pretrain)."
         ),
     )
     parser.add_argument(
         "--combo-bet-type",
-        choices=["馬連", "馬単", "三連複", "三連単"],
+        choices=["馬連", "馬単", "三連複", "三連単", "all"],
         default="馬連",
-        help="連系 bet type for --loss log_growth_combo (default: 馬連).",
+        help=(
+            "連系 type for log_growth_combo / combo_nll (default: 馬連). "
+            "'all' (combo_nll only) sums the NLL over all four combo types."
+        ),
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
     parser.add_argument("--embed-dim", type=int, default=32, help="Embedding dimension")

@@ -418,3 +418,17 @@ def test_train_nn_log_growth_combo_loss(syn_engine_small, tmp_path, monkeypatch)
     meta = json.loads((model_dir / "meta.json").read_text())
     assert meta["loss_type"] == "log_growth_combo"
     assert meta["combo_bet_type"] == "馬連"
+
+
+def test_train_nn_combo_nll_loss(syn_engine_small, tmp_path, monkeypatch):
+    """combo_nll trains end-to-end (calibration objective; no payouts needed)."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="combo_nll", combo_bet_type="all",
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", fit_combo_calibrators=False, monitor="valid_ndcg3",
+    )
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta["loss_type"] == "combo_nll"

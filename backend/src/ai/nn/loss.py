@@ -375,6 +375,75 @@ def log_growth_combo_loss(
     return (total_loss / n_valid).squeeze()
 
 
+def combo_nll_loss(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    mask: torch.Tensor,
+    bet_type: str = "馬連",
+) -> torch.Tensor:
+    """Negative log-likelihood of the realised winning 連系 combo (calibration).
+
+    A *proper scoring rule*: minimising ``-log P_PL(winning_combo)`` drives the
+    analytic Plackett-Luce combo probabilities toward their true frequencies, so
+    the **combo calibration is learned inside the NN** — this is the direct
+    replacement for the external post-hoc isotonic ``combo_calibrators``.  Unlike
+    :func:`log_growth_combo_loss` (which optimises betting *return* and therefore
+    suppresses probabilities on the −EV combo markets), this targets calibration.
+
+    No odds / payoff needed.
+
+    Args:
+        scores:           [B, N]
+        finish_positions: [B, N]  1-based finish (NaN = exclude).
+        mask:             [B, N]  bool.
+        bet_type:         a single 連系 type, or "all" to sum the NLL over
+            馬連 + 馬単 + 三連複 + 三連単 (one model calibrated on every combo).
+
+    Returns:
+        Scalar loss (mean over races with a clean winning combo).
+    """
+    types = sorted(_COMBO_BET_TYPES) if bet_type == "all" else [bet_type]
+    for bt in types:
+        if bt not in _COMBO_BET_TYPES:
+            raise ValueError(f"bet_type {bt!r} not in {sorted(_COMBO_BET_TYPES)} or 'all'")
+    needs_triple = any(bt in ("三連複", "三連単") for bt in types)
+    device = scores.device
+    eps = 1e-12
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(finish_positions[b])
+        if valid.sum() < (3 if needs_triple else 2):
+            continue
+        s = scores[b][valid]
+        pos = finish_positions[b][valid]
+
+        w1 = (pos == 1).nonzero(as_tuple=True)[0]
+        w2 = (pos == 2).nonzero(as_tuple=True)[0]
+        if w1.numel() == 0 or w2.numel() == 0:
+            continue
+        i, j = int(w1[0]), int(w2[0])
+
+        k: int | None = None
+        if needs_triple:
+            w3 = (pos == 3).nonzero(as_tuple=True)[0]
+            if w3.numel() == 0:
+                continue
+            k = int(w3[0])
+
+        race_nll = s.new_zeros(())
+        for bt in types:
+            prob = _winning_combo_prob(s, i, j, k, bt)
+            race_nll = race_nll - torch.log(prob.clamp_min(eps))
+        total_loss = total_loss + race_nll
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
 def time_margin_loss(
     scores: torch.Tensor,
     finish_positions: torch.Tensor,

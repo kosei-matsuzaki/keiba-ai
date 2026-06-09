@@ -222,3 +222,20 @@ def test_pl_combo_prob_matches_monte_carlo():
     order = np.argsort(-(s.numpy()[None, :] + g), axis=1)[:, :2]
     mc = np.mean([frozenset(o) == frozenset((0, 1)) for o in order])
     assert abs(a.item() - mc) < 0.01
+
+
+def test_combo_nll_all_types_and_all():
+    from ai.nn.loss import _winning_combo_prob, combo_nll_loss
+    pos = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    mask = torch.tensor([[True, True, True, True]])
+    for bt in ("馬連", "馬単", "三連複", "三連単", "all"):
+        s = torch.tensor([[2.0, 1.0, 0.5, 0.0]], requires_grad=True)
+        nll = combo_nll_loss(s, pos, mask, bet_type=bt)
+        assert torch.isfinite(nll) and nll.item() > 0
+        nll.backward()
+        assert s.grad.norm().item() > 0
+    # 馬連 NLL == -log P(winning pair)
+    s = torch.tensor([2.0, 1.0, 0.5, 0.0])
+    P = _winning_combo_prob(s, 0, 1, None, "馬連")
+    got = combo_nll_loss(s.unsqueeze(0), pos, mask, bet_type="馬連")
+    assert abs(got.item() - (-math.log(P.item()))) < 1e-5
