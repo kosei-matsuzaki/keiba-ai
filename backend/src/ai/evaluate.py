@@ -481,9 +481,9 @@ def evaluate(
     resolved_db = db or db_path()
     engine = make_engine(resolved_db)
 
-    # Pre-built bundle override (used by blend / ensemble sweep callers that
-    # need to attach nn_ensemble_gbdt_bundle without writing to disk). When
-    # absent, fall back to the on-disk artifacts.
+    # Pre-built bundle override (used by sweep callers that need to evaluate an
+    # in-memory bundle without writing it to disk). When absent, fall back to
+    # the on-disk artifacts.
     if bundle is None:
         bundle = load_model_full(model_path)
     use_kelly = bet_sizing == "kelly"
@@ -537,7 +537,7 @@ def evaluate(
         race_place_invested = 0.0
         race_place_payout = 0.0
 
-        # bundle.model_type で GBDT / NN を自動切替
+        # bundle 経由で推論 (NN)
         preds = predict_race(bundle, race_frame)
         # Merge actual finish positions + popularity (needed for betting filters)
         actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]

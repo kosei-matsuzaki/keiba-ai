@@ -4,8 +4,8 @@ registry.py から呼ばれる低レベル NN 保存/読み込みプリミティ
 公開 API ではない — 使う側は ai.registry の save_nn_model / load_model_full
 を経由すること。
 
-torch は遅延 import — torch が入っていない環境でも、GBDT 経路は
-このモジュール側に触れないので影響しない。
+torch は遅延 import — torch が入っていない環境 (scraper / ingest のみ) でも、
+このモジュールに触れなければ影響しない。
 """
 
 from __future__ import annotations

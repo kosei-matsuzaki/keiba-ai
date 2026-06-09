@@ -197,8 +197,8 @@ def compute_horse_history(
 ) -> dict[str, float | int | None]:
     """Compute horse performance aggregates using only races strictly before before_date.
 
-    Returns a dict with NaN values for horses with no prior history, letting
-    LightGBM handle missing data natively.
+    Returns a dict with NaN values for horses with no prior history; downstream
+    consumers treat NaN as "no prior history".
 
     Returned keys:
         recent_avg_finish, recent_n_starts, starts_same_distance,

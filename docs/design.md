@@ -9,7 +9,6 @@
 ### ユーザー要件
 
 - 今週末の出走予定レースを一覧表示し、馬ごとの単勝・複勝予想確率を確認したい
-- どの特徴量がその予想に寄与しているか（SHAP）を見たい
 - モデルの精度推移（NDCG@3・Top-1 ヒット率・複勝的中率・ROI）を時系列グラフで把握したい
 - 手元の PC 上で完結して動作し、外部サービスへデータを送出しない
 
@@ -45,7 +44,7 @@
        │              │             │
 ┌──────▼──────┐ ┌─────▼──────┐ ┌───▼──────────┐
 │  Scraper    │ │  AI 推論   │ │  SQLite DB   │
-│  (netkeiba) │ │ (LightGBM) │ │  keiba.db    │
+│  (netkeiba) │ │ (NN推論)   │ │  keiba.db    │
 └─────────────┘ └────────────┘ └──────────────┘
                                      ▲
                                モデルファイル
@@ -66,11 +65,10 @@ backend/src/
 ├── scraper/      スクレイピング専用。HTML 取得・パース・DB 保存のみ。AI を知らない
 ├── features/     DB から生データを読み取り、学習・推論用の特徴量 DataFrame を生成
 │                 （リーク防止のため「予測時点での情報のみ使用する」制約を徹底管理）
-├── ai/           特徴量を受け取り GBDT / NN の学習・評価・推論を実行。features を知らない
-│                 ├── gbm/        LightGBM 固有 (train.py / tune.py / pl_loss.py)
-│                 ├── nn/         PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py)
-│                 ├── predict.py  推論ディスパッチャ（GBDT / NN 切替）
-│                 ├── registry.py モデル成果物の保存・ロード（GBDT / NN 両対応）
+├── ai/           特徴量を受け取り NN の学習・評価・推論を実行。features を知らない
+│                 ├── nn/         PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py / preprocess.py)
+│                 ├── predict.py  bundle-aware 推論（predict_race / *_with_combinations）
+│                 ├── registry.py モデル成果物（ModelBundle）の保存・ロード
 │                 ├── evaluate.py NDCG@k・ヒット率・ROI 計算
 │                 └── calibrate.py / temperature.py / bet_*.py / simulation.py …（model 非依存の共有）
 ├── core/         設定（Settings）・ロギング・settings_store（JSON 永続化）
@@ -149,7 +147,7 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 |---|---|---|---|---|
 | 1 | Dashboard | `/` | モデル評価指標のサマリ（NDCG@3・Top-1 ヒット率・複勝的中率・ROI）と精度推移グラフ | `GET /api/metrics/summary`, `GET /api/metrics/timeseries` |
 | 2 | Upcoming Races | `/upcoming` | 今週末の出馬表一覧。RaceCard で各レースを表示 | `GET /api/races/upcoming?days=7` |
-| 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬一覧 + PredictionTable（BUY バッジ付き）+ SHAP 寄与欄 | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}` |
+| 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬一覧 + PredictionTable（BUY バッジ付き） | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}` |
 | 4 | Models | `/models` | 学習履歴テーブル（ModelTable）。active モデルの切り替え（Activate ボタン）と再学習トリガ（TrainModelDialog） | `GET /api/models`, `POST /api/models/train`, `POST /api/models/{id}/activate` |
 | 5 | Ingest | `/ingest` | ScraperStatusCard でスクレイパー稼働状況表示。IngestRunDialog で手動実行。即時停止 confirm 付き | `GET /api/scraper/status`, `POST /api/scraper/run`, `POST /api/scraper/stop` |
 | 6 | Settings | `/settings` | react-hook-form + zod によるバリデーション付き設定フォーム。率閾値バリデーション（rate_min ≤ rate_max / EV ≥ 1.0）込み | `GET /api/settings`, `PUT /api/settings` |
@@ -204,10 +202,9 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ├─────────────────────────────────────────┤
 │  PredictionTable（全馬、スコア降順）    │
 │    馬 ID / スコア / 単勝 prob /         │
-│    複勝 prob / BUY バッジ / SHAP 欄    │
+│    複勝 prob / BUY バッジ          │
 │    BUY 判定: win_prob × odds_win > 1.1 │
 │    （→ [ai-model.md](ai-model.md) 参照）│
-│    SHAP 欄: top_features（上位 3 列名）│
 └─────────────────────────────────────────┘
 ```
 

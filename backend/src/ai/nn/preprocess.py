@@ -1,7 +1,7 @@
 """NN preprocessing: categorical encoding + numeric standardization.
 
 NN は train で fit してから valid / test / inference の特徴量を同じ統計量で
-変換する必要がある (GBDT と違って NN は scale 不変ではない)。
+変換する必要がある (NN は scale 不変ではないため)。
 
 このクラスは:
     - カテゴリ列を train で見た値のみで int にマップする
@@ -10,7 +10,6 @@ NN は train で fit してから valid / test / inference の特徴量を同じ
     - 数値列を train mean/std で標準化する
     - 未知カテゴリ / NaN は -1 へ、NaN な数値は標準化後 0 (= 平均) へ
 
-GBDT は LightGBM が内部で扱うため不要。
 """
 
 from __future__ import annotations

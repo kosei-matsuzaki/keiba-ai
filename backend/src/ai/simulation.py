@@ -357,7 +357,7 @@ def simulate_active_model(
         if race_frame.empty or len(race_frame) < 2:
             continue
 
-        # Predictions (GBDT/NN を bundle.model_type で自動切替)
+        # Predictions (NN bundle 経由)
         try:
             preds = predict_race(bundle, race_frame)
         except Exception as exc:  # noqa: BLE001

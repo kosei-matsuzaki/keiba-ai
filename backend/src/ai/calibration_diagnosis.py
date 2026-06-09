@@ -19,7 +19,7 @@ CLI:
       --model data/models/<timestamp> \
       --start 2024-10-01 --end 2024-12-31
 
-Supports both GBDT and NN models — dispatch happens inside
+NN models — inference happens inside
 `predict_race(bundle, ...)` via bundle.model_type.
 """
 
@@ -112,7 +112,7 @@ def _score_all_races(
 ) -> pd.DataFrame:
     """Run predict_race per race and return combined long DataFrame.
 
-    Bundle-aware: GBDT/NN dispatch happens inside predict_race. The output
+    Bundle-aware: inference happens inside predict_race. The output
     schema is identical for both backends.
 
     Output columns: race_id, horse_id, pred_rank (1=top by score), win_prob,

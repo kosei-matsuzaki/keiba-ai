@@ -16,7 +16,7 @@ import numpy as np
 
 
 def softmax_within_race(scores: np.ndarray) -> np.ndarray:
-    """Convert raw LightGBM lambdarank scores to win probabilities via softmax.
+    """Convert raw NN scores to win probabilities via within-race softmax.
 
     Subtracts max for numerical stability before exponentiation.
     """

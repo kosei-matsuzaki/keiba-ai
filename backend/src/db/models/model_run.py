@@ -1,4 +1,4 @@
-"""ModelRun ORM model — 学習履歴 (LightGBM GBDT / PyTorch NN 共通)。
+"""ModelRun ORM model — 学習履歴 (PyTorch NN)。
 
 is_active フラグは spec.md で定義されているが、推論エンドポイントは M5 以降のため
 カラムのみ定義し、M4/M5 で活用する。
@@ -27,5 +27,5 @@ class ModelRun(Base):
         Integer, nullable=False, default=0, server_default="0"
     )  # 0/1 flag — model と migration の default を揃える
     model_type: Mapped[str] = mapped_column(
-        String, nullable=False, default="gbdt", server_default="gbdt"
-    )  # "gbdt" or "nn"
+        String, nullable=False, default="nn", server_default="nn"
+    )  # 常に "nn"（NN 専用化済み。列は履歴互換のため残置）

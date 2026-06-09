@@ -17,8 +17,7 @@
 | ORM | SQLAlchemy 2.x（非同期対応） |
 | マイグレーション | Alembic |
 | DB | SQLite 3 |
-| AI / ML | lightgbm 4.x, pandas 2.x, numpy 1.26 以上, scikit-learn 1.4 以上 |
-| SHAP | shap 0.45 以上（特徴量寄与表示用） |
+| AI / ML | PyTorch 2.x + Lightning（NN, optional extra）, pandas 2.x, numpy 1.26 以上, scikit-learn 1.4 以上 |
 | スクレイピング | httpx（非同期 HTTP）, BeautifulSoup4 |
 | スケジューラ | APScheduler（週次自動取り込み用） |
 
@@ -75,9 +74,8 @@
 │   │   │   ├── pedigree.py        # 血統特徴量（父/母の産駒勝率）
 │   │   │   ├── relative_features.py # 同レース内相対特徴量（馬体重 percentile・オッズ順位 等 6 列）
 │   │   │   └── trainer.py         # 調教師成績統計
-│   │   ├── ai/            # GBDT / NN 学習・推論・SHAP 計算
-│   │   │   ├── gbm/       # LightGBM 固有 (train.py / tune.py / pl_loss.py)
-│   │   │   ├── nn/        # PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py)
+│   │   ├── ai/            # NN 学習・推論・評価
+│   │   │   ├── nn/        # PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py / preprocess.py)
 │   │   │   └── *.py       # 共有: predict / registry / evaluate / calibrate / temperature / bet_* / simulation 等
 │   │   └── jobs/          # APScheduler ジョブ定義（週次取り込み・月次再学習）
 │   └── tests/                 # pytest テスト群
@@ -100,7 +98,7 @@
 │   │   ├── routes/            # ページコンポーネント
 │   │   │   ├── Dashboard.tsx        # ActiveModelCard + MetricCard + AccuracyChart
 │   │   │   ├── UpcomingRaces.tsx    # RaceCard 一覧
-│   │   │   ├── RaceDetail.tsx       # レース概要 + PredictionTable + SHAP
+│   │   │   ├── RaceDetail.tsx       # レース概要 + PredictionTable
 │   │   │   ├── Models.tsx           # ActiveModelCard + ModelTable + Activate + TrainModelDialog
 │   │   │   ├── Ingest.tsx           # ScraperStatusCard + IngestRunDialog + 停止
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
@@ -310,7 +308,7 @@ CREATE TABLE model_runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at  TEXT NOT NULL,          -- ISO 8601
     model_path  TEXT NOT NULL,          -- data/models/<YYYYMMDD-HHMMSS>/  （ディレクトリパス）
-    params_json TEXT,                   -- LightGBM パラメータ JSON
+    params_json TEXT,                   -- 学習ハイパーパラメータ JSON
     train_range TEXT,                   -- 学習期間（例: "2022-01-01/2024-01-01"）
     valid_range TEXT,                   -- 検証期間
     metrics_json TEXT,                  -- 評価指標 JSON
@@ -369,7 +367,7 @@ CREATE TABLE model_runs (
 | GET | `/api/predictions/{race_id}` | 200 / 404 / 503 | 全馬の単勝・複勝予想確率 |
 
 - active モデルが存在しない場合は **503** を返す
-- `top_features` は `predict_race_with_shap()` が TreeExplainer で各馬の上位 3 特徴量列名を返す
+- `top_features` は特徴量寄与表示用フィールドだが、寄与計算は廃止済みのため常に空配列を返す（API 互換のため残置）
 
 ```json
 // GET /api/predictions/{race_id} レスポンス例（抜粋）
@@ -511,11 +509,10 @@ pnpm dev
 | Python | 3.12 以上 | |
 | uv | 0.4 以上 | `uv sync` / `uv run keiba-ingest` が動作すること |
 | FastAPI / uvicorn | pyproject.toml 経由で導入 | `uv run uvicorn main:app --port 8765` で起動確認 |
-| LightGBM | 4.x 以上 | `uv sync` で自動導入 |
+| PyTorch (extra `nn`) | 2.x 以上 | `uv sync --extra nn` で導入 |
 | Alembic | pyproject.toml 経由で導入 | `uv run alembic upgrade head` で動作確認 |
 | Node.js | 20 LTS 以上 | フロントエンド実装に必要 |
 | pnpm | 9.x 以上 | `pnpm test`・`pnpm build`・`pnpm lint` が通ること |
-| Optuna | `uv sync` で自動導入 | `python -m ai.gbm.tune` で動作確認 |
 
 ### AI 学習・評価 CLI
 
@@ -523,10 +520,10 @@ pnpm dev
 cd backend
 
 # モデル学習（DB から全データを読み込み、時系列分割して学習）
-uv run python -m ai.gbm.train
+uv run python -m ai.nn.train_nn --loss multi --monitor valid_tansho_roi
 
 # 学習終了日を指定（学習データの上限を固定する）
-uv run python -m ai.gbm.train --train-end 2025-12-31
+uv run python -m ai.nn.train_nn --loss multi --train-end 2025-12-31
 
 # バックテスト評価（学習済みモデルディレクトリを指定）
 uv run python -m ai.evaluate --model data/models/20260101-120000
