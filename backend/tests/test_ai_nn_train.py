@@ -386,3 +386,64 @@ def test_train_nn_log_growth_place_loss(syn_engine_small, tmp_path, monkeypatch)
     assert (model_dir / "model.pt").exists()
     meta = json.loads((model_dir / "meta.json").read_text())
     assert meta.get("loss_type") == "log_growth_place"
+
+
+def test_train_nn_log_growth_combo_loss(syn_engine_small, tmp_path, monkeypatch):
+    """End-to-end: inject 馬連 payouts, train with the log_growth_combo loss."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session as _Session
+
+    from db.models.payout import Payout
+    from db.models.race import Race
+
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    # Inject one 馬連 payout per race so the combo loss has data.
+    with _Session(engine) as s:
+        rids = [r for (r,) in s.execute(select(Race.race_id)).all()]
+        for n, rid in enumerate(rids):
+            s.add(Payout(race_id=rid, bet_type="馬連", combo="1-2",
+                         amount=1500 + (n % 5) * 800, popularity=None))
+        s.commit()
+
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth_combo", combo_bet_type="馬連",
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", fit_combo_calibrators=False, monitor="valid_ndcg3",
+    )
+    model_dir = Path(result["model_dir"])
+    assert (model_dir / "model.pt").exists()
+    meta = json.loads((model_dir / "meta.json").read_text())
+    assert meta["loss_type"] == "log_growth_combo"
+    assert meta["combo_bet_type"] == "馬連"
+
+
+def test_train_nn_combo_nll_loss(syn_engine_small, tmp_path, monkeypatch):
+    """combo_nll trains end-to-end (calibration objective; no payouts needed)."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="combo_nll", combo_bet_type="all",
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", fit_combo_calibrators=False, monitor="valid_ndcg3",
+    )
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta["loss_type"] == "combo_nll"
+
+
+def test_train_nn_multi_objective_loss(syn_engine_small, tmp_path, monkeypatch):
+    """multi (log_growth + combo_weight·combo_nll) trains end-to-end."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="multi", combo_weight=0.01,
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", fit_combo_calibrators=False, monitor="valid_tansho_roi",
+    )
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta["loss_type"] == "multi"
+    assert meta["combo_weight"] == 0.01

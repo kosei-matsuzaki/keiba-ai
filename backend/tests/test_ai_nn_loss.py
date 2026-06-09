@@ -170,3 +170,72 @@ class TestTimeMarginLoss:
         mask = torch.zeros(1, 2, dtype=torch.bool)
         loss = time_margin_loss(scores, positions, times, mask)
         assert torch.isnan(loss)
+
+
+# ---------------------------------------------------------------------------
+# log_growth_combo (連系, analytic-PL decision-focused) loss
+# ---------------------------------------------------------------------------
+import math  # noqa: E402, I001
+
+from ai.nn.loss import _pl_exacta, log_growth_combo_loss  # noqa: E402
+
+
+def test_log_growth_combo_all_bet_types_differentiable():
+    pos = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    pay = torch.tensor([[12.0, 12.0, 12.0, 12.0]])  # race-broadcast payoff
+    mask = torch.tensor([[True, True, True, True]])
+    for bt in ("馬連", "馬単", "三連複", "三連単"):
+        s = torch.tensor([[2.0, 1.0, 0.5, 0.0]], requires_grad=True)
+        loss = log_growth_combo_loss(s, pos, pay, mask, bet_type=bt, kelly_fraction=0.25)
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert s.grad.norm().item() > 0  # odds-dependent gradient
+
+
+def test_log_growth_combo_matches_manual_umatan():
+    s = torch.tensor([2.0, 1.0, 0.5, 0.0])
+    P = _pl_exacta(s, 0, 1)  # winner=slot0 (1st), slot1 (2nd)
+    expected = -math.log(1 + 0.25 * (P.item() * 12.0 - 1))
+    got = log_growth_combo_loss(
+        s.unsqueeze(0), torch.tensor([[1.0, 2.0, 3.0, 4.0]]),
+        torch.tensor([[12.0, 12.0, 12.0, 12.0]]), torch.tensor([[True, True, True, True]]),
+        bet_type="馬単", kelly_fraction=0.25,
+    )
+    assert abs(got.item() - expected) < 1e-5
+
+
+def test_log_growth_combo_skips_no_payoff():
+    loss = log_growth_combo_loss(
+        torch.tensor([[1.0, 0.0]]), torch.tensor([[1.0, 2.0]]),
+        torch.tensor([[0.0, 0.0]]), torch.tensor([[True, True]]), bet_type="馬連",
+    )
+    assert math.isnan(loss.item())
+
+
+def test_pl_combo_prob_matches_monte_carlo():
+    import numpy as np
+    torch.manual_seed(0)
+    s = torch.randn(8)
+    a = _pl_exacta(s, 0, 1) + _pl_exacta(s, 1, 0)  # 馬連 {0,1}
+    rng = np.random.default_rng(1)
+    g = rng.gumbel(size=(150_000, 8))
+    order = np.argsort(-(s.numpy()[None, :] + g), axis=1)[:, :2]
+    mc = np.mean([frozenset(o) == frozenset((0, 1)) for o in order])
+    assert abs(a.item() - mc) < 0.01
+
+
+def test_combo_nll_all_types_and_all():
+    from ai.nn.loss import _winning_combo_prob, combo_nll_loss
+    pos = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    mask = torch.tensor([[True, True, True, True]])
+    for bt in ("馬連", "馬単", "三連複", "三連単", "all"):
+        s = torch.tensor([[2.0, 1.0, 0.5, 0.0]], requires_grad=True)
+        nll = combo_nll_loss(s, pos, mask, bet_type=bt)
+        assert torch.isfinite(nll) and nll.item() > 0
+        nll.backward()
+        assert s.grad.norm().item() > 0
+    # 馬連 NLL == -log P(winning pair)
+    s = torch.tensor([2.0, 1.0, 0.5, 0.0])
+    P = _winning_combo_prob(s, 0, 1, None, "馬連")
+    got = combo_nll_loss(s.unsqueeze(0), pos, mask, bet_type="馬連")
+    assert abs(got.item() - (-math.log(P.item()))) < 1e-5
