@@ -42,6 +42,7 @@ from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import (
     listmle_loss,
+    log_growth_combo_loss,
     log_growth_loss,
     log_growth_place_loss,
     plackett_luce_loss,
@@ -222,6 +223,36 @@ def _add_place_return_column(frame: pd.DataFrame) -> None:
         frame.loc[sub.index, "place_ret_raw"] = ret.values
 
 
+def _add_combo_payoff_column(frame: pd.DataFrame, engine, bet_type: str) -> None:
+    """Add race-broadcast 連系 winning-combo payoff column ``combo_payoff_raw``.
+
+    Looks up the realised payout for ``bet_type`` (馬連/馬単/三連複/三連単) of each
+    race from the ``payouts`` table and broadcasts payout/100 to every horse row
+    of that race (0 when no payout recorded).  Non-feature column → never
+    standardised; consumed by the log_growth_combo loss via RaceDataset.
+
+    On dead-heat races (multiple winning combos for a bet type) the first payout
+    is used; these are rare and only add minor noise to the loss.
+    """
+    frame["combo_payoff_raw"] = 0.0
+    if frame.empty:
+        return
+    from sqlalchemy import select
+
+    from db.models.payout import Payout
+
+    race_ids = set(frame["race_id"].unique())
+    payoff: dict[str, float] = {}
+    with session_scope(engine) as s:
+        rows = s.execute(
+            select(Payout.race_id, Payout.amount).where(Payout.bet_type == bet_type)
+        ).all()
+    for rid, amount in rows:
+        if rid in race_ids and rid not in payoff:
+            payoff[rid] = float(amount) / 100.0
+    frame["combo_payoff_raw"] = frame["race_id"].map(payoff).fillna(0.0).astype(float)
+
+
 def _compute_winplace_roi_nn(
     model: torch.nn.Module,
     frame: pd.DataFrame,
@@ -382,6 +413,7 @@ def _compute_loss_on_dataset(
     race_feature_cols: list[str],
     loss_fn_name: str,
     device: torch.device,
+    combo_bet_type: str = "馬連",
 ) -> float:
     """Compute mean loss over all races in frame (for test-set reporting)."""
     if frame.empty:
@@ -393,7 +425,7 @@ def _compute_loss_on_dataset(
 
     loader = DataLoader(dataset, batch_size=32, collate_fn=collate_fn, shuffle=False)
 
-    loss_fn = _build_loss_fn(loss_fn_name)
+    loss_fn = _build_loss_fn(loss_fn_name, combo_bet_type=combo_bet_type)
 
     model.eval()
     total_loss = 0.0
@@ -415,6 +447,8 @@ def _compute_loss_on_dataset(
                 loss = loss_fn(scores, fp, batch["odds_win"].to(device), mask)
             elif loss_fn_name == "log_growth_place":
                 loss = loss_fn(scores, batch["place_return"].to(device), mask)
+            elif loss_fn_name == "log_growth_combo":
+                loss = loss_fn(scores, fp, batch["combo_payoff"].to(device), mask)
             else:
                 loss = loss_fn(scores, fp, mask)
 
@@ -425,11 +459,14 @@ def _compute_loss_on_dataset(
     return total_loss / n_batches if n_batches > 0 else float("nan")
 
 
-def _build_loss_fn(loss_name: str, kelly_fraction: float = 0.25):
+def _build_loss_fn(
+    loss_name: str, kelly_fraction: float = 0.25, combo_bet_type: str = "馬連"
+):
     """Return the loss callable for the given name.
 
-    kelly_fraction only affects the log_growth betting loss (bankroll fraction
-    staked per race); ignored by the ranking losses.
+    kelly_fraction affects the log_growth* betting losses (bankroll fraction
+    staked per race); combo_bet_type selects the 連系 type for log_growth_combo.
+    Both are ignored by the ranking losses.
     """
     if loss_name == "plackett_luce":
         return plackett_luce_loss
@@ -441,9 +478,13 @@ def _build_loss_fn(loss_name: str, kelly_fraction: float = 0.25):
         return functools.partial(log_growth_loss, kelly_fraction=kelly_fraction)
     if loss_name == "log_growth_place":
         return functools.partial(log_growth_place_loss, kelly_fraction=kelly_fraction)
+    if loss_name == "log_growth_combo":
+        return functools.partial(
+            log_growth_combo_loss, bet_type=combo_bet_type, kelly_fraction=kelly_fraction
+        )
     raise ValueError(
         f"Unknown loss: {loss_name!r}. Choose from plackett_luce, listmle, "
-        "time_margin, log_growth, log_growth_place"
+        "time_margin, log_growth, log_growth_place, log_growth_combo"
     )
 
 
@@ -465,11 +506,12 @@ class RaceLitModule(pl.LightningModule):
         learning_rate: float,
         weight_decay: float = 0.0,
         max_epochs: int = 100,
+        combo_bet_type: str = "馬連",
     ) -> None:
         super().__init__()
         self.model = model
         self.loss_fn_name = loss_fn_name
-        self.loss_fn = _build_loss_fn(loss_fn_name)
+        self.loss_fn = _build_loss_fn(loss_fn_name, combo_bet_type=combo_bet_type)
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.max_epochs = max_epochs
@@ -496,6 +538,13 @@ class RaceLitModule(pl.LightningModule):
             )
         elif self.loss_fn_name == "log_growth_place":
             loss = self.loss_fn(scores, batch["place_return"], batch["mask"])
+        elif self.loss_fn_name == "log_growth_combo":
+            loss = self.loss_fn(
+                scores,
+                batch["finish_positions"],
+                batch["combo_payoff"],
+                batch["mask"],
+            )
         else:
             loss = self.loss_fn(scores, batch["finish_positions"], batch["mask"])
         return loss
@@ -630,6 +679,7 @@ def train_nn(
     monitor: str = "valid_tansho_roi",
     prebuilt_frame: pd.DataFrame | None = None,
     init_from: Path | None = None,
+    combo_bet_type: str = "馬連",
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict.
 
@@ -710,6 +760,10 @@ def train_nn(
             _df["odds_win_raw"] = _df["odds_win"]
         # Per-horse 複勝 payoff multiple for the log_growth_place loss.
         _add_place_return_column(_df)
+        # Race-broadcast 連系 winning-combo payoff for the log_growth_combo loss
+        # (DB lookup only when that loss is selected, to avoid the query cost).
+        if loss == "log_growth_combo":
+            _add_combo_payoff_column(_df, engine, combo_bet_type)
     train_df = preprocessor.transform(train_df)
     if not valid_df.empty:
         valid_df = preprocessor.transform(valid_df)
@@ -793,6 +847,7 @@ def train_nn(
         learning_rate=learning_rate,
         weight_decay=weight_decay,
         max_epochs=max_epochs,
+        combo_bet_type=combo_bet_type,
     )
 
     # Trainer callbacks
@@ -853,9 +908,11 @@ def train_nn(
     log.info("Evaluating…")
     valid_loss = _compute_loss_on_dataset(
         race_model, valid_df, horse_feature_cols, race_feature_cols, loss, torch_device,
+        combo_bet_type=combo_bet_type,
     )
     test_loss = _compute_loss_on_dataset(
         race_model, test_df, horse_feature_cols, race_feature_cols, loss, torch_device,
+        combo_bet_type=combo_bet_type,
     )
 
     valid_ndcg1 = _compute_ndcg_nn(
@@ -1024,6 +1081,7 @@ def train_nn(
         "arch_version": 2,
         "loss_type": loss,
         "monitor": monitor,
+        "combo_bet_type": combo_bet_type if loss == "log_growth_combo" else None,
         "params": {
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
@@ -1096,16 +1154,23 @@ def _cli() -> None:
     parser.add_argument(
         "--loss",
         choices=[
-            "log_growth", "log_growth_place",
+            "log_growth", "log_growth_place", "log_growth_combo",
             "plackett_luce", "listmle", "time_margin",
         ],
         default="log_growth",
         help=(
             "Loss function (default: log_growth). log_growth = fractional-Kelly "
-            "単勝 return; log_growth_place = fractional-Kelly 複勝 return "
-            "(decision-focused, ROI-targeted). plackett_luce/listmle/time_margin "
-            "= legacy ranking losses (also used as the two-stage pretrain)."
+            "単勝 return; log_growth_place = 複勝; log_growth_combo = 連系 (馬連/馬単/"
+            "三連複/三連単, analytic-PL combo prob — folds calibration into the NN, "
+            "no external combo_calibrators). plackett_luce/listmle/time_margin = "
+            "legacy ranking losses (also used as the two-stage pretrain)."
         ),
+    )
+    parser.add_argument(
+        "--combo-bet-type",
+        choices=["馬連", "馬単", "三連複", "三連単"],
+        default="馬連",
+        help="連系 bet type for --loss log_growth_combo (default: 馬連).",
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
     parser.add_argument("--embed-dim", type=int, default=32, help="Embedding dimension")
@@ -1219,6 +1284,7 @@ def _cli() -> None:
         combo_calibrators_n_samples=args.combo_calibrators_n_samples,
         monitor=args.monitor,
         init_from=args.init_from,
+        combo_bet_type=args.combo_bet_type,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

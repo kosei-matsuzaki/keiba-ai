@@ -10,6 +10,8 @@ Losses are reduced to a scalar mean over *valid* races / pairs.
 
 from __future__ import annotations
 
+from itertools import permutations
+
 import torch
 import torch.nn.functional as F
 
@@ -238,6 +240,133 @@ def log_growth_place_loss(
         p = torch.softmax(s, dim=0)
         expected = (p * pr).sum()
         wealth = 1.0 + kf * (expected - 1.0)  # > 1 - kf > 0 for kf < 1
+        total_loss = total_loss - torch.log(wealth)
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
+_COMBO_BET_TYPES = frozenset(["馬連", "馬単", "三連複", "三連単"])
+
+
+def _pl_exacta(s: torch.Tensor, i: int, j: int) -> torch.Tensor:
+    """Analytic Plackett-Luce probability of the ordered pair i→j (馬単).
+
+    P(i 1st, j 2nd) = softmax(s)_i * softmax(s without i)_j.  Differentiable.
+    """
+    p = torch.softmax(s, dim=0)
+    keep = torch.ones_like(s, dtype=torch.bool)
+    keep[i] = False
+    p2 = torch.softmax(s[keep], dim=0)[j - 1 if j > i else j]
+    return p[i] * p2
+
+
+def _pl_trifecta(s: torch.Tensor, i: int, j: int, k: int) -> torch.Tensor:
+    """Analytic Plackett-Luce probability of the ordered triple i→j→k (三連単)."""
+    p = torch.softmax(s, dim=0)
+    keep1 = torch.ones_like(s, dtype=torch.bool)
+    keep1[i] = False
+    p2 = torch.softmax(s[keep1], dim=0)[j - 1 if j > i else j]
+    keep2 = keep1.clone()
+    keep2[j] = False
+    rem = [x for x in range(len(s)) if x not in (i, j)]
+    p3 = torch.softmax(s[keep2], dim=0)[rem.index(k)]
+    return p[i] * p2 * p3
+
+
+def _winning_combo_prob(
+    s: torch.Tensor, i: int, j: int, k: int | None, bet_type: str
+) -> torch.Tensor:
+    """Analytic PL probability of the realised winning combo, differentiable.
+
+    i / j / k are the within-race indices of the 1st / 2nd / 3rd finishers.
+    """
+    if bet_type == "馬単":
+        return _pl_exacta(s, i, j)
+    if bet_type == "馬連":
+        return _pl_exacta(s, i, j) + _pl_exacta(s, j, i)
+    if bet_type == "三連単":
+        return _pl_trifecta(s, i, j, k)  # type: ignore[arg-type]
+    # 三連複: sum over all 6 orderings of the unordered triple
+    total = s.new_zeros(())
+    for a, b, c in permutations((i, j, k)):
+        total = total + _pl_trifecta(s, a, b, c)
+    return total
+
+
+def log_growth_combo_loss(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    combo_payoff: torch.Tensor,
+    mask: torch.Tensor,
+    bet_type: str = "馬連",
+    kelly_fraction: float = 0.25,
+) -> torch.Tensor:
+    """Fractional-Kelly log-growth loss for 連系 (馬連/馬単/三連複/三連単).
+
+    Decision-focused analogue of :func:`log_growth_loss` for combination bets.
+    The probability of the **realised winning combo** is computed *analytically*
+    from the Plackett-Luce model (differentiable in the scores — no Monte-Carlo
+    sampling), and the objective maximises log-growth of betting it at the real
+    payoff::
+
+        W = 1 + kelly_fraction * (P_PL(winning_combo) * payoff - 1)
+
+    Because the loss penalises over-stating ``P_PL`` (it lowers W when the combo
+    misses), the combo *calibration is learned inside the model* — this replaces
+    the external post-hoc isotonic ``combo_calibrators``.
+
+    Args:
+        scores:           [B, N]
+        finish_positions: [B, N]  1-based finishing position (NaN = exclude).
+            The winning combo is the 1st/2nd(/3rd) finishers.
+        combo_payoff:     [B, N]  race-broadcast payoff multiple of the winning
+            combo for this bet type (= payout_yen / 100; 0/NaN = no payout).
+        mask:             [B, N]  bool.
+        bet_type:         one of 馬連 / 馬単 / 三連複 / 三連単.
+        kelly_fraction:   bankroll fraction staked per race, in (0, 1).
+
+    Returns:
+        Scalar loss (mean over races with a clean winning combo + payoff).
+    """
+    if bet_type not in _COMBO_BET_TYPES:
+        raise ValueError(
+            f"bet_type {bet_type!r} not in {sorted(_COMBO_BET_TYPES)}"
+        )
+    triple = bet_type in ("三連複", "三連単")
+    device = scores.device
+    kf = float(kelly_fraction)
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(finish_positions[b])
+        if valid.sum() < (3 if triple else 2):
+            continue
+
+        s = scores[b][valid]
+        pos = finish_positions[b][valid]
+        pay = torch.nan_to_num(combo_payoff[b][valid], nan=0.0)[0]
+        if pay <= 0:
+            continue
+
+        w1 = (pos == 1).nonzero(as_tuple=True)[0]
+        w2 = (pos == 2).nonzero(as_tuple=True)[0]
+        if w1.numel() == 0 or w2.numel() == 0:
+            continue
+        i, j = int(w1[0]), int(w2[0])
+
+        k: int | None = None
+        if triple:
+            w3 = (pos == 3).nonzero(as_tuple=True)[0]
+            if w3.numel() == 0:
+                continue
+            k = int(w3[0])
+
+        prob = _winning_combo_prob(s, i, j, k, bet_type)
+        wealth = 1.0 + kf * (prob * pay - 1.0)  # > 1 - kf > 0 for kf < 1
         total_loss = total_loss - torch.log(wealth)
         n_valid += 1
 

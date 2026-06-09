@@ -36,6 +36,7 @@ class RaceDataset(Dataset):
         time_col: str = "finish_time",
         odds_col: str = "odds_win_raw",
         place_return_col: str = "place_ret_raw",
+        combo_payoff_col: str = "combo_payoff_raw",
     ) -> None:
         self.feature_cols = feature_cols
         # Only keep race feature cols that are actually present in the frame
@@ -47,6 +48,8 @@ class RaceDataset(Dataset):
         self.odds_col = odds_col
         # Per-horse 複勝 payoff multiple (payout/100 if placed, else 0).
         self.place_return_col = place_return_col
+        # Race-broadcast 連系 winning-combo payoff multiple for log_growth_combo.
+        self.combo_payoff_col = combo_payoff_col
 
         self._races: list[pd.DataFrame] = [
             group for _, group in frame.groupby("race_id", sort=True)
@@ -78,6 +81,7 @@ class RaceDataset(Dataset):
         finish_times = _col_to_tensor(self.time_col)
         odds_win = _col_to_tensor(self.odds_col)
         place_return = _col_to_tensor(self.place_return_col)
+        combo_payoff = _col_to_tensor(self.combo_payoff_col)
 
         return {
             "horse_features": horse_features,
@@ -86,6 +90,7 @@ class RaceDataset(Dataset):
             "finish_times": finish_times,
             "odds_win": odds_win,
             "place_return": place_return,
+            "combo_payoff": combo_payoff,
             "n_horses": len(race),
         }
 
@@ -116,6 +121,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     finish_times_out = torch.full((B, max_n_horses), float("nan"))
     odds_win_out = torch.full((B, max_n_horses), float("nan"))
     place_return_out = torch.full((B, max_n_horses), float("nan"))
+    combo_payoff_out = torch.full((B, max_n_horses), float("nan"))
     mask_out = torch.zeros(B, max_n_horses, dtype=torch.bool)
 
     for i, sample in enumerate(batch):
@@ -126,6 +132,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         finish_times_out[i, :n] = sample["finish_times"]
         odds_win_out[i, :n] = sample["odds_win"]
         place_return_out[i, :n] = sample["place_return"]
+        combo_payoff_out[i, :n] = sample["combo_payoff"]
         mask_out[i, :n] = True
 
     return {
@@ -135,5 +142,6 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         "finish_times": finish_times_out,
         "odds_win": odds_win_out,
         "place_return": place_return_out,
+        "combo_payoff": combo_payoff_out,
         "mask": mask_out,
     }
