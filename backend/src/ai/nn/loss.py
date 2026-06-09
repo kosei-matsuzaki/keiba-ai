@@ -444,6 +444,50 @@ def combo_nll_loss(
     return (total_loss / n_valid).squeeze()
 
 
+def multi_objective_loss(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    odds_win: torch.Tensor,
+    mask: torch.Tensor,
+    combo_weight: float = 0.01,
+    kelly_fraction: float = 0.25,
+) -> torch.Tensor:
+    """Production all-markets objective: 単複 betting + 連系 calibration.
+
+    Weighted sum of:
+      - :func:`log_growth_loss` — optimises 単勝 betting return (drives 単勝/複勝
+        ROI; this is the active model's objective), and
+      - ``combo_weight`` × :func:`combo_nll_loss` (bet_type="all") — calibrates
+        the 馬連/馬単/三連複/三連単 combo probabilities **inside the NN**
+        (replaces the external isotonic combo_calibrators).
+
+    The two share the same scores, so this trades a little 単複 ROI for honest,
+    self-calibrated 連系 probabilities in a single deployable model.  The
+    ``combo_weight`` default is small because combo_nll("all") is ~10× the
+    magnitude of the log-growth term; tune via --combo-weight.
+
+    Args:
+        scores / finish_positions / mask: [B, N].
+        odds_win:     [B, N] raw 単勝 odds (for the log_growth term).
+        combo_weight: weight on the combo-calibration NLL term.
+        kelly_fraction: for the log_growth term.
+
+    Returns:
+        Scalar loss.  NaN only when *both* terms are NaN for the batch.
+    """
+    lg = log_growth_loss(scores, finish_positions, odds_win, mask, kelly_fraction)
+    cn = combo_nll_loss(scores, finish_positions, mask, bet_type="all")
+
+    terms = []
+    if not torch.isnan(lg):
+        terms.append(lg)
+    if not torch.isnan(cn):
+        terms.append(combo_weight * cn)
+    if not terms:
+        return torch.tensor(float("nan"), device=scores.device)
+    return torch.stack(terms).sum()
+
+
 def time_margin_loss(
     scores: torch.Tensor,
     finish_positions: torch.Tensor,

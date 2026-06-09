@@ -432,3 +432,18 @@ def test_train_nn_combo_nll_loss(syn_engine_small, tmp_path, monkeypatch):
     )
     meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
     assert meta["loss_type"] == "combo_nll"
+
+
+def test_train_nn_multi_objective_loss(syn_engine_small, tmp_path, monkeypatch):
+    """multi (log_growth + combo_weight·combo_nll) trains end-to-end."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="multi", combo_weight=0.01,
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", fit_combo_calibrators=False, monitor="valid_tansho_roi",
+    )
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta["loss_type"] == "multi"
+    assert meta["combo_weight"] == 0.01
