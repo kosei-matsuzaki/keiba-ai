@@ -138,7 +138,7 @@ def test_ece_empty_input():
 
 
 # ---------------------------------------------------------------------------
-# Integration smoke test (bundle-first, GBDT path)
+# Integration smoke test (bundle-first, NN path)
 # ---------------------------------------------------------------------------
 
 

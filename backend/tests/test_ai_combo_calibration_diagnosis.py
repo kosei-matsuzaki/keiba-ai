@@ -1,7 +1,7 @@
 """Smoke tests for ai/combo_calibration_diagnosis.py.
 
 Focus on the bundle-first refactor: ensure diagnose_combo_calibration runs
-end-to-end on a tiny synthetic GBDT model and returns the expected schema.
+end-to-end on a tiny synthetic NN model and returns the expected schema.
 """
 
 from __future__ import annotations
