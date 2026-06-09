@@ -451,32 +451,40 @@ def multi_objective_loss(
     mask: torch.Tensor,
     combo_weight: float = 0.01,
     kelly_fraction: float = 0.25,
+    combo_bet_type: str = "馬連",
 ) -> torch.Tensor:
     """Production all-markets objective: 単複 betting + 連系 calibration.
 
     Weighted sum of:
       - :func:`log_growth_loss` — optimises 単勝 betting return (drives 単勝/複勝
         ROI; this is the active model's objective), and
-      - ``combo_weight`` × :func:`combo_nll_loss` (bet_type="all") — calibrates
-        the 馬連/馬単/三連複/三連単 combo probabilities **inside the NN**
-        (replaces the external isotonic combo_calibrators).
+      - ``combo_weight`` × :func:`combo_nll_loss` (``combo_bet_type``) — calibrates
+        the 連系 combo probabilities **inside the NN** (replaces the external
+        isotonic combo_calibrators).
 
     The two share the same scores, so this trades a little 単複 ROI for honest,
     self-calibrated 連系 probabilities in a single deployable model.  The
-    ``combo_weight`` default is small because combo_nll("all") is ~10× the
-    magnitude of the log-growth term; tune via --combo-weight.
+    ``combo_weight`` default is small because the combo NLL is ~10× the magnitude
+    of the log-growth term; tune via --combo-weight.
+
+    ``combo_bet_type`` defaults to 馬連 (pairs) for speed: calibrating the pair
+    marginals tightens the shared scores and carries over to the triples.
+    ``"all"`` calibrates every combo type but the triple-ordering sums make
+    full-dataset training ~5-10× slower (the analytic combo prob runs in a
+    per-race Python loop — vectorising it is a future optimisation).
 
     Args:
         scores / finish_positions / mask: [B, N].
         odds_win:     [B, N] raw 単勝 odds (for the log_growth term).
         combo_weight: weight on the combo-calibration NLL term.
         kelly_fraction: for the log_growth term.
+        combo_bet_type: 連系 type (or "all") for the calibration term.
 
     Returns:
         Scalar loss.  NaN only when *both* terms are NaN for the batch.
     """
     lg = log_growth_loss(scores, finish_positions, odds_win, mask, kelly_fraction)
-    cn = combo_nll_loss(scores, finish_positions, mask, bet_type="all")
+    cn = combo_nll_loss(scores, finish_positions, mask, bet_type=combo_bet_type)
 
     terms = []
     if not torch.isnan(lg):

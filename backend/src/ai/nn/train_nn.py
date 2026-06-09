@@ -499,7 +499,10 @@ def _build_loss_fn(
         return functools.partial(combo_nll_loss, bet_type=combo_bet_type)
     if loss_name == "multi":
         return functools.partial(
-            multi_objective_loss, combo_weight=combo_weight, kelly_fraction=kelly_fraction
+            multi_objective_loss,
+            combo_weight=combo_weight,
+            kelly_fraction=kelly_fraction,
+            combo_bet_type=combo_bet_type,
         )
     raise ValueError(
         f"Unknown loss: {loss_name!r}. Choose from plackett_luce, listmle, "
@@ -1115,7 +1118,9 @@ def train_nn(
         "loss_type": loss,
         "monitor": monitor,
         "combo_bet_type": (
-            combo_bet_type if loss in ("log_growth_combo", "combo_nll") else None
+            combo_bet_type
+            if loss in ("log_growth_combo", "combo_nll", "multi")
+            else None
         ),
         "combo_weight": combo_weight if loss == "multi" else None,
         "params": {
