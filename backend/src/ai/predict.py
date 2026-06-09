@@ -25,7 +25,6 @@ import numpy as np
 import pandas as pd
 
 from ai.calibrate import (
-    ComboCalibrators,
     compute_all_combination_probs,
     compute_place_prob,
     softmax_within_race,
@@ -185,18 +184,8 @@ def _predict_race_nn(bundle: ModelBundle, frame: pd.DataFrame) -> pd.DataFrame:
     ts = bundle.temperature_scaler
     win_probs = ts.transform_win(scores) if ts is not None else softmax_within_race(scores)
 
-    # Post-hoc isotonic calibration on win_prob (fixes NN over-confidence on
-    # longshots / under-confidence on top picks). predict() re-normalises per
-    # race so the output is still a valid distribution.
-    if bundle.nn_calibrator is not None:
-        win_probs = bundle.nn_calibrator.predict(win_probs, normalise=True)
-
     place_temperature = ts.T_place if ts is not None else 1.0
     place_probs = _compute_place_prob(scores, place_temperature=place_temperature)
-
-    # Post-hoc isotonic calibration of place_prob (no per-race renormalisation).
-    if bundle.place_calibrator is not None:
-        place_probs = bundle.place_calibrator.predict(place_probs, normalise=False)
 
     result = pd.DataFrame(
         {
@@ -248,7 +237,6 @@ def predict_race_with_combinations(
         top_k_combinations=top_k_combinations,
         race_odds=race_odds,
         race_odds_sources=race_odds_sources,
-        combo_calibrators=bundle.combo_calibrators,
     )
 
 
@@ -279,7 +267,6 @@ def _combinations_from_base(
     top_k_combinations: int | None,
     race_odds: dict[str, dict[str, float]] | None,
     race_odds_sources: dict[str, dict[str, str]] | None,
-    combo_calibrators: ComboCalibrators | None,
 ) -> dict[str, list[CombinationPrediction]]:
     """Shared combination computation given a pre-computed base_df.
 
@@ -315,12 +302,10 @@ def _combinations_from_base(
         return confirmed.get(bet_type, {}).get(combo)
 
     def _calibrate(bet_type: str, prob: float) -> float:
-        if combo_calibrators is None:
-            return prob
-        if not combo_calibrators.has(bet_type):
-            return prob
-        adjusted = float(combo_calibrators.predict(bet_type, np.array([prob]))[0])
-        return max(0.0, min(1.0, adjusted))
+        # Combo calibration is learned inside the NN (combo_nll / multi loss);
+        # no external isotonic post-processing.  Kept as identity for call-site
+        # symmetry with the per-bet-type combo construction below.
+        return prob
 
     def _est_source(bet_type: str, combo: str, has_odds: bool) -> str:
         explicit = sources_map.get(bet_type, {}).get(combo)

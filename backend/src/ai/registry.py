@@ -4,9 +4,6 @@ Each NN model is stored under data/models/<YYYYMMDDTHHMMSS>-nn/ with:
   model.pt              — PyTorch state_dict
   preprocessor.pkl      — カテゴリ map + 数値標準化 (optional)
   temperature_scaler.pkl — 温度スケーリング (optional)
-  combo_calibrators.pkl — ComboCalibrators (連系 馬券種補正; optional)
-  nn_calibrator.pkl     — win_prob の post-hoc isotonic 補正 (optional)
-  place_calibrator.pkl  — place_prob の post-hoc isotonic 補正 (optional)
   meta.json             — model_type="nn", params, feature columns, etc.
 """
 
@@ -20,7 +17,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from ai._registry_nn import load_nn_artifacts, save_nn_artifacts
-from ai.calibrate import ComboCalibrators, IsotonicCalibrator
 from ai.temperature import TemperatureScaler
 from core.paths import data_dir
 from db.models.model_run import ModelRun
@@ -131,9 +127,6 @@ class ModelBundle:
         nn_preprocessor:       カテゴリ map + 数値標準化 (train で fit 済み)。
                                旧モデルでは None (推論側で legacy fallback)。
         temperature_scaler:    温度スケーリング (optional)
-        combo_calibrators:     連系 馬券種ごとの PL prob 補正 (optional)
-        nn_calibrator:         win_prob の post-hoc isotonic 補正 (optional)
-        place_calibrator:      place_prob の post-hoc isotonic 補正 (optional)
     """
 
     model_type: str  # 常に "nn"
@@ -145,16 +138,6 @@ class ModelBundle:
     nn_horse_feature_cols: list[str] | None = None
     nn_race_feature_cols: list[str] | None = None
     nn_preprocessor: NNPreprocessor | None = None
-    # 連系 馬券種ごとの PL combo prob 補正 (isotonic; optional)
-    combo_calibrators: ComboCalibrators | None = None
-    # Post-hoc isotonic calibrator for NN win_prob. Applied after the temperature
-    # scaler / softmax to fix systematic over-confidence on longshots. None for
-    # NN models trained before the calibrator path was introduced.
-    nn_calibrator: IsotonicCalibrator | None = None
-    # Post-hoc isotonic calibrator for place_prob. place_prob は PL Monte Carlo
-    # 由来で未校正のため穴の複勝率を過大評価しがち。win とは別に place 結果で fit
-    # した monotonic 補正を適用する (race 内で合計 1 にならないので normalise=False)。
-    place_calibrator: IsotonicCalibrator | None = None
     # 温度スケーリング (optional)
     temperature_scaler: TemperatureScaler | None = None
 
@@ -185,21 +168,7 @@ def load_model_full(path: Path) -> ModelBundle:
         nn_race_feature_cols=nn_artifacts["nn_race_feature_cols"],
         nn_preprocessor=nn_artifacts["nn_preprocessor"],
         temperature_scaler=nn_artifacts["temperature_scaler"],
-        combo_calibrators=nn_artifacts["combo_calibrators"],
-        nn_calibrator=nn_artifacts.get("nn_calibrator"),
-        place_calibrator=_load_place_calibrator(path),
     )
-
-
-def _load_place_calibrator(path: Path) -> IsotonicCalibrator | None:
-    """Load place_calibrator.pkl from a model dir if present (optional)."""
-    from ai._registry_nn import _pickle_load  # noqa: PLC0415 — shared unpickler
-
-    cal_path = path / "place_calibrator.pkl"
-    if not cal_path.exists():
-        return None
-    with cal_path.open("rb") as f:
-        return _pickle_load(f)
 
 
 def set_active(model_path: Path, session: Session) -> None:

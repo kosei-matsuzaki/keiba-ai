@@ -151,6 +151,5 @@ def train_synthetic_nn(db_file, *, train_end=None, valid_months=2, test_months=1
         max_epochs=max_epochs,
         device="cpu",
         fit_temperature=False,
-        fit_combo_calibrators=False,
     )
     return Path(result["model_dir"])

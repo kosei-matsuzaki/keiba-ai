@@ -36,7 +36,6 @@ import torch
 from lightning.pytorch.callbacks import EarlyStopping
 from torch.utils.data import DataLoader
 
-from ai.calibrate import ComboCalibrators, fit_combo_calibrators_bundle
 from ai.labels import assign_relevance
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import (
@@ -47,7 +46,7 @@ from ai.nn.loss import (
 )
 from ai.nn.model import RaceTransformerModel
 from ai.nn.preprocess import NNPreprocessor
-from ai.registry import ModelBundle, save_nn_model
+from ai.registry import save_nn_model
 from ai.splits import time_split
 from ai.temperature import TemperatureScaler
 from core.paths import data_dir, db_path
@@ -610,8 +609,6 @@ def train_nn(
     weight_decay: float = 1e-4,
     gradient_clip_val: float = 1.0,
     early_stopping_patience: int = 10,
-    fit_combo_calibrators: bool = True,
-    combo_calibrators_n_samples: int = 5_000,
     monitor: str = "valid_tansho_roi",
     prebuilt_frame: pd.DataFrame | None = None,
     init_from: Path | None = None,
@@ -919,48 +916,6 @@ def train_nn(
                 )
                 temperature_scaler = None
 
-    # ── Combo calibration: fit per-bet-type iso on raw PL joint probs ─────────
-    # The temperature scaler above only corrects the per-horse marginal
-    # (win / place) distributions.  Renkei bet types (馬連 / ワイド / 馬単 /
-    # 三連複 / 三連単) consume joint probabilities derived via PL Monte Carlo
-    # from the NN scores; these are uncalibrated and tend to overestimate
-    # low-probability pairs/triples, which produced losing bets in the
-    # by-bet-type backtest.  Mirroring the GBDT pipeline, we fit an iso
-    # calibrator per bet type on the validation set.
-    combo_calibrators_obj: ComboCalibrators | None = None
-    if fit_combo_calibrators and not valid_df.empty:
-        log.info("Fitting ComboCalibrators on valid set (NN)…")
-        try:
-            # Build an in-memory bundle so the bundle-aware combo predictor can
-            # be invoked without a save/load round-trip.
-            fit_bundle = ModelBundle(
-                model_type="nn",
-                model_dir=data_dir() / "models" / "_pending_nn",
-                meta={"model_type": "nn", "loss_type": loss},
-                feature_columns=all_feature_cols,
-                nn_model=race_model,
-                nn_horse_feature_cols=horse_feature_cols,
-                nn_race_feature_cols=race_feature_cols,
-                nn_preprocessor=preprocessor,
-                temperature_scaler=temperature_scaler,
-                combo_calibrators=None,
-            )
-            combo_calibrators_obj = fit_combo_calibrators_bundle(
-                valid_df,
-                fit_bundle,
-                n_samples=combo_calibrators_n_samples,
-            )
-            log.info(
-                "ComboCalibrators fitted for: %s",
-                combo_calibrators_obj.fitted_bet_types,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "ComboCalibrators fit failed: %s — proceeding without combo calibration",
-                exc,
-            )
-            combo_calibrators_obj = None
-
     # Save model
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     model_dir = data_dir() / "models" / f"{timestamp}-nn"
@@ -995,18 +950,6 @@ def train_nn(
     preprocessor.save(model_dir / "preprocessor.pkl")
     log.info("preprocessor.pkl saved to %s", model_dir)
 
-    has_combo_calibrators = (
-        combo_calibrators_obj is not None
-        and len(combo_calibrators_obj.fitted_bet_types) > 0
-    )
-    if has_combo_calibrators:
-        with (model_dir / "combo_calibrators.pkl").open("wb") as f:
-            import pickle
-            pickle.dump(combo_calibrators_obj, f)
-        log.info(
-            "combo_calibrators.pkl saved (bet_types=%s)",
-            combo_calibrators_obj.fitted_bet_types,
-        )
 
     meta_dict = {
         "model_type": "nn",
@@ -1048,10 +991,6 @@ def train_nn(
         "test_range": test_range,
         "has_temperature_scaler": has_temperature_scaler,
         "has_preprocessor": True,
-        "has_combo_calibrators": has_combo_calibrators,
-        "combo_calibrators_bet_types": (
-            combo_calibrators_obj.fitted_bet_types if has_combo_calibrators else []
-        ),
     }
 
     # Delegate to registry (writes meta.json; model.pt is already in model_dir)
@@ -1189,22 +1128,6 @@ def _cli() -> None:
             "temperature scaling on the validation set when it is non-empty."
         ),
     )
-    parser.add_argument(
-        "--no-fit-combo-calibrators",
-        action="store_true",
-        default=False,
-        help=(
-            "Disable ComboCalibrators fitting after training.  Default is to fit "
-            "per-bet-type isotonic calibration of joint PL probabilities on the "
-            "validation set; this is what corrects 連系 EV signal for ワイド / 三連複."
-        ),
-    )
-    parser.add_argument(
-        "--combo-calibrators-n-samples",
-        type=int,
-        default=5_000,
-        help="MC samples per race for the ComboCalibrators fit (default 5000).",
-    )
     args = parser.parse_args()
 
     result = train_nn(
@@ -1226,8 +1149,6 @@ def _cli() -> None:
         weight_decay=args.weight_decay,
         gradient_clip_val=args.gradient_clip_val,
         early_stopping_patience=args.early_stopping_patience,
-        fit_combo_calibrators=not args.no_fit_combo_calibrators,
-        combo_calibrators_n_samples=args.combo_calibrators_n_samples,
         monitor=args.monitor,
         init_from=args.init_from,
         combo_bet_type=args.combo_bet_type,

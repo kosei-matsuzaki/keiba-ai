@@ -126,9 +126,6 @@ def test_load_model_full_nn_optional_fields_none(tmp_path):
 
     bundle = load_model_full(model_dir)
 
-    assert bundle.combo_calibrators is None
-    assert bundle.nn_calibrator is None
-    assert bundle.place_calibrator is None
     assert bundle.temperature_scaler is None
 
 

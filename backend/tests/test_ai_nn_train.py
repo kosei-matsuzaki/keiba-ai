@@ -51,7 +51,6 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
         device="cpu",
         # Combo calibrators need >=100 samples per bet type, which the tiny
         # synthetic DB cannot provide.  Disable to keep the test fast.
-        fit_combo_calibrators=False,
     )
 
     model_dir = Path(result["model_dir"])
@@ -62,8 +61,6 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
 
     meta = json.loads((model_dir / "meta.json").read_text())
     assert meta.get("has_preprocessor") is True
-    # has_combo_calibrators key always present in meta (may be False when disabled)
-    assert "has_combo_calibrators" in meta
 
 
 def test_train_nn_meta_json_structure(syn_engine_small, tmp_path, monkeypatch):
@@ -249,7 +246,7 @@ def test_train_nn_roi_metrics_present(syn_engine_small, tmp_path, monkeypatch):
         db=db_file, train_end=None, valid_months=2, test_months=1,
         loss="plackett_luce", hidden_dim=16, embed_dim=8, n_heads=2,
         batch_size=4, max_epochs=2, device="cpu",
-        fit_combo_calibrators=False, monitor="valid_tansho_roi",
+        monitor="valid_tansho_roi",
     )
 
     for key in ("valid_tansho_roi", "valid_fukusho_roi", "test_tansho_roi"):
@@ -268,7 +265,7 @@ def test_train_nn_log_growth_loss(syn_engine_small, tmp_path, monkeypatch):
         db=db_file, train_end=None, valid_months=2, test_months=1,
         loss="log_growth", hidden_dim=16, embed_dim=8, n_heads=2,
         batch_size=4, max_epochs=2, device="cpu",
-        fit_combo_calibrators=False, monitor="valid_tansho_roi",
+        monitor="valid_tansho_roi",
     )
 
     model_dir = Path(result["model_dir"])
@@ -287,7 +284,7 @@ def test_train_nn_invalid_monitor_raises(syn_engine_small, tmp_path, monkeypatch
             db=db_file, train_end=None, valid_months=2, test_months=1,
             loss="plackett_luce", hidden_dim=16, embed_dim=8, n_heads=2,
             batch_size=4, max_epochs=1, device="cpu",
-            fit_combo_calibrators=False, monitor="valid_bogus",
+            monitor="valid_bogus",
         )
 
 
@@ -299,13 +296,13 @@ def test_train_nn_init_from_warm_start(syn_engine_small, tmp_path, monkeypatch):
     base = train_nn(
         db=db_file, train_end=None, valid_months=2, test_months=1,
         loss="plackett_luce", hidden_dim=16, embed_dim=8, n_heads=2,
-        batch_size=4, max_epochs=2, device="cpu", fit_combo_calibrators=False,
+        batch_size=4, max_epochs=2, device="cpu",
     )
 
     tuned = train_nn(
         db=db_file, train_end=None, valid_months=2, test_months=1,
         loss="log_growth", hidden_dim=16, embed_dim=8, n_heads=2,
-        batch_size=4, max_epochs=2, device="cpu", fit_combo_calibrators=False,
+        batch_size=4, max_epochs=2, device="cpu",
         monitor="valid_tansho_roi",
         init_from=Path(base["model_dir"]),
     )
@@ -323,7 +320,7 @@ def test_train_nn_combo_nll_loss(syn_engine_small, tmp_path, monkeypatch):
         db=db_file, train_end=None, valid_months=2, test_months=1,
         loss="combo_nll", combo_bet_type="all",
         hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
-        device="cpu", fit_combo_calibrators=False, monitor="valid_ndcg3",
+        device="cpu", monitor="valid_ndcg3",
     )
     meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
     assert meta["loss_type"] == "combo_nll"
@@ -337,7 +334,7 @@ def test_train_nn_multi_objective_loss(syn_engine_small, tmp_path, monkeypatch):
         db=db_file, train_end=None, valid_months=2, test_months=1,
         loss="multi", combo_weight=0.01,
         hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
-        device="cpu", fit_combo_calibrators=False, monitor="valid_tansho_roi",
+        device="cpu", monitor="valid_tansho_roi",
     )
     meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
     assert meta["loss_type"] == "multi"
