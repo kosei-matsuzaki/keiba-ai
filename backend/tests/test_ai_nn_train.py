@@ -134,63 +134,6 @@ def test_train_nn_return_dict_keys(syn_engine_small, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Alternate loss functions: listmle, time_margin
-# ---------------------------------------------------------------------------
-
-
-def test_train_nn_listmle(syn_engine_small, tmp_path, monkeypatch):
-    """train_nn completes with loss=listmle."""
-    engine, db_file = syn_engine_small
-    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
-
-    result = train_nn(
-        db=db_file,
-        train_end=None,
-        valid_months=2,
-        test_months=1,
-        loss="listmle",
-        hidden_dim=16,
-        embed_dim=8,
-        n_heads=2,
-        batch_size=4,
-        max_epochs=1,
-        device="cpu",
-    )
-
-    assert Path(result["model_dir"]).exists()
-    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
-    assert meta["loss_type"] == "listmle"
-
-
-def test_train_nn_time_margin(syn_engine_small, tmp_path, monkeypatch):
-    """train_nn completes with loss=time_margin."""
-    engine, db_file = syn_engine_small
-    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
-
-    result = train_nn(
-        db=db_file,
-        train_end=None,
-        valid_months=2,
-        test_months=1,
-        loss="time_margin",
-        hidden_dim=16,
-        embed_dim=8,
-        n_heads=2,
-        batch_size=4,
-        max_epochs=1,
-        device="cpu",
-    )
-
-    assert Path(result["model_dir"]).exists()
-    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
-    assert meta["loss_type"] == "time_margin"
-
-
-# ---------------------------------------------------------------------------
-# Small batch size
-# ---------------------------------------------------------------------------
-
-
 def test_train_nn_small_batch(syn_engine_small, tmp_path, monkeypatch):
     """train_nn runs with batch_size=2 (edge case)."""
     engine, db_file = syn_engine_small
@@ -370,54 +313,6 @@ def test_train_nn_init_from_warm_start(syn_engine_small, tmp_path, monkeypatch):
     meta = json.loads((Path(tuned["model_dir"]) / "meta.json").read_text())
     assert meta["params"]["init_from"] == base["model_dir"]
     assert meta["loss_type"] == "log_growth"
-
-
-def test_train_nn_log_growth_place_loss(syn_engine_small, tmp_path, monkeypatch):
-    """train_nn() trains end-to-end with the 複勝 log_growth_place loss."""
-    engine, db_file = syn_engine_small
-    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
-    result = train_nn(
-        db=db_file, train_end=None, valid_months=2, test_months=1,
-        loss="log_growth_place", hidden_dim=16, embed_dim=8, n_heads=2,
-        batch_size=4, max_epochs=2, device="cpu", fit_combo_calibrators=False,
-        monitor="valid_fukusho_roi",
-    )
-    model_dir = Path(result["model_dir"])
-    assert (model_dir / "model.pt").exists()
-    meta = json.loads((model_dir / "meta.json").read_text())
-    assert meta.get("loss_type") == "log_growth_place"
-
-
-def test_train_nn_log_growth_combo_loss(syn_engine_small, tmp_path, monkeypatch):
-    """End-to-end: inject 馬連 payouts, train with the log_growth_combo loss."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import Session as _Session
-
-    from db.models.payout import Payout
-    from db.models.race import Race
-
-    engine, db_file = syn_engine_small
-    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
-
-    # Inject one 馬連 payout per race so the combo loss has data.
-    with _Session(engine) as s:
-        rids = [r for (r,) in s.execute(select(Race.race_id)).all()]
-        for n, rid in enumerate(rids):
-            s.add(Payout(race_id=rid, bet_type="馬連", combo="1-2",
-                         amount=1500 + (n % 5) * 800, popularity=None))
-        s.commit()
-
-    result = train_nn(
-        db=db_file, train_end=None, valid_months=2, test_months=1,
-        loss="log_growth_combo", combo_bet_type="馬連",
-        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
-        device="cpu", fit_combo_calibrators=False, monitor="valid_ndcg3",
-    )
-    model_dir = Path(result["model_dir"])
-    assert (model_dir / "model.pt").exists()
-    meta = json.loads((model_dir / "meta.json").read_text())
-    assert meta["loss_type"] == "log_growth_combo"
-    assert meta["combo_bet_type"] == "馬連"
 
 
 def test_train_nn_combo_nll_loss(syn_engine_small, tmp_path, monkeypatch):
