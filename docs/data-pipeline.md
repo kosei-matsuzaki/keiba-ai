@@ -208,7 +208,7 @@ uv run python -m jobs.ingest_range \
 - 直近上がり 3F 平均（`recent_avg_agari_3f`）: entries テーブルの `agari_3f` 列を参照する。旧取り込み分は `agari_3f = NULL` のまま残るため、初期段階では NaN になりやすい
 - 血統特徴量（`sire_progeny_win_rate` / `dam_progeny_win_rate`）: horses テーブルの `sire` / `dam` に依存する。旧取り込み分の sire/dam が NULL の馬は NaN になる
 
-初回学習・評価フェーズ（データ取り込み開始から数ヶ月程度）では、これらの特徴量が `NaN` のまま LightGBM に渡されることが多い。モデルは native missing value 処理で対応するが、精度は本番データが蓄積した後の再学習時に向上する。
+初回学習・評価フェーズ（データ取り込み開始から数ヶ月程度）では、これらの特徴量が `NaN` のまま NN に渡されることが多い。NNPreprocessor が欠損を補完して対応するが、精度は本番データが蓄積した後の再学習時に向上する。
 
 ---
 

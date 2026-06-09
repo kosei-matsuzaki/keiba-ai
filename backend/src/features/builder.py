@@ -153,7 +153,7 @@ CATEGORICAL_FEATURES: list[str] = [
 
 # 高基数 ID 特徴量 — FEATURE_COLUMNS には絶対に含めない。
 # sire_id / dam_sire_id は netkeiba の馬 ID（10 桁英数字）であり、
-# ユニークな値の種類が数万に及ぶ。LightGBM のカテゴリ分岐では
+# ユニークな値の種類が数万に及ぶ。高基数カテゴリは
 # 有効な汎化ができず過学習・メモリ増大を招くため除外する。
 # 代わりに集約特徴量（sire_progeny_win_rate / dam_progeny_win_rate）を使う。
 HIGH_CARDINALITY_ID_FEATURES: list[str] = [
@@ -274,7 +274,7 @@ def _build_entry_row(
     race_feats = extract_race_features(race, entry, n_runners)
     odds_feats = extract_odds_features(entry)
 
-    # Pedigree features (PR-C); None → NaN so LightGBM gets float columns
+    # Pedigree features (PR-C); None → NaN so downstream gets float columns
     if pedigree_cache is not None:
         sire, dam = pedigree_cache.horse_to_sire_dam.get(
             entry.horse_id, (None, None)

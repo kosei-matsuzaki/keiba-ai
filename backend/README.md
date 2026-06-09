@@ -1,6 +1,6 @@
 # keiba-ai backend
 
-netkeiba スクレイパー + LightGBM 予測バックエンド（個人研究用）。
+netkeiba スクレイパー + PyTorch NN 予測バックエンド（個人研究用）。
 
 ## セットアップ
 

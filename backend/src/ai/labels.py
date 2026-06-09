@@ -1,4 +1,4 @@
-"""Relevance label assignment for LightGBM lambdarank."""
+"""Relevance label assignment for the NN ranking pretrain / NDCG eval."""
 
 from __future__ import annotations
 
@@ -24,8 +24,7 @@ def assign_relevance(finish_position: int | None) -> int:
 def assign_is_winner(finish_position: int | None) -> int:
     """Map finish_position to 0/1 binary "won the race" label.
 
-    Used by the binary-classifier head trained alongside lambdarank to produce
-    naturally-calibrated win probabilities.
+    Maps finish_position to a 0/1 "won the race" label (win-rate eval helper).
 
     Returns:
         1 if finish_position == 1, else 0 (including None / DNF).

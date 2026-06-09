@@ -95,7 +95,7 @@ def get_recommendations(
     Flow:
     1. Resolve active model (503 if none).
     2. Build inference frame for race_id (404 if not found or empty).
-    3. Run predict_race (GBDT/NN 自動切替) to get win_prob / place_prob per horse.
+    3. Run predict_race to get win_prob / place_prob per horse.
     4. Resolve race odds: live → past → unknown.
     5. Run predict_race_with_combinations for combination EVs.
     6. Load Settings (bankroll, kelly_fraction, etc.) and call recommend_for_race.
@@ -113,7 +113,7 @@ def get_recommendations(
     bundle = load_model_full(active_path)
 
     # Step 3: win_prob / place_prob per horse
-    # GBDT/NN を bundle.model_type で自動切替 (calibrator / temperature 等は内部で適用)
+    # bundle 経由で推論 (temperature scaler 等は内部で適用)
     predictions = predict_race(bundle, frame)
 
     # Join post_position from frame so recommend_for_race can build top_pps.

@@ -4,8 +4,8 @@ registry.py から呼ばれる低レベル NN 保存/読み込みプリミティ
 公開 API ではない — 使う側は ai.registry の save_nn_model / load_model_full
 を経由すること。
 
-torch は遅延 import — torch が入っていない環境でも、GBDT 経路は
-このモジュール側に触れないので影響しない。
+torch は遅延 import — torch が入っていない環境 (scraper / ingest のみ) でも、
+このモジュールに触れなければ影響しない。
 """
 
 from __future__ import annotations
@@ -114,26 +114,10 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         from ai.nn.preprocess import NNPreprocessor  # noqa: PLC0415
         nn_preprocessor = NNPreprocessor.load(preprocessor_path)
 
-    combo_calibrators = None
-    combo_cal_path = path / "combo_calibrators.pkl"
-    if combo_cal_path.exists():
-        with combo_cal_path.open("rb") as f:
-            combo_calibrators = _pickle_load(f)
-
-    # Post-hoc IsotonicCalibrator for NN win_prob. Optional — older NN models
-    # were saved without it; older bundles continue to work uncalibrated.
-    nn_calibrator = None
-    nn_cal_path = path / "nn_calibrator.pkl"
-    if nn_cal_path.exists():
-        with nn_cal_path.open("rb") as f:
-            nn_calibrator = _pickle_load(f)
-
     return {
         "nn_model": race_model,
         "nn_horse_feature_cols": horse_feature_cols,
         "nn_race_feature_cols": race_feature_cols,
         "nn_preprocessor": nn_preprocessor,
         "temperature_scaler": temperature_scaler,
-        "combo_calibrators": combo_calibrators,
-        "nn_calibrator": nn_calibrator,
     }

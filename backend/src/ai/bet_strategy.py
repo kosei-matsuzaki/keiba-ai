@@ -384,11 +384,11 @@ def recommend_for_race(
     Args:
         predictions: DataFrame with columns [horse_id, score, win_prob,
             post_position].  Horses are sorted by score descending (output of
-            predict_race_gbdt).  The 'post_position' column must be present; it is
-            not always included in raw predict_race_gbdt output, so callers are
+            predict_race).  The 'post_position' column must be present; it is
+            not always included in raw predict_race output, so callers are
             expected to join it from the feature frame.
         combinations_by_type: Dict mapping bet_type to list[CombinationPrediction]
-            (output of predict_race_with_combinations_gbdt).
+            (output of predict_race_with_combinations).
         race_id: Identifier for the race.
         bankroll: Current bankroll in yen.
         kelly_fraction: Fractional Kelly multiplier.

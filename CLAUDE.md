@@ -71,7 +71,7 @@ core / settings は横断
 - `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceModel、`nn_preprocessor` / `temperature_scaler` / `combo_calibrators` / `nn_calibrator` / `place_calibrator` は optional
 - 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/predict.py`)
 - combo 確率は NN スコア → 解析的 Plackett-Luce で導出し、`combo_calibrators.pkl` (連系券種ごとの isotonic) で校正する。校正の post-hoc fit は `scripts/fit_nn_combo_calibrators.py`
-- SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (旧 GBDT TreeExplainer の名残でルーター互換のため残置)
+- SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (ルーター互換のための残置スタブ)
 
 ### NN は optional dep
 `torch` / `lightning` は `pyproject.toml` の `[project.optional-dependencies].nn`。未インストール環境では `load_model_full` / 予測系が `ModuleNotFoundError`。導入は `uv pip install -e ".[nn]"`。scraper/ingest だけなら torch 不要。

@@ -1,13 +1,13 @@
 # KEIBA AI
 
-netkeiba データを LightGBM で学習し、単勝・複勝・各種馬券の買目予想と確率を提示する個人研究用ツール。FastAPI バックエンド + React 管理画面構成で、`scripts/dev.sh` で起動した dev サーバにブラウザでアクセスして利用する。
+netkeiba データを NN（PyTorch Set Transformer ランキング）で学習し、単勝・複勝・各種馬券の買目予想と確率を提示する個人研究用ツール。FastAPI バックエンド + React 管理画面構成で、`scripts/dev.sh` で起動した dev サーバにブラウザでアクセスして利用する。
 
 ## 概要
 
 | 項目 | 内容 |
 |---|---|
 | カテゴリ | Tool / AI（競馬予想支援・個人研究用） |
-| バックエンド | FastAPI (Python) + LightGBM |
+| バックエンド | FastAPI (Python) + PyTorch NN |
 | フロントエンド | React + Vite + TypeScript + shadcn/ui + Tailwind |
 | データソース | netkeiba スクレイピング（個人研究範囲・レート制御徹底） |
 | DB | SQLite（SQLAlchemy + Alembic） |
@@ -43,7 +43,7 @@ bash scripts/dev.sh
 | [docs/spec.md](docs/spec.md) | 技術仕様（スタック・DB・API・開発ビルド手順） |
 | [docs/design.md](docs/design.md) | 設計方針（アーキテクチャ・AI モジュール・UI 構成） |
 | [docs/data-pipeline.md](docs/data-pipeline.md) | スクレイピング・取り込み仕様 |
-| [docs/ai-model.md](docs/ai-model.md) | モデル設計（LightGBM lambdarank・確率変換・評価） |
+| [docs/ai-model.md](docs/ai-model.md) | モデル設計（Set Transformer・損失・確率変換・評価） |
 | [docs/operations.md](docs/operations.md) | 運用（セットアップ・再学習サイクル・バックアップ・障害対応） |
 
 ## 重要な制約
