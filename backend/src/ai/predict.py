@@ -300,12 +300,6 @@ def _combinations_from_base(
     def _est_odds(bet_type: str, combo: str) -> float | None:
         return confirmed.get(bet_type, {}).get(combo)
 
-    def _calibrate(bet_type: str, prob: float) -> float:
-        # Combo calibration is learned inside the NN (combo_nll / multi loss);
-        # no external isotonic post-processing.  Kept as identity for call-site
-        # symmetry with the per-bet-type combo construction below.
-        return prob
-
     def _est_source(bet_type: str, combo: str, has_odds: bool) -> str:
         explicit = sources_map.get(bet_type, {}).get(combo)
         if explicit is not None:
@@ -353,7 +347,7 @@ def _combinations_from_base(
     pair_matrix: np.ndarray = combo_probs["pair"]
     umaren_list: list[CombinationPrediction] = []
     for i, j in combinations(range(n), 2):
-        prob = _calibrate("馬連", float(pair_matrix[i, j]))
+        prob = float(pair_matrix[i, j])
         pp_i, pp_j = int(post_positions[i]), int(post_positions[j])
         pp_lo, pp_hi = (pp_i, pp_j) if pp_i <= pp_j else (pp_j, pp_i)
         combo = f"{pp_lo}-{pp_hi}"
@@ -370,7 +364,7 @@ def _combinations_from_base(
     # ワイド
     wide_list: list[CombinationPrediction] = []
     for i, j in combinations(range(n), 2):
-        prob = _calibrate("ワイド", float(wide_matrix[i, j]))
+        prob = float(wide_matrix[i, j])
         pp_i, pp_j = int(post_positions[i]), int(post_positions[j])
         pp_lo, pp_hi = (pp_i, pp_j) if pp_i <= pp_j else (pp_j, pp_i)
         combo = f"{pp_lo}-{pp_hi}"
@@ -388,7 +382,7 @@ def _combinations_from_base(
     ordered_pair_matrix: np.ndarray = combo_probs["ordered_pair"]
     umatan_list: list[CombinationPrediction] = []
     for i, j in permutations(range(n), 2):
-        prob = _calibrate("馬単", float(ordered_pair_matrix[i, j]))
+        prob = float(ordered_pair_matrix[i, j])
         pp_i, pp_j = int(post_positions[i]), int(post_positions[j])
         combo = f"{pp_i}→{pp_j}"
         est = _est_odds("馬単", combo)
@@ -406,7 +400,7 @@ def _combinations_from_base(
     sanrenpuku_list: list[CombinationPrediction] = []
     for i, j, k in combinations(range(n), 3):
         fs = frozenset({i, j, k})
-        prob = _calibrate("三連複", float(triple_prob.get(fs, 0.0)))
+        prob = float(triple_prob.get(fs, 0.0))
         pp_i, pp_j, pp_k = int(post_positions[i]), int(post_positions[j]), int(post_positions[k])
         pps = tuple(sorted([pp_i, pp_j, pp_k]))
         combo = f"{pps[0]}-{pps[1]}-{pps[2]}"
@@ -423,7 +417,7 @@ def _combinations_from_base(
     # 三連単
     sanrentan_list: list[CombinationPrediction] = []
     for i, j, k in permutations(range(n), 3):
-        prob = _calibrate("三連単", float(ordered_triple[i, j, k]))
+        prob = float(ordered_triple[i, j, k])
         pp_i, pp_j, pp_k = int(post_positions[i]), int(post_positions[j]), int(post_positions[k])
         combo = f"{pp_i}→{pp_j}→{pp_k}"
         est = _est_odds("三連単", combo)

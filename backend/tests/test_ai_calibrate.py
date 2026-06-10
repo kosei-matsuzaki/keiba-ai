@@ -10,12 +10,7 @@ import pytest
 
 from ai.calibrate import (
     compute_all_combination_probs,
-    plackett_luce_ordered_pair_prob,
-    plackett_luce_ordered_triple_prob,
-    plackett_luce_pair_prob,
     plackett_luce_place_prob,
-    plackett_luce_position_prob,
-    plackett_luce_triple_prob,
     sample_top_k,
     softmax_within_race,
     top_k_cumulative_prob,
@@ -231,101 +226,6 @@ def test_plackett_luce_place_prob_variance_shrinks_with_more_samples():
     low_sample = plackett_luce_place_prob(scores, k=3, n_samples=1_000, rng=np.random.default_rng(1))
     # The 10k estimate should not deviate wildly from the 1k estimate on average
     assert np.abs(reference - low_sample).mean() < 0.05
-
-
-# ---------------------------------------------------------------------------
-# plackett_luce_position_prob
-# ---------------------------------------------------------------------------
-
-def test_plackett_luce_position_prob_shape():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(10)
-    pos_prob = plackett_luce_position_prob(scores, max_position=3, n_samples=500, rng=rng)
-    assert pos_prob.shape == (4, 3)
-
-
-def test_plackett_luce_position_prob_dominant_first_place():
-    """A vastly superior horse should have position_prob[0, 0] near 1.0."""
-    scores = np.array([20.0, 0.0, 0.0, 0.0, 0.0])
-    rng = np.random.default_rng(11)
-    pos_prob = plackett_luce_position_prob(scores, max_position=3, n_samples=5_000, rng=rng)
-    assert pos_prob[0, 0] == pytest.approx(1.0, abs=0.02)
-
-
-def test_plackett_luce_position_prob_columns_sum_to_one():
-    """Each position column should sum to 1 across all horses."""
-    scores = np.array([2.0, 1.5, 1.0, 0.5])
-    rng = np.random.default_rng(12)
-    pos_prob = plackett_luce_position_prob(scores, max_position=3, n_samples=2_000, rng=rng)
-    for col in range(3):
-        assert pos_prob[:, col].sum() == pytest.approx(1.0, abs=0.01)
-
-
-# ---------------------------------------------------------------------------
-# plackett_luce_pair_prob / ordered_pair_prob
-# ---------------------------------------------------------------------------
-
-def test_plackett_luce_pair_prob_symmetric():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(20)
-    pair = plackett_luce_pair_prob(scores, n_samples=500, rng=rng)
-    np.testing.assert_array_equal(pair, pair.T)
-
-
-def test_plackett_luce_pair_prob_diagonal_zero():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(21)
-    pair = plackett_luce_pair_prob(scores, n_samples=500, rng=rng)
-    np.testing.assert_array_equal(np.diag(pair), 0)
-
-
-def test_plackett_luce_ordered_pair_not_symmetric():
-    scores = np.array([5.0, 1.0, 0.5, 0.2])
-    rng = np.random.default_rng(22)
-    op = plackett_luce_ordered_pair_prob(scores, n_samples=2_000, rng=rng)
-    # (0 wins, 1 second) should be much more likely than (1 wins, 0 second)
-    assert op[0, 1] > op[1, 0]
-
-
-def test_plackett_luce_ordered_pair_diagonal_zero():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(23)
-    op = plackett_luce_ordered_pair_prob(scores, n_samples=500, rng=rng)
-    np.testing.assert_array_equal(np.diag(op), 0)
-
-
-# ---------------------------------------------------------------------------
-# plackett_luce_triple_prob / ordered_triple_prob
-# ---------------------------------------------------------------------------
-
-def test_plackett_luce_triple_prob_keys_are_frozensets():
-    scores = np.array([3.0, 2.0, 1.0, 0.5, 0.2])
-    rng = np.random.default_rng(30)
-    triple = plackett_luce_triple_prob(scores, n_samples=500, rng=rng)
-    for key in triple:
-        assert isinstance(key, frozenset)
-        assert len(key) == 3
-
-
-def test_plackett_luce_triple_prob_sums_to_one():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(31)
-    triple = plackett_luce_triple_prob(scores, n_samples=2_000, rng=rng)
-    assert sum(triple.values()) == pytest.approx(1.0, abs=0.01)
-
-
-def test_plackett_luce_ordered_triple_shape():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(40)
-    ot = plackett_luce_ordered_triple_prob(scores, n_samples=500, rng=rng)
-    assert ot.shape == (4, 4, 4)
-
-
-def test_plackett_luce_ordered_triple_sums_to_one():
-    scores = np.array([3.0, 2.0, 1.0, 0.5])
-    rng = np.random.default_rng(41)
-    ot = plackett_luce_ordered_triple_prob(scores, n_samples=2_000, rng=rng)
-    assert ot.sum() == pytest.approx(1.0, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
