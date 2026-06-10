@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ai._pickle_compat import legacy_pickle_load
 from features.builder import CATEGORICAL_FEATURES
 
 _STD_EPS = 1e-6
@@ -170,7 +171,7 @@ class NNPreprocessor:
     @classmethod
     def load(cls, path: Path) -> NNPreprocessor:
         with path.open("rb") as f:
-            obj = pickle.load(f)
+            obj = legacy_pickle_load(f)
         if not isinstance(obj, cls):
             raise TypeError(f"Expected NNPreprocessor, got {type(obj).__name__}")
         return obj
