@@ -1,7 +1,7 @@
 """CLI: Backtest evaluation — NDCG, hit rates, and ROI.
 
 Usage:
-    uv run python -m ai.evaluate --model <path>
+    uv run python -m ai.evaluation.backtest --model <path>
                                            [--db PATH]
                                            [--start YYYY-MM-DD]
                                            [--end YYYY-MM-DD]
@@ -38,8 +38,8 @@ from sqlalchemy import select
 
 from ai.core.labels import assign_relevance
 from ai.core.probabilities import plackett_luce_place_prob
+from ai.inference.predict import predict_race
 from ai.model.registry import load_model_full
-from ai.predict import predict_race
 from core.paths import db_path
 from db.models import ModelRun
 from db.session import make_engine, session_scope

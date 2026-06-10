@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ai.bet_odds import compute_race_odds_with_sources
-from ai.bet_strategy import recommend_for_race
+from ai.betting.odds import compute_race_odds_with_sources
+from ai.betting.strategy import recommend_for_race
+from ai.inference.predict import predict_race, predict_race_with_combinations
 from ai.model.registry import get_active, load_model_full
-from ai.predict import predict_race, predict_race_with_combinations
 from api.deps import build_inference_frame_or_404, get_session, get_settings_store
 from core.bet_types import DEFAULT_ENABLED_BET_TYPES
 from core.logging import get_logger

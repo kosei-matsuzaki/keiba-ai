@@ -14,7 +14,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from ai.simulation import SimulationResult
+from ai.simulation.engine import SimulationResult
 from db.models.simulation_run import SimulationRun
 
 log = logging.getLogger(__name__)

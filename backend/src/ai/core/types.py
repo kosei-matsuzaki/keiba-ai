@@ -1,7 +1,7 @@
 """Shared type definitions for the AI layer.
 
 Placing CombinationPrediction here avoids a circular dependency between
-ai.predict (which produces predictions) and api.schemas
+ai.inference.predict (which produces predictions) and api.schemas
 (which consumes them via routers).  Both layers import from this module.
 """
 

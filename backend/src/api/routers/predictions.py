@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai.model.registry import get_active, load_model_full
-from ai.predict import (
+from ai.inference.predict import (
     predict_race,
     predict_race_with_combinations,
     predict_race_with_shap,
 )
+from ai.model.registry import get_active, load_model_full
 from api.deps import build_inference_frame_or_404, get_session
 from api.schemas import (
     BulkPredictionsResponse,

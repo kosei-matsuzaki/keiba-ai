@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import db.models  # noqa: F401
-from ai.bet_odds import (
+from ai.betting.odds import (
     compute_implied_combo_odds_from_tansho,
     compute_past_race_odds,
     tansho_to_pl_scores,
@@ -367,7 +367,7 @@ def _keiba_session_with_race():
 
 
 def test_scraped_layer_priority(tmp_path):
-    from ai.bet_odds import compute_race_odds_with_sources
+    from ai.betting.odds import compute_race_odds_with_sources
     from db.odds_db import (
         init_odds_db,
         make_odds_engine,
@@ -402,7 +402,7 @@ def test_scraped_layer_priority(tmp_path):
 
 
 def test_without_odds_session_falls_back_to_implied(tmp_path):
-    from ai.bet_odds import compute_race_odds_with_sources
+    from ai.betting.odds import compute_race_odds_with_sources
 
     keiba = _keiba_session_with_race()
     odds, sources = compute_race_odds_with_sources(keiba, "R1")

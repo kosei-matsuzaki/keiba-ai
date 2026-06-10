@@ -21,12 +21,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from ai.model.registry import _resolve_model_path
-from ai.simulation import (
+from ai.simulation.engine import (
     STRATEGY_PRESETS,
     SimulationResult,
     simulate_active_model,
 )
-from ai.simulation_persistence import (
+from ai.simulation.persistence import (
     delete_simulation_run,
     get_simulation_run,
     list_simulation_runs,

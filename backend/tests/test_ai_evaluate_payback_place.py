@@ -9,7 +9,7 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from ai.evaluate import _parse_payout_place, evaluate
+from ai.evaluation.backtest import _parse_payout_place, evaluate
 from db.models.race import Race
 from tests.synthetic import make_synthetic_db, train_synthetic_nn
 

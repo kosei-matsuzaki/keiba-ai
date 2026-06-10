@@ -8,7 +8,7 @@ from itertools import combinations, permutations
 
 import pandas as pd
 
-from ai.bet_strategy import (
+from ai.betting.strategy import (
     assign_stakes,
     generate_box,
     generate_formation,

@@ -11,9 +11,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+from ai.inference.predict import predict_race, predict_race_with_combinations
 from ai.model.net import RaceModel
 from ai.model.registry import ModelBundle, load_model_full, save_nn_model
-from ai.predict import predict_race, predict_race_with_combinations
 
 # ---------------------------------------------------------------------------
 # Helpers

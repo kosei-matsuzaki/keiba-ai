@@ -11,8 +11,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 import db.models  # noqa: F401
-from ai.simulation import BankrollPoint, GroupStats, SimulationResult
-from ai.simulation_persistence import (
+from ai.simulation.engine import BankrollPoint, GroupStats, SimulationResult
+from ai.simulation.persistence import (
     MAX_SAVED_RUNS,
     delete_simulation_run,
     get_simulation_run,

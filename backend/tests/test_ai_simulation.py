@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ai.simulation import (
+from ai.simulation.engine import (
     STRATEGY_PRESETS,
     GroupStats,
     _settle_candidates,
@@ -160,7 +160,7 @@ def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
     from db.base import Base
     from db.models.entry import Entry
     from db.models.horse import Horse
@@ -211,7 +211,7 @@ def test_compounding_initial_bankroll_equals_budget(monkeypatch):
 
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=1)
 
@@ -240,7 +240,7 @@ def test_compounding_bankroll_grows_with_payouts(monkeypatch):
 
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
@@ -275,7 +275,7 @@ def test_compounding_bankroll_shrinks_on_loss(monkeypatch):
 
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
@@ -309,7 +309,7 @@ def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
 
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
@@ -346,7 +346,7 @@ def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
 
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
@@ -400,7 +400,7 @@ def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
 
     from sqlalchemy.orm import Session
 
-    import ai.simulation as sim_mod
+    import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
