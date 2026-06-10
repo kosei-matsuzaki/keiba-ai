@@ -22,12 +22,11 @@ from core.paths import db_path
 from db.base import Base
 from db.models.entry import Entry
 from db.models.horse import Horse
-from db.models.jockey import Jockey
 from db.models.payout import Payout
 from db.models.race import Race
-from db.models.trainer import Trainer
 from db.session import make_engine, session_scope
 from jobs.scrape_log import already_scraped, record_scrape_log
+from jobs.upserts import upsert_horse, upsert_jockey, upsert_trainer
 from scraper import cache as cache_module
 from scraper import stop_flag
 from scraper.netkeiba import NetkeibaClient
@@ -131,35 +130,14 @@ async def _ensure_masters(
                 except Exception as exc:
                     logger.warning("horse_pedigree fetch failed for %s: %s", e.horse_id, exc)
 
-            stmt = sqlite_insert(Horse).values(**horse_kwargs)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["horse_id"],
-                set_={
-                    "name": sa.func.coalesce(stmt.excluded.name, Horse.name),
-                    "sex": sa.func.coalesce(stmt.excluded.sex, Horse.sex),
-                    "birth_date": sa.func.coalesce(stmt.excluded.birth_date, Horse.birth_date),
-                    "sire": sa.func.coalesce(stmt.excluded.sire, Horse.sire),
-                    "dam": sa.func.coalesce(stmt.excluded.dam, Horse.dam),
-                },
-            )
-            session.execute(stmt)
+            upsert_horse(session, horse_kwargs)
 
         if e.jockey_id and e.jockey_id not in jockeys_seen:
-            stmt = sqlite_insert(Jockey).values(jockey_id=e.jockey_id, name=e.jockey_name)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["jockey_id"],
-                set_={"name": sa.func.coalesce(stmt.excluded.name, Jockey.name)},
-            )
-            session.execute(stmt)
+            upsert_jockey(session, e.jockey_id, e.jockey_name)
             jockeys_seen.add(e.jockey_id)
 
         if e.trainer_id and e.trainer_id not in trainers_seen:
-            stmt = sqlite_insert(Trainer).values(trainer_id=e.trainer_id, name=e.trainer_name)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["trainer_id"],
-                set_={"name": sa.func.coalesce(stmt.excluded.name, Trainer.name)},
-            )
-            session.execute(stmt)
+            upsert_trainer(session, e.trainer_id, e.trainer_name)
             trainers_seen.add(e.trainer_id)
 
 

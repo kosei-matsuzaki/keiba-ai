@@ -50,12 +50,10 @@ from core.logging import configure_logging, get_logger
 from core.paths import db_path
 from db.base import Base
 from db.models.entry import Entry
-from db.models.horse import Horse
-from db.models.jockey import Jockey
 from db.models.race import Race
-from db.models.trainer import Trainer
 from db.session import make_engine, session_scope
 from jobs.scrape_log import record_scrape_log
+from jobs.upserts import upsert_horse, upsert_jockey, upsert_trainer
 from scraper import cache as cache_module
 from scraper import stop_flag
 from scraper.netkeiba import NetkeibaClient
@@ -133,29 +131,15 @@ def _upsert_masters_from_shutuba(session: Session, result: ParsedShutuba) -> Non
     for e in result.entries:
         if e.horse_id and e.horse_id not in horses_seen:
             horses_seen.add(e.horse_id)
-            stmt = sqlite_insert(Horse).values(horse_id=e.horse_id, name=e.horse_name)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["horse_id"],
-                set_={"name": sa.func.coalesce(stmt.excluded.name, Horse.name)},
-            )
-            session.execute(stmt)
+            # 出馬表段階では name のみ。sex/birth_date/sire/dam は渡さない（既存値保持）。
+            upsert_horse(session, {"horse_id": e.horse_id, "name": e.horse_name})
 
         if e.jockey_id and e.jockey_id not in jockeys_seen:
-            stmt = sqlite_insert(Jockey).values(jockey_id=e.jockey_id, name=e.jockey_name)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["jockey_id"],
-                set_={"name": sa.func.coalesce(stmt.excluded.name, Jockey.name)},
-            )
-            session.execute(stmt)
+            upsert_jockey(session, e.jockey_id, e.jockey_name)
             jockeys_seen.add(e.jockey_id)
 
         if e.trainer_id and e.trainer_id not in trainers_seen:
-            stmt = sqlite_insert(Trainer).values(trainer_id=e.trainer_id, name=e.trainer_name)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["trainer_id"],
-                set_={"name": sa.func.coalesce(stmt.excluded.name, Trainer.name)},
-            )
-            session.execute(stmt)
+            upsert_trainer(session, e.trainer_id, e.trainer_name)
             trainers_seen.add(e.trainer_id)
 
 

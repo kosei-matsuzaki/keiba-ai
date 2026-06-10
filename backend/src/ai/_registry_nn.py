@@ -19,7 +19,7 @@ class _LegacyUnpickler(pickle.Unpickler):
     """`keiba_ai.*` 旧パスで pickle 化された artifact を、refactor 後の新パスへ
     透過的にリマップする Unpickler。再学習なしで旧 .pkl を読めるようにする。
 
-    対象は combo_calibrators.pkl / temperature_scaler.pkl / nn_calibrator.pkl 等。
+    対象は preprocessor.pkl / temperature_scaler.pkl 等。
     """
 
     def find_class(self, module: str, name: str):
@@ -51,7 +51,7 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
 
     Returns:
         {nn_model, nn_horse_feature_cols, nn_race_feature_cols,
-         nn_preprocessor, temperature_scaler, combo_calibrators}
+         nn_preprocessor, temperature_scaler}
 
     Raises:
         ImportError: torch がインストールされていない環境では発生する。

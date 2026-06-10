@@ -39,7 +39,7 @@ class TestDiscoverTodayRaceIds:
 
         with (
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -60,7 +60,7 @@ class TestDiscoverTodayRaceIds:
 
         with (
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -77,7 +77,7 @@ class TestDiscoverTodayRaceIds:
         """netkeiba 通信エラー時は 502 を返すこと。"""
         with (
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -98,7 +98,7 @@ class TestDiscoverTodayRaceIds:
 
         with (
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -116,7 +116,7 @@ class TestDiscoverTodayRaceIds:
 
         with (
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -170,13 +170,13 @@ class TestDiscoverThisWeekendRaceIds:
     def _patch_this_weekend(self, sat: date, sun: date):
         """Patch this_weekend_dates in the scraper router to return fixed dates."""
         return patch(
-            "api.routers.scraper.this_weekend_dates",
+            "scraper.discovery.this_weekend_dates",
             return_value=(sat, sun),
         )
 
     def _clear_cache(self) -> None:
         """Module-level discover cache をテスト間でリセットする。"""
-        from api.routers.scraper import _DISCOVER_CACHE
+        from scraper.discovery import _DISCOVER_CACHE
         _DISCOVER_CACHE.clear()
 
     def setup_method(self) -> None:  # pytest hook: called before each test
@@ -223,7 +223,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -251,7 +251,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -274,7 +274,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -319,7 +319,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -345,7 +345,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch(
@@ -387,7 +387,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch("httpx.AsyncClient.get", new=get_mock),
@@ -425,7 +425,7 @@ class TestDiscoverThisWeekendRaceIds:
         with (
             self._patch_this_weekend(sat, sun),
             patch(
-                "api.routers.scraper.RobotsCache.is_allowed",
+                "scraper.discovery.RobotsCache.is_allowed",
                 return_value=True,
             ),
             patch("httpx.AsyncClient.get", new=get_mock),
