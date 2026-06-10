@@ -36,7 +36,7 @@ from core.bet_types import COMBINATION_BET_TYPES
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from ai.registry import ModelBundle
+    from ai.model.registry import ModelBundle
 
 _PLACE_PROB_METHOD = os.environ.get("KEIBA_PLACE_PROB_METHOD", "plackett_luce")
 

@@ -1,7 +1,7 @@
 """NN (PyTorch) model artifact I/O (internal).
 
 registry.py から呼ばれる低レベル NN 保存/読み込みプリミティブ。
-公開 API ではない — 使う側は ai.registry の save_nn_model / load_model_full
+公開 API ではない — 使う側は ai.model.registry の save_nn_model / load_model_full
 を経由すること。
 
 torch は遅延 import — torch が入っていない環境 (scraper / ingest のみ) でも、
@@ -13,7 +13,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from ai._pickle_compat import legacy_pickle_load as _pickle_load
+from ai.model._pickle_compat import legacy_pickle_load as _pickle_load
 
 
 def save_nn_artifacts(state_dict_path: Path, model_dir: Path) -> None:
@@ -52,7 +52,7 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
 
     arch_version = int(meta.get("arch_version", 1))
     if arch_version >= 2:
-        from ai.nn.model import RaceTransformerModel  # noqa: PLC0415
+        from ai.model.net import RaceTransformerModel  # noqa: PLC0415
 
         cat_meta: dict = meta.get("cat_metadata", {}) or {}
         race_model: torch.nn.Module = RaceTransformerModel(
@@ -69,7 +69,7 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
             n_transformer_layers=int(params.get("n_transformer_layers", 2)),
         )
     else:
-        from ai.nn.model import RaceModel  # noqa: PLC0415
+        from ai.model.net import RaceModel  # noqa: PLC0415
 
         race_model = RaceModel(
             horse_feat_dim=horse_feat_dim,
@@ -92,7 +92,7 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
     nn_preprocessor = None
     preprocessor_path = path / "preprocessor.pkl"
     if preprocessor_path.exists():
-        from ai.nn.preprocess import NNPreprocessor  # noqa: PLC0415
+        from ai.model.preprocess import NNPreprocessor  # noqa: PLC0415
         nn_preprocessor = NNPreprocessor.load(preprocessor_path)
 
     return {

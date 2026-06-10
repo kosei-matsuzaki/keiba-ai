@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ai._pickle_compat import legacy_pickle_load
+from ai.model._pickle_compat import legacy_pickle_load
 from features.builder import CATEGORICAL_FEATURES
 
 _STD_EPS = 1e-6

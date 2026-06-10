@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
-from ai._registry_nn import load_nn_artifacts, save_nn_artifacts
 from ai.core.temperature import TemperatureScaler
+from ai.model._artifacts_nn import load_nn_artifacts, save_nn_artifacts
 from core.paths import data_dir
 from db.models.model_run import ModelRun
 from features.builder import FEATURE_COLUMNS
@@ -25,7 +25,7 @@ from features.builder import FEATURE_COLUMNS
 if TYPE_CHECKING:
     import torch.nn
 
-    from ai.nn.preprocess import NNPreprocessor
+    from ai.model.preprocess import NNPreprocessor
 
 
 @dataclass

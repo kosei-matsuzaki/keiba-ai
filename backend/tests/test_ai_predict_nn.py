@@ -11,9 +11,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from ai.nn.model import RaceModel
+from ai.model.net import RaceModel
+from ai.model.registry import ModelBundle, load_model_full, save_nn_model
 from ai.predict import predict_race, predict_race_with_combinations
-from ai.registry import ModelBundle, load_model_full, save_nn_model
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -179,7 +179,7 @@ def test_predict_race_with_combinations_bundle_nn_combination_prediction_fields(
 
 def test_predict_race_bundle_nn_uses_preprocessor_when_present(tmp_path):
     """When preprocessor.pkl is in the model dir, predict_race uses it (not legacy encode)."""
-    from ai.nn.preprocess import NNPreprocessor
+    from ai.model.preprocess import NNPreprocessor
 
     bundle = _make_bundle(tmp_path)
     # Fit and save a preprocessor next to the model
@@ -197,7 +197,7 @@ def test_predict_race_bundle_nn_uses_preprocessor_when_present(tmp_path):
     pp.save(bundle.model_dir / "preprocessor.pkl")
 
     # Reload so bundle picks up the preprocessor
-    from ai.registry import load_model_full
+    from ai.model.registry import load_model_full
     bundle = load_model_full(bundle.model_dir)
     assert bundle.nn_preprocessor is not None
 

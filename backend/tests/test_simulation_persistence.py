@@ -205,7 +205,7 @@ def test_delete_model_cascades_to_simulation_runs(engine):
 def test_renumber_model_ids_cascades_to_simulation_runs(engine):
     """renumber_model_ids で model_runs.id が振り直されても FK が追従する
     (ON UPDATE CASCADE)。"""
-    from ai.registry import renumber_model_ids
+    from ai.model.registry import renumber_model_ids
 
     with Session(engine) as session:
         # id を飛び番にするため 3 件作って真ん中を消す

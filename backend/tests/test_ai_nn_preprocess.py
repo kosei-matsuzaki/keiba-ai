@@ -1,11 +1,11 @@
-"""Tests for ai.nn.preprocess.NNPreprocessor."""
+"""Tests for ai.model.preprocess.NNPreprocessor."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from ai.nn.preprocess import NNPreprocessor
+from ai.model.preprocess import NNPreprocessor
 
 
 def _make_train_df() -> pd.DataFrame:

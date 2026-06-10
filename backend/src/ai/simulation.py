@@ -29,8 +29,8 @@ from ai.bet_odds import (
     compute_race_odds_with_sources,
 )
 from ai.bet_strategy import recommend_for_race
+from ai.model.registry import ModelBundle, load_model_full
 from ai.predict import predict_race, predict_race_with_combinations
-from ai.registry import ModelBundle, load_model_full
 from core.bet_types import COMBINATION_BET_TYPES
 from core.logging import get_logger
 from db.odds_db import init_odds_db, make_odds_engine

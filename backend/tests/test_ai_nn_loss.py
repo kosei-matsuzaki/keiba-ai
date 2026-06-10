@@ -1,4 +1,4 @@
-"""Tests for ai.nn.loss (plackett_luce, log_growth, combo_nll, multi)."""
+"""Tests for ai.model.loss (plackett_luce, log_growth, combo_nll, multi)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import math
 import numpy as np
 import torch
 
-from ai.nn.loss import (
+from ai.model.loss import (
     _pl_exacta,
     _winning_combo_prob,
     combo_nll_loss,

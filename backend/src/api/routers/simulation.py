@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from ai.registry import _resolve_model_path
+from ai.model.registry import _resolve_model_path
 from ai.simulation import (
     STRATEGY_PRESETS,
     SimulationResult,

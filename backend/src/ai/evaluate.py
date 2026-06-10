@@ -38,15 +38,15 @@ from sqlalchemy import select
 
 from ai.core.labels import assign_relevance
 from ai.core.probabilities import plackett_luce_place_prob
+from ai.model.registry import load_model_full
 from ai.predict import predict_race
-from ai.registry import load_model_full
 from core.paths import db_path
 from db.models import ModelRun
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
 
 if TYPE_CHECKING:
-    from ai.registry import ModelBundle
+    from ai.model.registry import ModelBundle
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)

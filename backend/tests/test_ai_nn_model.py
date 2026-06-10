@@ -1,11 +1,11 @@
-"""Tests for ai.nn.model (HorseEncoder, RaceModel, RaceTransformerModel)."""
+"""Tests for ai.model.net (HorseEncoder, RaceModel, RaceTransformerModel)."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from ai.nn.model import HorseEncoder, HorseEncoderWithEmb, RaceModel, RaceTransformerModel
+from ai.model.net import HorseEncoder, HorseEncoderWithEmb, RaceModel, RaceTransformerModel
 
 BATCH = 2
 MAX_HORSES = 8

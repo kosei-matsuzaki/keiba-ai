@@ -11,8 +11,8 @@ from pathlib import Path
 
 import torch
 
-from ai.nn.model import RaceModel
-from ai.registry import ModelBundle, load_model_full, save_nn_model
+from ai.model.net import RaceModel
+from ai.model.registry import ModelBundle, load_model_full, save_nn_model
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,7 +162,7 @@ def test_load_model_full_nn_loads_preprocessor_when_present(tmp_path):
     """If preprocessor.pkl exists in the model dir, ModelBundle.nn_preprocessor is populated."""
     import pandas as pd
 
-    from ai.nn.preprocess import NNPreprocessor
+    from ai.model.preprocess import NNPreprocessor
 
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
@@ -206,8 +206,8 @@ def test_load_model_full_nn_arch_v2(tmp_path):
     """arch_version=2 → registry instantiates RaceTransformerModel with cat metadata."""
     import pandas as pd
 
-    from ai.nn.model import RaceTransformerModel
-    from ai.nn.preprocess import NNPreprocessor
+    from ai.model.net import RaceTransformerModel
+    from ai.model.preprocess import NNPreprocessor
 
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
