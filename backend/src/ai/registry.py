@@ -146,7 +146,7 @@ def load_model_full(path: Path) -> ModelBundle:
     """Load a NN ModelBundle from a model directory.
 
     RaceModel (eval mode) + horse/race feature column lists + optional
-    preprocessor / temperature scaler / combo|win|place calibrators。
+    preprocessor / temperature scaler。
 
     torch がインストールされていない環境ではロードに失敗する (ImportError)。
     """
