@@ -1,4 +1,4 @@
-"""Integration tests for ai.nn.train_nn.
+"""Integration tests for ai.training.train_nn.
 
 Uses a synthetic DB so the real keiba.db is never touched.
 Runs with max_epochs=2 (or 1) to keep CI fast.
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
-from ai.nn.train_nn import train_nn
+from ai.training.train_nn import train_nn
 from tests.synthetic import make_synthetic_db
 
 

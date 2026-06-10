@@ -141,7 +141,7 @@ def train_synthetic_nn(db_file, *, train_end=None, valid_months=2, test_months=1
     """
     from pathlib import Path
 
-    from ai.nn.train_nn import train_nn
+    from ai.training.train_nn import train_nn
 
     result = train_nn(
         db=db_file,

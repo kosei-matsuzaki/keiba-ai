@@ -8,7 +8,7 @@ ranking loss used as the first stage of the recommended **two-stage** recipe
 (PL pretrain → ``--init-from`` → ``multi`` fine-tune).  See docs/ai-model.md.
 
 Usage:
-    python -m ai.nn.train_nn \\
+    python -m ai.training.train_nn \\
         --train-end YYYY-MM-DD --valid-months 12 --test-months 6 \\
         --loss {multi,log_growth,combo_nll,plackett_luce} \\
         --monitor {valid_tansho_roi,valid_fukusho_roi,valid_ndcg3} \\

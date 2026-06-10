@@ -148,7 +148,7 @@ def _predict_race_nn(bundle: ModelBundle, frame: pd.DataFrame) -> pd.DataFrame:
         # Legacy fallback: NN models saved before preprocessor.pkl was introduced.
         # The mapping is computed from the single race only, which means the
         # categorical encoding will not match what the model was trained with.
-        from ai.nn.train_nn import _encode_categoricals  # noqa: PLC0415
+        from ai.training.train_nn import _encode_categoricals  # noqa: PLC0415
         encoded = _encode_categoricals(frame, all_feat_cols)
 
     n_horses = len(encoded)
