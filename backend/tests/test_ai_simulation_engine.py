@@ -1,4 +1,4 @@
-"""Unit tests for ai/simulation.py:_settle_candidates and STRATEGY_PRESETS.
+"""Unit tests for ai/simulation/engine.py:_settle_candidates and STRATEGY_PRESETS.
 
 Full integration test (simulate_active_model) requires a trained model bundle
 and is covered manually.

@@ -1,4 +1,4 @@
-"""Tests for ai/evaluate.py — backtest metrics."""
+"""Tests for ai/evaluation/backtest.py — backtest metrics."""
 
 from __future__ import annotations
 

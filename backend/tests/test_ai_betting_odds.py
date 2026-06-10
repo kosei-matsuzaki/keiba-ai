@@ -1,4 +1,4 @@
-"""Tests for ai/bet_odds.py — race-level odds dicts (past payouts + tansho fill)."""
+"""Tests for ai/betting/odds.py — race-level odds dicts (past payouts + tansho fill)."""
 
 from __future__ import annotations
 

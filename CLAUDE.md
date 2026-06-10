@@ -32,8 +32,8 @@ cd frontend && pnpm build          # tsc -b && vite build
 
 ### CLI エントリ (backend/)
 ```bash
-uv run python -m ai.nn.train_nn --train-end 2025-04-30 --valid-months 6 --test-months 6  # NN 学習
-uv run python -m ai.evaluate --model data/models/<ts>-nn --persist    # 評価 + metrics_json 書き戻し
+uv run python -m ai.training.train_nn --train-end 2025-04-30 --valid-months 6 --test-months 6  # NN 学習
+uv run python -m ai.evaluation.backtest --model data/models/<ts>-nn --persist    # 評価 + metrics_json 書き戻し
 uv run keiba-ingest --date 2024-12-28                                       # 単日 ingest
 uv run python -m jobs.ingest_range --start ... --end ...           # 期間 ingest（中断後の resume 対応）
 uv run keiba-backup                                                # keiba.db + odds.db を data/backups/ に世代バックアップ
@@ -67,10 +67,12 @@ core / settings は横断
 ```
 `ai` は `scraper` を直接呼ばない (循環禁止)。`api/routers/*.py` はビジネスロジックを持たず、下層モジュールを呼ぶだけ。
 
+`ai/` は依存 DAG の層に沿って機能サブパッケージ化されている: `core/` (types/labels/splits/temperature/probabilities = 最下層) → `model/` (registry/_artifacts_nn + NN 実装 net/loss/dataset/preprocess) → `training/` (train_nn) / `inference/` (predict) / `betting/` (odds/strategy) / `simulation/` (engine/persistence) / `evaluation/` (backtest)。NN 専用化で旧 `ai/nn/` は廃止。`features/` は公開オーケストレータ `builder.py` と per-domain 抽出器 `features/extractors/*` に分離。
+
 ### 推論パスは bundle 経由 (NN 専用)
 - `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceModel、`nn_preprocessor` / `temperature_scaler` は optional
-- 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/predict.py`)
-- combo 確率は NN スコア → 解析的 Plackett-Luce で導出する。外部 isotonic 校正 (`combo_calibrators` / win / place) は全廃済み。連系の校正は `combo_nll` / `multi` 損失で **NN 内部に学習**させる (下記「連系の校正を NN 内部へ」)。`predict.py` の `_calibrate()` は identity スタブ
+- 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/inference/predict.py`)
+- combo 確率は NN スコア → 解析的 Plackett-Luce で導出する。外部 isotonic 校正 (`combo_calibrators` / win / place) は全廃済み。連系の校正は `combo_nll` / `multi` 損失で **NN 内部に学習**させる (下記「連系の校正を NN 内部へ」)。combo 確率は解析的 PL の出力をそのまま使う (外部後処理なし)
 - SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (ルーター互換のための残置スタブ)
 
 ### NN は optional dep
@@ -115,5 +117,5 @@ core / settings は横断
 - `core/paths.py` の `data_dir()` を経由してパスを組み立てる。`data/` 配下の直書きは避ける
 - WSL から Windows venv の Python を呼ばない (パス・改行・ロックの問題が出る)。Windows uvicorn が動いているときに WSL で `uv sync` する場合は別 `UV_PROJECT_ENVIRONMENT` を渡す
 - NN の損失は **`log_growth` (default)** / `log_growth_place` / `log_growth_combo` / `combo_nll` / `multi` / `plackett_luce` / `listmle` / `time_margin` を `--loss` で選択し `meta.json.loss_type` に記録。既定は ROI 志向 (decision-focused): `log_growth` は実オッズの単勝回収率を fractional-Kelly log-growth で直接最適化し、モデル選択も `--monitor valid_tansho_roi` で行う。`log_growth_place`=複勝。最良構成は **二段階** (`plackett_luce` 事前学習 → `--init-from <model_dir>` で fine-tune)。OOS で単複ROIは順位損失・市場の人気1番を有意に上回るが依然 <1.0 (詳細 `docs/ai-model.md`)
-- **連系の校正を NN 内部へ**: `log_growth_combo`=連系の賭けリターン (解析的PL combo確率, `--combo-bet-type`), `combo_nll`=連系 combo確率の **NLL (proper scoring rule)** で **外部 isotonic 校正を不要にする** (旧 `combo_calibrators` の代替, `--combo-bet-type all` で全連系), `multi`=`log_growth`+`combo_weight`·`combo_nll(all)` の **全馬券対応の本番目的** (`--combo-weight` 既定0.01)。解析ヘルパ `_pl_exacta`/`_pl_trifecta`/`_winning_combo_prob` (`ai/nn/loss.py`)。注: 連系は控除率25%で校正しても黒字化はしない
+- **連系の校正を NN 内部へ**: `log_growth_combo`=連系の賭けリターン (解析的PL combo確率, `--combo-bet-type`), `combo_nll`=連系 combo確率の **NLL (proper scoring rule)** で **外部 isotonic 校正を不要にする** (旧 `combo_calibrators` の代替, `--combo-bet-type all` で全連系), `multi`=`log_growth`+`combo_weight`·`combo_nll(all)` の **全馬券対応の本番目的** (`--combo-weight` 既定0.01)。解析ヘルパ `_pl_exacta`/`_pl_trifecta`/`_winning_combo_prob` (`ai/model/loss.py`)。注: 連系は控除率25%で校正しても黒字化はしない
 - ROI系損失・監視・温度スケーラは **標準化前の生オッズ**を使う必要があるため `odds_win_raw`(単勝)/`place_ret_raw`(複勝)/`combo_payoff_raw`(連系) を非特徴列として dataset/collate に通す (`odds_win` は特徴量で標準化される)。win_prob は softmax(score / T_win)、place_prob は PL Monte Carlo。combo確率は素の PL Monte Carlo (外部 isotonic 校正は全廃済み。`combo_nll`/`multi` 学習で NN 内部に校正が入る)。新しい損失を足すときも `predict_race` の確率変換は共通なので学習側だけ拡張すれば足りる

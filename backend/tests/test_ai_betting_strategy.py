@@ -1,4 +1,4 @@
-"""Tests for ai/bet_strategy.py — pattern generation, Kelly stake, assign_stakes,
+"""Tests for ai/betting/strategy.py — pattern generation, Kelly stake, assign_stakes,
 and recommend_for_race."""
 
 from __future__ import annotations

@@ -520,22 +520,22 @@ pnpm dev
 cd backend
 
 # モデル学習（DB から全データを読み込み、時系列分割して学習）
-uv run python -m ai.nn.train_nn --loss multi --monitor valid_tansho_roi
+uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi
 
 # 学習終了日を指定（学習データの上限を固定する）
-uv run python -m ai.nn.train_nn --loss multi --train-end 2025-12-31
+uv run python -m ai.training.train_nn --loss multi --train-end 2025-12-31
 
 # バックテスト評価（学習済みモデルディレクトリを指定）
-uv run python -m ai.evaluate --model data/models/20260101-120000
+uv run python -m ai.evaluation.backtest --model data/models/20260101-120000
 
 # 評価結果を model_runs.metrics_json にマージ保存する（Dashboard MetricCard に反映させる場合は必須）
-uv run python -m ai.evaluate --model data/models/20260101-120000 --persist
+uv run python -m ai.evaluation.backtest --model data/models/20260101-120000 --persist
 
 # 評価期間を絞る
-uv run python -m ai.evaluate --model data/models/20260101-120000 \
+uv run python -m ai.evaluation.backtest --model data/models/20260101-120000 \
     --start 2025-06-01 --end 2025-12-31
 
 # 1 番人気常時投票ベースラインとの比較（{model, baseline_favorite, delta} を出力）
-uv run python -m ai.evaluate --model data/models/20260101-120000 \
+uv run python -m ai.evaluation.backtest --model data/models/20260101-120000 \
     --baseline favorite
 ```

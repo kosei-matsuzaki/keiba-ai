@@ -1,4 +1,4 @@
-"""Tests for ai/simulation_persistence.py and saved-run API endpoints."""
+"""Tests for ai/simulation/persistence.py and saved-run API endpoints."""
 
 from __future__ import annotations
 

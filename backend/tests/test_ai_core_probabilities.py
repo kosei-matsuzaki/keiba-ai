@@ -1,4 +1,4 @@
-"""Tests for ai/calibrate.py — probability calibration helpers."""
+"""Tests for ai/core/probabilities.py — probability calibration helpers."""
 
 from __future__ import annotations
 

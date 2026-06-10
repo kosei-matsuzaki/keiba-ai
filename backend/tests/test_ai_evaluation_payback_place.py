@@ -1,4 +1,4 @@
-"""Tests for payback_place (複勝回収率) in ai/evaluate.py."""
+"""Tests for payback_place (複勝回収率) in ai/evaluation/backtest.py."""
 
 from __future__ import annotations
 
