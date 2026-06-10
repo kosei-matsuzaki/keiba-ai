@@ -44,29 +44,29 @@ from core.paths import data_dir
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.race import Race
-from features.course import extract_race_features
-from features.horse_history import (
+from features.extractors.course import extract_race_features
+from features.extractors.horse_history import (
     HorseHistoryCache,
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,
     race_class_weight,
 )
-from features.jockey import (
+from features.extractors.jockey import (
     JockeyHistoryCache,
     build_jockey_history_cache,
     compute_jockey_stats,
     compute_jockey_stats_from_cache,
 )
-from features.odds import extract_odds_features
-from features.pedigree import (
+from features.extractors.odds import extract_odds_features
+from features.extractors.pedigree import (
     PedigreeCache,
     build_pedigree_cache,
     compute_pedigree_features,
     compute_pedigree_features_from_cache,
 )
-from features.relative_features import compute_within_race_features
-from features.trainer import (
+from features.extractors.relative_features import compute_within_race_features
+from features.extractors.trainer import (
     TrainerHistoryCache,
     build_trainer_history_cache,
     compute_trainer_stats,

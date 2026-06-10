@@ -17,7 +17,7 @@ from db.base import Base
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.race import Race
-from features.relative_features import compute_within_race_features
+from features.extractors.relative_features import compute_within_race_features
 
 
 @pytest.fixture()

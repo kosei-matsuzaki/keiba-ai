@@ -16,7 +16,7 @@ from db.base import Base
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.race import Race
-from features.pedigree import (
+from features.extractors.pedigree import (
     build_pedigree_cache,
     compute_pedigree_features,
     compute_pedigree_features_from_cache,
