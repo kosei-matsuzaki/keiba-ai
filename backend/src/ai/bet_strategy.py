@@ -29,7 +29,7 @@ import math
 
 import pandas as pd
 
-from ai.types import BetCandidate, CombinationPrediction, RecommendationResult
+from ai.core.types import BetCandidate, CombinationPrediction, RecommendationResult
 
 # ---------------------------------------------------------------------------
 # Internal helpers

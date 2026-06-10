@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from ai._registry_nn import load_nn_artifacts, save_nn_artifacts
-from ai.temperature import TemperatureScaler
+from ai.core.temperature import TemperatureScaler
 from core.paths import data_dir
 from db.models.model_run import ModelRun
 from features.builder import FEATURE_COLUMNS

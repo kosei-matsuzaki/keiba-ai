@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ai.temperature import TemperatureScaler
+from ai.core.temperature import TemperatureScaler
 
 
 def _softmax(scores: np.ndarray) -> np.ndarray:

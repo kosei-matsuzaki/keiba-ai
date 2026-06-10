@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from ai.splits import time_split
+from ai.core.splits import time_split
 
 
 def _make_frame(start: date, n_days: int, rows_per_day: int = 5) -> pd.DataFrame:

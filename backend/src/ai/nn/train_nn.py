@@ -36,7 +36,9 @@ import torch
 from lightning.pytorch.callbacks import EarlyStopping
 from torch.utils.data import DataLoader
 
-from ai.labels import assign_relevance
+from ai.core.labels import assign_relevance
+from ai.core.splits import time_split
+from ai.core.temperature import TemperatureScaler
 from ai.nn.dataset import RaceDataset, collate_fn
 from ai.nn.loss import (
     combo_nll_loss,
@@ -47,8 +49,6 @@ from ai.nn.loss import (
 from ai.nn.model import RaceTransformerModel
 from ai.nn.preprocess import NNPreprocessor
 from ai.registry import save_nn_model
-from ai.splits import time_split
-from ai.temperature import TemperatureScaler
 from core.paths import data_dir, db_path
 from db.models.model_run import ModelRun
 from db.session import make_engine, session_scope

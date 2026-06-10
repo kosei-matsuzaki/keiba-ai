@@ -135,7 +135,7 @@ def _eval_payback_place(
     PL 複勝 prob は temperature 済みスコアの Gumbel-top-3 サンプリングで推定する。
     ここではコスト削減のため近似として softmax top-k mass を使う。
     """
-    from ai.calibrate import plackett_luce_place_prob
+    from ai.core.probabilities import plackett_luce_place_prob
 
     invested = 0.0
     gross = 0.0

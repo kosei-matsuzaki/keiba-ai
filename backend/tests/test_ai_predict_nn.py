@@ -161,7 +161,7 @@ def test_predict_race_with_combinations_bundle_nn_tansho_count(tmp_path):
 
 
 def test_predict_race_with_combinations_bundle_nn_combination_prediction_fields(tmp_path):
-    from ai.types import CombinationPrediction
+    from ai.core.types import CombinationPrediction
     bundle = _make_bundle(tmp_path)
     frame = _make_race_frame(4)
     result = predict_race_with_combinations(bundle, frame)

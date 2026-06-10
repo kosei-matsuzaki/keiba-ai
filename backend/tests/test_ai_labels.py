@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai.labels import assign_relevance
+from ai.core.labels import assign_relevance
 
 
 @pytest.mark.parametrize(

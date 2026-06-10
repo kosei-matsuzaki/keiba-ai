@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pytest
 
-from ai.calibrate import (
+from ai.core.probabilities import (
     compute_all_combination_probs,
     plackett_luce_place_prob,
     sample_top_k,

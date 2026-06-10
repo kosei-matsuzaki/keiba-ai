@@ -24,13 +24,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from ai.calibrate import (
+from ai.core.probabilities import (
     compute_all_combination_probs,
     compute_place_prob,
     softmax_within_race,
     top_k_cumulative_prob,
 )
-from ai.types import CombinationPrediction
+from ai.core.types import CombinationPrediction
 from core.bet_types import COMBINATION_BET_TYPES
 
 if TYPE_CHECKING:

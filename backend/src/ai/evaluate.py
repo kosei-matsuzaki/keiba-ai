@@ -36,8 +36,8 @@ import pandas as pd
 from sklearn.metrics import ndcg_score
 from sqlalchemy import select
 
-from ai.calibrate import plackett_luce_place_prob
-from ai.labels import assign_relevance
+from ai.core.labels import assign_relevance
+from ai.core.probabilities import plackett_luce_place_prob
 from ai.predict import predict_race
 from ai.registry import load_model_full
 from core.paths import db_path

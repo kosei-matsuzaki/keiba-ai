@@ -14,7 +14,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai.calibrate import (
+from ai.core.probabilities import (
     compute_all_combination_probs,
     compute_analytical_combo_probs,
 )
