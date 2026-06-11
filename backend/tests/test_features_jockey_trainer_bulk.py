@@ -20,12 +20,12 @@ from db.models.horse import Horse
 from db.models.jockey import Jockey
 from db.models.race import Race
 from db.models.trainer import Trainer
-from features.jockey import (
+from features.extractors.jockey import (
     build_jockey_history_cache,
     compute_jockey_stats,
     compute_jockey_stats_from_cache,
 )
-from features.trainer import (
+from features.extractors.trainer import (
     build_trainer_history_cache,
     compute_trainer_stats,
     compute_trainer_stats_from_cache,

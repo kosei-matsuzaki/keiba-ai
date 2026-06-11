@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ai.types import BetCandidate, RecommendationResult
+from ai.core.types import BetCandidate, RecommendationResult
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.model_run import ModelRun

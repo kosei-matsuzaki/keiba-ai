@@ -18,7 +18,7 @@ from db.base import Base
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.race import Race
-from features.horse_history import (
+from features.extractors.horse_history import (
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,

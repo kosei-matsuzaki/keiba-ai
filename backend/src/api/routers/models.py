@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai.nn.train_nn import train_nn
-from ai.registry import delete_model_files, renumber_model_ids, set_active_by_id
+from ai.model.registry import delete_model_files, renumber_model_ids, set_active_by_id
+from ai.training.train_nn import train_nn
 from api.deps import get_job_registry, get_or_404, get_session
 from api.jobs import JobRegistry
 from api.schemas import JobAccepted, ModelMeta, TrainRequest, UpdateModelRequest
