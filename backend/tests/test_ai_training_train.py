@@ -63,6 +63,32 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
     assert meta.get("has_preprocessor") is True
 
 
+def test_train_nn_use_history_runs(syn_engine_small, tmp_path, monkeypatch):
+    """use_history=True builds the leak-safe history encoder and trains/evaluates
+    end-to-end (history GRU path through train + ndcg/ROI metrics)."""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+        hidden_dim=16,
+        embed_dim=8,
+        n_heads=2,
+        batch_size=4,
+        max_epochs=2,
+        device="cpu",
+        persist=False,
+        use_history=True,
+        history_seq_len=10,
+    )
+    assert "test_ndcg1" in result
+    assert "valid_ndcg3" in result
+
+
 def test_train_nn_persist_false_writes_nothing(syn_engine_small, tmp_path, monkeypatch):
     """persist=False returns metrics with model_dir=None and writes no model
     files nor a model_runs DB row (for sweeps / feature A-B)."""

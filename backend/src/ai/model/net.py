@@ -176,8 +176,10 @@ class HorseEncoderWithEmb(nn.Module):
         race_cat_positions: list[int] | None = None,
         race_cat_cardinalities: list[int] | None = None,
         cat_embed_dim: int = 4,
+        history_embed_dim: int = 0,
     ) -> None:
         super().__init__()
+        self.history_embed_dim = history_embed_dim
         horse_cat_positions = list(horse_cat_positions or [])
         horse_cat_cardinalities = list(horse_cat_cardinalities or [])
         race_cat_positions = list(race_cat_positions or [])
@@ -216,6 +218,7 @@ class HorseEncoderWithEmb(nn.Module):
             + len(horse_cat_cardinalities) * cat_embed_dim
             + len(self.race_num_positions)
             + len(race_cat_cardinalities) * cat_embed_dim
+            + history_embed_dim  # 履歴エンコーダ出力 (0 = 履歴なし → 現行と同一)
         )
 
         self.net = nn.Sequential(
@@ -251,12 +254,15 @@ class HorseEncoderWithEmb(nn.Module):
         self,
         horse_features: torch.Tensor,
         race_features: torch.Tensor,
+        history_embed: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Encode horses.
 
         Args:
             horse_features: [B, N, horse_feat_dim]
             race_features:  [B, race_feat_dim]
+            history_embed:  optional [B, N, history_embed_dim] — 履歴エンコーダ出力。
+                            None なら現行 (集約のみ) と完全に同一。
 
         Returns:
             [B, N, embed_dim]
@@ -286,7 +292,10 @@ class HorseEncoderWithEmb(nn.Module):
             self.race_cat_cardinalities,
         )
 
-        horse_concat = torch.cat([horse_num, *horse_cat_parts], dim=-1)
+        horse_parts = [horse_num, *horse_cat_parts]
+        if history_embed is not None:
+            horse_parts.append(history_embed)
+        horse_concat = torch.cat(horse_parts, dim=-1)
         race_concat = torch.cat([race_num, *race_cat_parts], dim=-1)
 
         race_expanded = race_concat.unsqueeze(1).expand(-1, n, -1)
@@ -321,8 +330,25 @@ class RaceTransformerModel(nn.Module):
         cat_embed_dim: int = 4,
         n_transformer_layers: int = 2,
         ff_dim: int | None = None,
+        use_history: bool = False,
+        history_feat_dim: int = 0,
+        history_hidden: int = 64,
     ) -> None:
         super().__init__()
+
+        # 履歴エンコーダ (per-past-race 系列 → 馬ごとの 1 ベクトル)。
+        # use_history=False のとき完全に無効 (現行モデルと bit 一致)。
+        self.use_history = use_history and history_feat_dim > 0
+        if self.use_history:
+            self.history_encoder = nn.GRU(
+                input_size=history_feat_dim,
+                hidden_size=history_hidden,
+                batch_first=True,
+            )
+            history_embed_dim = history_hidden
+        else:
+            self.history_encoder = None
+            history_embed_dim = 0
 
         self.horse_encoder = HorseEncoderWithEmb(
             horse_feat_dim=horse_feat_dim,
@@ -335,6 +361,7 @@ class RaceTransformerModel(nn.Module):
             race_cat_positions=race_cat_positions,
             race_cat_cardinalities=race_cat_cardinalities,
             cat_embed_dim=cat_embed_dim,
+            history_embed_dim=history_embed_dim,
         )
 
         ff = ff_dim if ff_dim is not None else hidden_dim * 2
@@ -358,11 +385,30 @@ class RaceTransformerModel(nn.Module):
             nn.Linear(hidden_dim, 1),
         )
 
+    def _encode_history(
+        self, history_seq: torch.Tensor, history_lengths: torch.Tensor
+    ) -> torch.Tensor:
+        """[B, N, L, Hf] 系列 → [B, N, history_hidden]。過去走 0 件の馬は zero。"""
+        b, n, ll, hf = history_seq.shape
+        flat = history_seq.reshape(b * n, ll, hf)
+        lengths = history_lengths.reshape(b * n)
+        clamped = lengths.clamp(min=1)  # pack は length>=1 を要求
+        packed = nn.utils.rnn.pack_padded_sequence(
+            flat, clamped.cpu(), batch_first=True, enforce_sorted=False
+        )
+        _, hn = self.history_encoder(packed)  # [1, B*N, hidden]
+        emb = hn.squeeze(0)  # [B*N, hidden]
+        # 過去走 0 件 (length==0) の馬は履歴寄与なし → zero ベクトルに
+        emb = emb * (lengths > 0).unsqueeze(-1).to(emb.dtype)
+        return emb.reshape(b, n, -1)
+
     def forward(
         self,
         horse_features: torch.Tensor,
         race_features: torch.Tensor,
         mask: torch.Tensor,
+        history_seq: torch.Tensor | None = None,
+        history_lengths: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute per-horse scores.
 
@@ -370,11 +416,16 @@ class RaceTransformerModel(nn.Module):
             horse_features: [B, N, horse_feat_dim]
             race_features:  [B, race_feat_dim]
             mask:           [B, N] bool — True = valid horse, False = padded
+            history_seq:    optional [B, N, L, history_feat_dim] — 過去走系列
+            history_lengths: optional [B, N] — 各馬の実履歴長 (0 可)
 
         Returns:
             scores: [B, N] (padded positions = -inf)
         """
-        encoded = self.horse_encoder(horse_features, race_features)
+        history_embed = None
+        if self.use_history and history_seq is not None and history_lengths is not None:
+            history_embed = self._encode_history(history_seq, history_lengths)
+        encoded = self.horse_encoder(horse_features, race_features, history_embed=history_embed)
         key_padding_mask = ~mask
         attended = self.transformer(encoded, src_key_padding_mask=key_padding_mask)
         scores = self.head(attended).squeeze(-1)

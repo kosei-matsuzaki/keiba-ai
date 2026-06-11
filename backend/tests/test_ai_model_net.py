@@ -249,3 +249,69 @@ class TestRaceTransformerModel:
         n1 = sum(p.numel() for p in m1.parameters())
         n2 = sum(p.numel() for p in m2.parameters())
         assert n2 > n1
+
+
+HISTORY_FEAT_DIM = 6
+HISTORY_LEN = 4
+
+
+def _history_inputs(lengths_pattern: list[list[int]] | None = None):
+    """history_seq [B,N,L,Hf] + history_lengths [B,N]."""
+    torch.manual_seed(11)
+    seq = torch.randn(BATCH, MAX_HORSES, HISTORY_LEN, HISTORY_FEAT_DIM)
+    if lengths_pattern is None:
+        lengths = torch.full((BATCH, MAX_HORSES), HISTORY_LEN, dtype=torch.long)
+    else:
+        lengths = torch.tensor(lengths_pattern, dtype=torch.long)
+    return seq, lengths
+
+
+class TestRaceTransformerHistory:
+    def _model(self, use_history: bool) -> RaceTransformerModel:
+        return RaceTransformerModel(
+            horse_feat_dim=HORSE_FEAT_DIM,
+            race_feat_dim=RACE_FEAT_DIM,
+            embed_dim=EMBED_DIM,
+            hidden_dim=HIDDEN_DIM,
+            n_heads=N_HEADS,
+            use_history=use_history,
+            history_feat_dim=HISTORY_FEAT_DIM,
+            history_hidden=16,
+        )
+
+    def test_use_history_output_shape(self, horse_features, race_features, mask):
+        model = self._model(use_history=True)
+        seq, lengths = _history_inputs()
+        scores = model(horse_features, race_features, mask, history_seq=seq, history_lengths=lengths)
+        assert scores.shape == (BATCH, MAX_HORSES)
+        # valid positions finite
+        assert torch.isfinite(scores[mask]).all()
+
+    def test_use_history_false_is_backward_compatible(self, horse_features, race_features, mask):
+        """use_history=False のモデルは履歴を渡さず現行 API で動き、in_dim も不変。"""
+        model = self._model(use_history=False)
+        assert model.use_history is False
+        assert model.history_encoder is None
+        # in_dim に履歴分が足されていない (= 現行と同じ第1層形状)
+        assert model.horse_encoder.history_embed_dim == 0
+        scores = model(horse_features, race_features, mask)
+        assert scores.shape == (BATCH, MAX_HORSES)
+        assert torch.isfinite(scores[mask]).all()
+
+    def test_zero_length_horse_does_not_crash(self, horse_features, race_features, mask):
+        """過去走 0 件の馬 (length=0) を含んでも落ちず有限スコアを返す。"""
+        model = self._model(use_history=True)
+        seq, lengths = _history_inputs()
+        lengths[0, 0] = 0  # 1 頭目を履歴なしに
+        lengths[1, 5] = 0
+        scores = model(horse_features, race_features, mask, history_seq=seq, history_lengths=lengths)
+        assert torch.isfinite(scores[mask]).all()
+
+    def test_history_grads_flow(self, horse_features, race_features, mask):
+        model = self._model(use_history=True)
+        seq, lengths = _history_inputs()
+        scores = model(horse_features, race_features, mask, history_seq=seq, history_lengths=lengths)
+        scores[mask].sum().backward()
+        grads = [p.grad for p in model.history_encoder.parameters()]
+        assert all(g is not None and torch.isfinite(g).all() for g in grads)
+        assert any(g.abs().sum() > 0 for g in grads)
