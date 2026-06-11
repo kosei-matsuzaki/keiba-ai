@@ -59,9 +59,9 @@ TOKEN_FEATURE_NAMES = HORSE_TOKEN_FEATURES + RACE_CONTEXT_FEATURES + SURFACE_FEA
 H = len(TOKEN_FEATURE_NAMES)  # = 16
 
 
-def _margin_num(margin: str | None) -> float:
-    """着差を馬身 (float) へ。勝ち/'クビ'/'ハナ' 等は小値、不明は NaN。"""
-    if margin is None or margin == "":
+def _margin_num(margin: object) -> float:
+    """着差を馬身 (float) へ。勝ち/'クビ'/'ハナ' 等は小値、不明/非文字列(NaN)は NaN。"""
+    if not isinstance(margin, str) or margin == "":
         return np.nan
     m = margin.strip()
     small = {"同着": 0.0, "ハナ": 0.05, "アタマ": 0.1, "クビ": 0.2, "大差": 10.0}
@@ -73,9 +73,9 @@ def _margin_num(margin: str | None) -> float:
         return np.nan
 
 
-def _passing_first(passing: str | None) -> float:
-    """'3-3-2-1' 形式の第1コーナー位置。無ければ NaN。"""
-    if not passing:
+def _passing_first(passing: object) -> float:
+    """'3-3-2-1' 形式の第1コーナー位置。無し/非文字列(NaN)は NaN。"""
+    if not isinstance(passing, str) or not passing:
         return np.nan
     head = passing.split("-")[0].strip()
     try:

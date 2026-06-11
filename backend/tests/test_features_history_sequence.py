@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 import pytest
@@ -16,9 +17,20 @@ from db.models.race import Race
 from features.history_sequence import (
     TOKEN_FEATURE_NAMES,
     H,
+    _margin_num,
+    _passing_first,
     build_history_sequences,
     fit_history_normalizer,
 )
+
+
+def test_margin_passing_handle_nan_float():
+    """DB NULL は pandas で float NaN になりうる → strip/split で落ちないこと。"""
+    for bad in (float("nan"), None, 3.5):
+        assert math.isnan(_margin_num(bad))
+        assert math.isnan(_passing_first(bad))
+    assert _margin_num("クビ") == 0.2
+    assert _passing_first("3-3-2-1") == 3.0
 
 FIELD = 4  # horses per race
 
