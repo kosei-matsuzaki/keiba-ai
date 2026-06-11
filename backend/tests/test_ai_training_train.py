@@ -63,6 +63,44 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
     assert meta.get("has_preprocessor") is True
 
 
+def test_train_nn_persist_false_writes_nothing(syn_engine_small, tmp_path, monkeypatch):
+    """persist=False returns metrics with model_dir=None and writes no model
+    files nor a model_runs DB row (for sweeps / feature A-B)."""
+    engine, db_file = syn_engine_small
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(data_root))
+
+    result = train_nn(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+        hidden_dim=16,
+        embed_dim=8,
+        n_heads=2,
+        batch_size=4,
+        max_epochs=2,
+        device="cpu",
+        persist=False,
+    )
+
+    # metrics returned, but no model dir
+    assert result["model_dir"] is None
+    assert "test_ndcg1" in result
+    # no models/ artifacts written
+    models_dir = data_root / "models"
+    assert not models_dir.exists() or not any(models_dir.iterdir())
+    # no model_runs row inserted into the (synthetic) DB
+    from sqlalchemy import func, select
+
+    from db.models.model_run import ModelRun
+    from db.session import session_scope
+    with session_scope(engine) as session:
+        n_runs = session.scalar(select(func.count()).select_from(ModelRun))
+    assert n_runs == 0
+
+
 def test_train_nn_meta_json_structure(syn_engine_small, tmp_path, monkeypatch):
     """meta.json has the expected keys and model_type == 'nn'."""
     engine, db_file = syn_engine_small

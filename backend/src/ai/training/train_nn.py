@@ -614,6 +614,7 @@ def train_nn(
     init_from: Path | None = None,
     combo_bet_type: str = "馬連",
     combo_weight: float = 0.01,
+    persist: bool = True,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict.
 
@@ -916,6 +917,11 @@ def train_nn(
                 )
                 temperature_scaler = None
 
+    # persist=False: 実験/スイープ用。モデルファイルも model_runs DB 行も書かず
+    # metrics だけ返す (keiba.db を read-only に保ち、models/ と DB を汚さない)。
+    if not persist:
+        return {"model_dir": None, **metrics}
+
     # Save model
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     model_dir = data_dir() / "models" / f"{timestamp}-nn"
@@ -1128,6 +1134,16 @@ def _cli() -> None:
             "temperature scaling on the validation set when it is non-empty."
         ),
     )
+    parser.add_argument(
+        "--no-persist",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip saving the model dir and the model_runs DB row; print metrics "
+            "only.  For hyperparameter sweeps / feature A-B (keeps models/ and "
+            "keiba.db untouched)."
+        ),
+    )
     args = parser.parse_args()
 
     result = train_nn(
@@ -1144,6 +1160,7 @@ def _cli() -> None:
         learning_rate=args.learning_rate,
         device=args.device,
         fit_temperature=not args.no_fit_temperature,
+        persist=not args.no_persist,
         n_transformer_layers=args.n_transformer_layers,
         cat_embed_dim=args.cat_embed_dim,
         weight_decay=args.weight_decay,
