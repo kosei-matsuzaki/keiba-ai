@@ -52,7 +52,12 @@ from ai.model.registry import save_nn_model
 from core.paths import data_dir, db_path
 from db.models.model_run import ModelRun
 from db.session import make_engine, session_scope
-from features.builder import CATEGORICAL_FEATURES, build_training_frame, get_active_features
+from features.builder import (
+    CATEGORICAL_FEATURES,
+    ODDS_FEATURE_COLUMNS,
+    build_training_frame,
+    get_active_features,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -70,20 +75,22 @@ RACE_FEATURE_COLS: list[str] = [
 ]
 
 
-def _split_feature_cols(all_feature_cols: list[str]) -> tuple[list[str], list[str]]:
-    """Split feature columns into (horse_feature_cols, race_feature_cols).
+def _split_feature_cols(
+    all_feature_cols: list[str], *, route_odds_to_head: bool = False
+) -> tuple[list[str], list[str], list[str]]:
+    """Split feature columns into (horse, race, odds) groups.
 
-    Race-level features are those constant within a race (RACE_FEATURE_COLS).
-    Horse-level features are everything else.
-
-    Returns:
-        (horse_feature_cols, race_feature_cols_present)
-        Both lists contain only columns that are in all_feature_cols.
+    Race-level features are constant within a race (RACE_FEATURE_COLS).
+    route_odds_to_head=True のとき odds (ODDS_FEATURE_COLUMNS) を horse から外し
+    odds グループへ (= odds-at-scoring head 用)。False(既定)なら odds は horse に
+    含まれ odds グループは空 (= 現行 v2)。各リストは all_feature_cols 内の列のみ。
     """
     race_set = set(RACE_FEATURE_COLS)
+    odds_set = set(ODDS_FEATURE_COLUMNS) if route_odds_to_head else set()
     race_cols = [c for c in all_feature_cols if c in race_set]
-    horse_cols = [c for c in all_feature_cols if c not in race_set]
-    return horse_cols, race_cols
+    odds_cols = [c for c in all_feature_cols if c in odds_set]
+    horse_cols = [c for c in all_feature_cols if c not in race_set and c not in odds_set]
+    return horse_cols, race_cols, odds_cols
 
 
 def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
@@ -134,6 +141,20 @@ def _batch_history_kw(batch: dict, device: torch.device) -> dict:
     }
 
 
+def _sample_odds_kw(sample: dict, device: torch.device) -> dict:
+    """単一レース sample の odds 特徴を model.forward kwargs ([1,n,odds_dim]) に。"""
+    if "odds_features" not in sample:
+        return {}
+    return {"odds_features": sample["odds_features"].unsqueeze(0).to(device)}
+
+
+def _batch_odds_kw(batch: dict, device: torch.device) -> dict:
+    """バッチの odds 特徴を model.forward kwargs に。なしは空 dict。"""
+    if "odds_features" not in batch:
+        return {}
+    return {"odds_features": batch["odds_features"].to(device)}
+
+
 def _hit_rate(records: list, gate_key: str, hit_fn) -> float:
     """top-1 賭け記録のうち、gate_key が有効な賭けで hit_fn(r) が真の割合 (的中率)。
 
@@ -155,6 +176,7 @@ def _compute_ndcg_nn(
     device: torch.device,
     history_cache=None,
     history_norm=None,
+    odds_feature_cols=None,
 ) -> float:
     """Compute NDCG@at for the NN model across all races in frame."""
     if frame.empty:
@@ -169,6 +191,7 @@ def _compute_ndcg_nn(
     dataset = RaceDataset(
         frame, horse_feature_cols, race_feature_cols,
         history_cache=history_cache, history_norm=history_norm,
+        odds_feature_cols=odds_feature_cols,
     )
 
     model.eval()
@@ -183,7 +206,10 @@ def _compute_ndcg_nn(
             mask_single = torch.zeros(1, n, dtype=torch.bool, device=device)
             mask_single[0, :n] = True
 
-            scores = model(hf, rf, mask_single, **_sample_history_kw(sample, device))  # [1, n]
+            scores = model(
+                hf, rf, mask_single,
+                **_sample_history_kw(sample, device), **_sample_odds_kw(sample, device),
+            )  # [1, n]
             race_scores.append(scores[0, :n].cpu().tolist())
 
     ndcg_vals: list[float] = []
@@ -244,6 +270,7 @@ def _compute_winplace_roi_nn(
     device: torch.device,
     history_cache=None,
     history_norm=None,
+    odds_feature_cols=None,
     collect_records: list | None = None,
 ) -> tuple[float, float]:
     """Top-1 flat-stake 単勝 / 複勝 ROI on real odds across all races in frame.
@@ -266,6 +293,7 @@ def _compute_winplace_roi_nn(
     dataset = RaceDataset(
         frame, horse_feature_cols, race_feature_cols,
         history_cache=history_cache, history_norm=history_norm,
+        odds_feature_cols=odds_feature_cols,
     )
 
     model.eval()
@@ -284,7 +312,10 @@ def _compute_winplace_roi_nn(
             mask_single = torch.zeros(1, n, dtype=torch.bool, device=device)
             mask_single[0, :n] = True
 
-            scores = model(hf, rf, mask_single, **_sample_history_kw(sample, device))[0, :n].cpu().numpy()
+            scores = model(
+                hf, rf, mask_single,
+                **_sample_history_kw(sample, device), **_sample_odds_kw(sample, device),
+            )[0, :n].cpu().numpy()
             top = int(np.argmax(scores))
 
             positions = grp["finish_position"].values
@@ -335,6 +366,7 @@ def _fit_temperature_scaler_nn(
     device: torch.device,
     history_cache=None,
     history_norm=None,
+    odds_feature_cols=None,
 ) -> TemperatureScaler:
     """Fit TemperatureScaler on valid_df using payback-maximising grid search.
 
@@ -358,6 +390,7 @@ def _fit_temperature_scaler_nn(
     dataset = RaceDataset(
         valid_df, horse_feature_cols, race_feature_cols,
         history_cache=history_cache, history_norm=history_norm,
+        odds_feature_cols=odds_feature_cols,
     )
 
     scores_per_race: list[np.ndarray] = []
@@ -381,7 +414,10 @@ def _fit_temperature_scaler_nn(
             mask_single = torch.zeros(1, n, dtype=torch.bool, device=device)
             mask_single[0, :n] = True
 
-            raw_scores = model(hf, rf, mask_single, **_sample_history_kw(sample, device))  # [1, n]
+            raw_scores = model(
+                hf, rf, mask_single,
+                **_sample_history_kw(sample, device), **_sample_odds_kw(sample, device),
+            )  # [1, n]
             scores = raw_scores[0, :n].cpu().numpy()
 
             finish_pos = grp["finish_position"].values.astype(float)
@@ -428,6 +464,7 @@ def _compute_loss_on_dataset(
     combo_weight: float = 0.01,
     history_cache=None,
     history_norm=None,
+    odds_feature_cols=None,
 ) -> float:
     """Compute mean loss over all races in frame (for test-set reporting)."""
     if frame.empty:
@@ -436,6 +473,7 @@ def _compute_loss_on_dataset(
     dataset = RaceDataset(
         frame, horse_feature_cols, race_feature_cols,
         history_cache=history_cache, history_norm=history_norm,
+        odds_feature_cols=odds_feature_cols,
     )
     if len(dataset) == 0:
         return float("nan")
@@ -457,7 +495,10 @@ def _compute_loss_on_dataset(
             fp = batch["finish_positions"].to(device)
             mask = batch["mask"].to(device)
 
-            scores = model(hf, rf, mask, **_batch_history_kw(batch, device))
+            scores = model(
+                hf, rf, mask,
+                **_batch_history_kw(batch, device), **_batch_odds_kw(batch, device),
+            )
 
             if loss_fn_name == "log_growth":
                 loss = loss_fn(scores, fp, batch["odds_win"].to(device), mask)
@@ -547,6 +588,7 @@ class RaceLitModule(pl.LightningModule):
             batch["mask"],
             history_seq=batch.get("history_seq"),
             history_lengths=batch.get("history_lengths"),
+            odds_features=batch.get("odds_features"),
         )
         if self.loss_fn_name in ("log_growth", "multi"):
             loss = self.loss_fn(
@@ -599,6 +641,7 @@ class _NDCG3Callback(pl.Callback):
         device: torch.device,
         history_cache=None,
         history_norm=None,
+        odds_feature_cols=None,
     ) -> None:
         self.valid_df = valid_df
         self.horse_feature_cols = horse_feature_cols
@@ -606,6 +649,7 @@ class _NDCG3Callback(pl.Callback):
         self.device = device
         self.history_cache = history_cache
         self.history_norm = history_norm
+        self.odds_feature_cols = odds_feature_cols
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         if self.valid_df.empty:
@@ -619,6 +663,7 @@ class _NDCG3Callback(pl.Callback):
             device=self.device,
             history_cache=self.history_cache,
             history_norm=self.history_norm,
+            odds_feature_cols=self.odds_feature_cols,
         )
         if math.isnan(ndcg3):
             return
@@ -642,6 +687,7 @@ class _WinPlaceROICallback(pl.Callback):
         device: torch.device,
         history_cache=None,
         history_norm=None,
+        odds_feature_cols=None,
     ) -> None:
         self.valid_df = valid_df
         self.valid_raw_df = valid_raw_df
@@ -650,6 +696,7 @@ class _WinPlaceROICallback(pl.Callback):
         self.device = device
         self.history_cache = history_cache
         self.history_norm = history_norm
+        self.odds_feature_cols = odds_feature_cols
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         if self.valid_df.empty:
@@ -663,6 +710,7 @@ class _WinPlaceROICallback(pl.Callback):
             self.device,
             history_cache=self.history_cache,
             history_norm=self.history_norm,
+            odds_feature_cols=self.odds_feature_cols,
         )
         # Always log both keys (substitute a floor for NaN) so EarlyStopping can
         # monitor either without crashing when a degenerate epoch yields no
@@ -706,6 +754,7 @@ def train_nn(
     history_seq_len: int = 15,
     prebuilt_history=None,
     return_test_bets: bool = False,
+    use_odds_head: bool = False,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict.
 
@@ -754,18 +803,24 @@ def train_nn(
         train_df = frame.copy()
         valid_df = pd.DataFrame(columns=frame.columns)
 
-    # Feature column split
+    # Feature column split (3-way when use_odds_head: odds → head, not encoder)
     all_feature_cols = get_active_features()
-    horse_feature_cols, race_feature_cols = _split_feature_cols(all_feature_cols)
+    horse_feature_cols, race_feature_cols, odds_feature_cols = _split_feature_cols(
+        all_feature_cols, route_odds_to_head=use_odds_head
+    )
 
     # Only keep cols that are actually present in the frame
     horse_feature_cols = [c for c in horse_feature_cols if c in frame.columns]
     race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
+    odds_feature_cols = [c for c in odds_feature_cols if c in frame.columns]
+    # exclude-odds 等で odds 列が空なら odds head は自動無効
+    effective_use_odds_head = use_odds_head and len(odds_feature_cols) > 0
 
     log.info(
-        "Features — horse: %d, race: %d",
+        "Features — horse: %d, race: %d, odds(head): %d",
         len(horse_feature_cols),
         len(race_feature_cols),
+        len(odds_feature_cols),
     )
 
     # Fit preprocessor on train only — categorical maps and numeric mean/std
@@ -773,7 +828,8 @@ def train_nn(
     # at inference via bundle.nn_preprocessor).  Calling _encode_categoricals
     # per-split was the previous behavior and produced inconsistent mappings.
     preprocessor = NNPreprocessor.fit(
-        train_df, horse_feature_cols, race_feature_cols
+        train_df, horse_feature_cols, race_feature_cols,
+        odds_feature_cols=odds_feature_cols,
     )
     # Capture raw odds / payoff columns BEFORE transform standardises odds_win.
     valid_raw_df = _capture_raw_outcomes(valid_df)
@@ -821,6 +877,7 @@ def train_nn(
     train_dataset = RaceDataset(
         train_df, horse_feature_cols, race_feature_cols,
         history_cache=history_cache, history_norm=history_norm,
+        odds_feature_cols=odds_feature_cols,
     )
     train_loader = DataLoader(
         train_dataset,
@@ -834,6 +891,7 @@ def train_nn(
         val_dataset = RaceDataset(
             valid_df, horse_feature_cols, race_feature_cols,
             history_cache=history_cache, history_norm=history_norm,
+            odds_feature_cols=odds_feature_cols,
         )
         val_loader = DataLoader(
             val_dataset,
@@ -879,6 +937,8 @@ def train_nn(
         n_transformer_layers=n_transformer_layers,
         use_history=use_history,
         history_feat_dim=history_feat_dim,
+        use_odds_head=effective_use_odds_head,
+        odds_feat_dim=len(odds_feature_cols),
     )
 
     # Two-stage / fine-tuning: warm-start weights from a previously saved model.
@@ -916,6 +976,7 @@ def train_nn(
                 device=torch.device(device),
                 history_cache=history_cache,
                 history_norm=history_norm,
+                odds_feature_cols=odds_feature_cols,
             )
         )
         callbacks.append(
@@ -927,6 +988,7 @@ def train_nn(
                 device=torch.device(device),
                 history_cache=history_cache,
                 history_norm=history_norm,
+                odds_feature_cols=odds_feature_cols,
             )
         )
         callbacks.append(
@@ -963,7 +1025,10 @@ def train_nn(
 
     # Evaluate
     log.info("Evaluating…")
-    _hist_kw = {"history_cache": history_cache, "history_norm": history_norm}
+    _hist_kw = {
+        "history_cache": history_cache, "history_norm": history_norm,
+        "odds_feature_cols": odds_feature_cols,
+    }
     valid_loss = _compute_loss_on_dataset(
         race_model, valid_df, horse_feature_cols, race_feature_cols, loss, torch_device,
         combo_bet_type=combo_bet_type, combo_weight=combo_weight, **_hist_kw,
@@ -1042,6 +1107,7 @@ def train_nn(
                     device=torch_device,
                     history_cache=history_cache,
                     history_norm=history_norm,
+                    odds_feature_cols=odds_feature_cols,
                 )
                 log.info(
                     "TemperatureScaler fitted: T_win=%.3f, T_place=%.3f",
@@ -1097,10 +1163,21 @@ def train_nn(
     preprocessor.save(model_dir / "preprocessor.pkl")
     log.info("preprocessor.pkl saved to %s", model_dir)
 
+    # 履歴有効時: 推論で同じ標準化を使うため履歴正規化器 (mean/std) を保存。
+    has_history = use_history and history_norm is not None
+    if has_history:
+        import pickle
+
+        from features.history_sequence import TOKEN_SPEC_VERSION
+        mean, std = history_norm
+        with (model_dir / "history_norm.pkl").open("wb") as f:
+            pickle.dump({"mean": mean, "std": std}, f)
+        log.info("history_norm.pkl saved to %s", model_dir)
+    history_max_len = history_seq_len
 
     meta_dict = {
         "model_type": "nn",
-        "arch_version": 2,
+        "arch_version": 3 if (effective_use_odds_head or has_history) else 2,
         "loss_type": loss,
         "monitor": monitor,
         "combo_bet_type": (
@@ -1133,6 +1210,20 @@ def train_nn(
             "race_cat_positions": race_cat_positions,
             "race_cat_cardinalities": race_cat_cardinalities,
         },
+        # odds-at-scoring head (v3)。OFF のとき False/0/[] → v2 と再構築が一致。
+        "use_odds_head": effective_use_odds_head,
+        "odds_feat_dim": len(odds_feature_cols),
+        "odds_feature_cols": odds_feature_cols,
+        # per-race 履歴エンコーダ (serving 用に再構築情報を保存)。
+        "use_history": bool(use_history),
+        "history_feat_dim": history_feat_dim,
+        "history_meta": {
+            "max_len": history_max_len,
+            "token_spec_version": (
+                TOKEN_SPEC_VERSION if has_history else None
+            ),
+        },
+        "has_history_norm": has_history,
         "train_range": train_range,
         "valid_range": valid_range,
         "test_range": test_range,
@@ -1300,6 +1391,15 @@ def _cli() -> None:
         default=15,
         help="Max past races per horse fed to the history encoder (default 15).",
     )
+    parser.add_argument(
+        "--use-odds-head",
+        action="store_true",
+        default=False,
+        help=(
+            "Route odds (odds_win/popularity) out of the horse (ability) encoder "
+            "and into the scoring head (ability→value separation)."
+        ),
+    )
     args = parser.parse_args()
 
     result = train_nn(
@@ -1328,6 +1428,7 @@ def _cli() -> None:
         combo_weight=args.combo_weight,
         use_history=args.use_history,
         history_seq_len=args.history_seq_len,
+        use_odds_head=args.use_odds_head,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

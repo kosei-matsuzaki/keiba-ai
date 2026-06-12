@@ -92,6 +92,46 @@ def test_train_nn_use_history_runs(syn_engine_small, tmp_path, monkeypatch):
     assert "test_fukusho_hit" in result
 
 
+def test_train_nn_use_odds_head_runs(syn_engine_small, tmp_path, monkeypatch):
+    """use_odds_head=True は odds を encoder から外し head へ回して end-to-end 学習。"""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="log_growth",
+        monitor="valid_tansho_roi",
+        hidden_dim=16,
+        embed_dim=8,
+        n_heads=2,
+        batch_size=4,
+        max_epochs=2,
+        device="cpu",
+        persist=False,
+        use_odds_head=True,
+    )
+    assert "test_tansho_roi" in result
+    assert "test_tansho_hit" in result
+
+
+def test_train_nn_odds_head_and_history_compose(syn_engine_small, tmp_path, monkeypatch):
+    """目標構成: use_history=True + use_odds_head=True が同時に動く。"""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth", monitor="valid_tansho_roi",
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", persist=False, use_history=True, history_seq_len=10,
+        use_odds_head=True,
+    )
+    assert "test_tansho_roi" in result
+    assert "test_tansho_hit" in result
+
+
 def test_train_nn_persist_false_writes_nothing(syn_engine_small, tmp_path, monkeypatch):
     """persist=False returns metrics with model_dir=None and writes no model
     files nor a model_runs DB row (for sweeps / feature A-B)."""
