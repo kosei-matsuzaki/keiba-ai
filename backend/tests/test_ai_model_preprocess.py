@@ -171,3 +171,56 @@ def test_constant_numeric_column_has_std_one():
     out = pp.transform(train)
     # (3 - 3) / 1 = 0  — finite, not NaN
     assert (out["constant_feat"] == 0.0).all()
+
+
+# ---------------------------------------------------------------------------
+# odds_feature_cols group (odds-at-scoring head)
+# ---------------------------------------------------------------------------
+
+
+def _make_odds_train_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "distance": [1600.0, 2000.0, 1200.0, 2400.0],
+            "odds_win": [2.0, 10.0, 5.0, 30.0],
+            "popularity": [1.0, 4.0, 2.0, 8.0],
+        }
+    )
+
+
+def test_odds_feature_cols_standardized():
+    """odds_feature_cols は train mean/std で標準化される (encoder ではなく head 用)。"""
+    train = _make_odds_train_df()
+    pp = NNPreprocessor.fit(
+        train, ["distance"], [], odds_feature_cols=["odds_win", "popularity"]
+    )
+    assert pp.odds_feature_cols == ["odds_win", "popularity"]
+    out = pp.transform(train)
+    # 標準化後は平均~0
+    assert abs(float(out["odds_win"].mean())) < 1e-6
+    assert abs(float(out["popularity"].mean())) < 1e-6
+    # odds は categorical ではなく numeric
+    assert "odds_win" in pp.numeric_means
+
+
+def test_empty_odds_cols_equals_current_behavior():
+    train = _make_odds_train_df()
+    pp_a = NNPreprocessor.fit(train, ["distance", "odds_win"], [])
+    pp_b = NNPreprocessor.fit(train, ["distance", "odds_win"], [], odds_feature_cols=[])
+    assert pp_a.odds_feature_cols == [] == pp_b.odds_feature_cols
+    pd.testing.assert_frame_equal(pp_a.transform(train), pp_b.transform(train))
+
+
+def test_legacy_pickle_without_odds_cols(tmp_path):
+    """odds_feature_cols フィールドを持たない旧 pickle も load/transform 可能。"""
+    train = _make_odds_train_df()
+    pp = NNPreprocessor.fit(train, ["distance", "odds_win"], [])
+    # 旧 pickle を模倣: 属性を削除して save
+    del pp.odds_feature_cols
+    assert not hasattr(pp, "odds_feature_cols")
+    p = tmp_path / "preprocessor.pkl"
+    pp.save(p)
+    loaded = NNPreprocessor.load(p)
+    assert loaded.odds_feature_cols == []  # load が補完
+    out = loaded.transform(train)
+    assert "odds_win" in out.columns

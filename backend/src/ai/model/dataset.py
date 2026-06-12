@@ -41,12 +41,16 @@ class RaceDataset(Dataset):
         odds_col: str = "odds_win_raw",
         history_cache: HistorySequenceCache | None = None,
         history_norm: tuple[np.ndarray, np.ndarray] | None = None,
+        odds_feature_cols: list[str] | None = None,
     ) -> None:
         self.feature_cols = feature_cols
         # Only keep race feature cols that are actually present in the frame
         self.race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
         self.label_col = label_col
         self.time_col = time_col
+        # odds-at-scoring head 用の標準化済み odds 列 (任意)。None/空なら現行と
+        # 完全に同一の dict を返す (odds_features キーを足さない)。
+        self.odds_feature_cols = [c for c in (odds_feature_cols or []) if c in frame.columns]
         # Raw (un-standardised) 単勝 odds for the betting-return losses.  Kept as
         # a separate non-feature column so NNPreprocessor never standardises it.
         self.odds_col = odds_col
@@ -92,6 +96,11 @@ class RaceDataset(Dataset):
             "odds_win": odds_win,
             "n_horses": len(race),
         }
+
+        if self.odds_feature_cols:
+            out["odds_features"] = torch.tensor(
+                race[self.odds_feature_cols].values, dtype=torch.float32
+            )  # [n_horses, odds_dim] — 標準化済み (frame は transform 後)
 
         if self.history_cache is not None:
             out["history_seq"], out["history_lengths"] = self._history_for_race(race)
@@ -192,5 +201,14 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
             history_lengths_out[i, :n] = sample["history_lengths"]
         out["history_seq"] = history_seq_out
         out["history_lengths"] = history_lengths_out
+
+    # odds 特徴 (任意, head 用): [B, max_n_horses, odds_dim] zero-pad
+    if "odds_features" in batch[0]:
+        od = batch[0]["odds_features"].shape[1]
+        odds_out = torch.zeros(B, max_n_horses, od)
+        for i, sample in enumerate(batch):
+            n = sample["n_horses"]
+            odds_out[i, :n] = sample["odds_features"]
+        out["odds_features"] = odds_out
 
     return out
