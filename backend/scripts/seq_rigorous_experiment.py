@@ -60,6 +60,11 @@ def _roi_and_ci(records: list[dict], key: str, rng: np.random.Generator) -> tupl
     return roi, float(lo), float(hi), n
 
 
+def _hit_rate(records: list[dict], gate: str, hit) -> float:
+    rs = [r for r in records if r.get(gate) is not None]
+    return float(sum(1 for r in rs if hit(r)) / len(rs)) if rs else float("nan")
+
+
 def _odds_profile(records: list[dict]) -> dict:
     odds = np.array([r["odds"] for r in records if r.get("odds") is not None], dtype=float)
     if len(odds) == 0:
@@ -110,12 +115,15 @@ def main() -> None:
                 agg[key]["bets"].extend(res.get("test_bets", []))
                 metrics_log.setdefault(f"{odds_mode}/{arm}", []).append({
                     "seed": seed,
-                    "test_ndcg1": res.get("test_ndcg1"),
                     "test_tansho_roi": res.get("test_tansho_roi"),
                     "test_fukusho_roi": res.get("test_fukusho_roi"),
+                    "test_tansho_hit": res.get("test_tansho_hit"),
+                    "test_fukusho_hit": res.get("test_fukusho_hit"),
                 })
                 OUT.write_text(json.dumps(metrics_log, ensure_ascii=False, indent=2))
-                print(f"  ndcg1={res.get('test_ndcg1'):.4f} tansho_roi={res.get('test_tansho_roi'):.4f} "
+                print(f"  tansho_roi={res.get('test_tansho_roi'):.4f} "
+                      f"tansho_hit={res.get('test_tansho_hit'):.4f} "
+                      f"fukusho_hit={res.get('test_fukusho_hit'):.4f} "
                       f"(bets pooled={len(agg[key]['bets'])})", flush=True)
 
     # ---- 分析: race-level bootstrap CI + オッズ分布 ----
@@ -125,15 +133,18 @@ def main() -> None:
     print("=" * 78)
     for odds_mode, _ in ODDS_MODES:
         print(f"\n--- {odds_mode} ---")
-        print(f"{'arm':6} {'tansho ROI':>11} {'95% CI':>20} {'fukusho ROI':>12} "
-              f"{'pick odds mean/med':>20} {'%odds>20':>9} {'nbets':>7}")
+        print(f"{'arm':6} {'tansho ROI':>11} {'95% CI':>16} {'tansho_hit':>10} "
+              f"{'fuku ROI':>9} {'fuku_hit':>9} {'odds m/med':>14} {'%>20':>6} {'nbets':>7}")
         for arm, _ in ARMS:
             rec = agg[(odds_mode, arm)]["bets"]
             t_roi, t_lo, t_hi, n_t = _roi_and_ci(rec, "tansho_ret", rng)
             f_roi, _flo, _fhi, _nf = _roi_and_ci(rec, "place_ret", rng)
+            t_hit = _hit_rate(rec, "tansho_ret", lambda r: bool(r["won"]))
+            f_hit = _hit_rate(rec, "place_ret", lambda r: r["place_ret"] > 0)
             od = _odds_profile(rec)
-            print(f"{arm:6} {t_roi:>11.4f} [{t_lo:>6.3f},{t_hi:>6.3f}]    {f_roi:>12.4f} "
-                  f"{od['mean']:>9.1f}/{od['median']:<8.1f} {od['pct_gt20']:>8.1f}% {n_t:>7}")
+            print(f"{arm:6} {t_roi:>11.4f} [{t_lo:>5.2f},{t_hi:>5.2f}] {t_hit:>10.3f} "
+                  f"{f_roi:>9.3f} {f_hit:>9.3f} {od['mean']:>6.1f}/{od['median']:<6.1f} "
+                  f"{od['pct_gt20']:>5.1f}% {n_t:>7}")
         # treat-base 差の有意性メモ
         base_roi = float(np.nanmean(agg[(odds_mode, 'base')]["per_seed_roi"]))
         treat_roi = float(np.nanmean(agg[(odds_mode, 'treat')]["per_seed_roi"]))
@@ -143,9 +154,11 @@ def main() -> None:
               f"treat={[round(x,3) for x in agg[(odds_mode,'treat')]['per_seed_roi']]})")
 
     print(f"\n結果 JSON: {OUT}")
-    print("判定: treat の tansho ROI CI 下限が base の ROI を上回り、かつ pick odds 分布が "
-          "base と大きく変わらなければ『本物のエッジ』寄り。treat の %odds>20 が高い・CI が広いなら "
-          "『妙味=大穴ノイズ』寄り。いずれも ROI<1.0 なら黒字化せず (市場効率の壁)。")
+    print("評価は ROI + 的中率 (ndcg は最適化対象でないため非考慮)。")
+    print("判定: treat の tansho ROI CI 下限が base の ROI を上回り、的中率も維持/向上し、"
+          "pick odds 分布が base と大きく変わらなければ『本物のエッジ』寄り。treat の "
+          "%odds>20 が高い・的中率が低い・CI が広いなら『妙味=大穴ノイズ』寄り。"
+          "いずれも ROI<1.0 なら黒字化せず (市場効率の壁)。")
 
 
 if __name__ == "__main__":

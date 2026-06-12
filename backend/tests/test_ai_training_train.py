@@ -87,6 +87,9 @@ def test_train_nn_use_history_runs(syn_engine_small, tmp_path, monkeypatch):
     )
     assert "test_ndcg1" in result
     assert "valid_ndcg3" in result
+    # 評価は ROI + 的中率 (ndcg は非考慮へ移行)
+    assert "test_tansho_hit" in result
+    assert "test_fukusho_hit" in result
 
 
 def test_train_nn_persist_false_writes_nothing(syn_engine_small, tmp_path, monkeypatch):

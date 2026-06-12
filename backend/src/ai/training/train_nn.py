@@ -134,6 +134,18 @@ def _batch_history_kw(batch: dict, device: torch.device) -> dict:
     }
 
 
+def _hit_rate(records: list, gate_key: str, hit_fn) -> float:
+    """top-1 賭け記録のうち、gate_key が有効な賭けで hit_fn(r) が真の割合 (的中率)。
+
+    tansho: gate=tansho_ret (有効オッズで賭けた), hit=top-1 が 1 着。
+    fukusho: gate=place_ret (複勝払戻あり), hit=top-1 が複勝圏 (払戻>0)。
+    """
+    rs = [r for r in records if r.get(gate_key) is not None]
+    if not rs:
+        return float("nan")
+    return sum(1 for r in rs if hit_fn(r)) / len(rs)
+
+
 def _compute_ndcg_nn(
     model: torch.nn.Module,
     frame: pd.DataFrame,
@@ -981,14 +993,18 @@ def train_nn(
             horse_feature_cols, race_feature_cols, torch_device, **_hist_kw,
         ) if not valid_df.empty else (float("nan"), float("nan"))
     )
+    # test 記録を常時収集して的中率を計算 (ROI を目的にしているので評価は ROI +
+    # 的中率。ndcg は最適化対象でないため参考値扱い)。return_test_bets 時のみ返す。
     test_bets: list = []
     test_tansho_roi, test_fukusho_roi = (
         _compute_winplace_roi_nn(
             race_model, test_df, test_raw_df,
             horse_feature_cols, race_feature_cols, torch_device, **_hist_kw,
-            collect_records=(test_bets if return_test_bets else None),
+            collect_records=test_bets,
         ) if not test_df.empty else (float("nan"), float("nan"))
     )
+    test_tansho_hit = _hit_rate(test_bets, "tansho_ret", lambda r: bool(r["won"]))
+    test_fukusho_hit = _hit_rate(test_bets, "place_ret", lambda r: r["place_ret"] > 0)
 
     metrics = {
         "valid_loss": valid_loss,
@@ -1003,6 +1019,8 @@ def train_nn(
         "valid_fukusho_roi": valid_fukusho_roi,
         "test_tansho_roi": test_tansho_roi,
         "test_fukusho_roi": test_fukusho_roi,
+        "test_tansho_hit": test_tansho_hit,
+        "test_fukusho_hit": test_fukusho_hit,
         "monitor": monitor,
     }
     log.info("Metrics: %s", metrics)
