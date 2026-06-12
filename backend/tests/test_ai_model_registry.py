@@ -275,3 +275,66 @@ def test_load_model_full_nn_arch_v2(tmp_path):
 
     assert bundle.model_type == "nn"
     assert isinstance(bundle.nn_model, RaceTransformerModel)
+
+
+def test_load_model_full_nn_arch_v3_odds_head(tmp_path):
+    """arch_version=3 + use_odds_head → odds-at-scoring head を再構築し bundle に
+    nn_odds_feature_cols を復元、重みが一致する。"""
+    import pandas as pd
+
+    from ai.model.net import RaceTransformerModel
+    from ai.model.preprocess import NNPreprocessor
+
+    horse_cols = ["feat_a", "feat_b"]
+    race_cols = ["distance"]
+    odds_cols = ["odds_win", "popularity"]
+
+    model = RaceTransformerModel(
+        horse_feat_dim=len(horse_cols),
+        race_feat_dim=len(race_cols),
+        embed_dim=8,
+        hidden_dim=16,
+        n_heads=2,
+        cat_embed_dim=4,
+        n_transformer_layers=2,
+        use_odds_head=True,
+        odds_feat_dim=len(odds_cols),
+    )
+    model_dir = tmp_path / "test-nn-v3"
+    model_dir.mkdir()
+    torch.save(model.state_dict(), model_dir / "model.pt")
+
+    meta = {
+        "model_type": "nn",
+        "arch_version": 3,
+        "loss_type": "log_growth",
+        "params": {"hidden_dim": 16, "embed_dim": 8, "n_heads": 2,
+                   "n_transformer_layers": 2, "cat_embed_dim": 4},
+        "metrics": {},
+        "feature_columns": horse_cols + race_cols + odds_cols,
+        "horse_feature_cols": horse_cols,
+        "race_feature_cols": race_cols,
+        "cat_metadata": {"horse_cat_positions": [], "horse_cat_cardinalities": [],
+                         "race_cat_positions": [], "race_cat_cardinalities": []},
+        "use_odds_head": True,
+        "odds_feat_dim": len(odds_cols),
+        "odds_feature_cols": odds_cols,
+    }
+    save_nn_model(model_dir / "model.pt", meta)
+
+    train_df = pd.DataFrame({
+        "feat_a": [0.0, 1.0, 2.0], "feat_b": [1.0, 2.0, 3.0],
+        "distance": [1600.0, 2000.0, 1800.0],
+        "odds_win": [2.0, 5.0, 10.0], "popularity": [1.0, 2.0, 3.0],
+    })
+    NNPreprocessor.fit(
+        train_df, horse_cols, race_cols, odds_feature_cols=odds_cols
+    ).save(model_dir / "preprocessor.pkl")
+
+    bundle = load_model_full(model_dir)
+    assert isinstance(bundle.nn_model, RaceTransformerModel)
+    assert bundle.nn_model.use_odds_head is True
+    assert bundle.nn_odds_feature_cols == odds_cols
+    # 重み一致 (odds head 含む strict load)
+    for k, v in model.state_dict().items():
+        assert torch.allclose(bundle.nn_model.state_dict()[k], v)

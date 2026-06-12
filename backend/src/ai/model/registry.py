@@ -140,6 +140,12 @@ class ModelBundle:
     nn_preprocessor: NNPreprocessor | None = None
     # 温度スケーリング (optional)
     temperature_scaler: TemperatureScaler | None = None
+    # odds-at-scoring head (v3): odds は encoder でなく head で使う。None = v2 (encoder)。
+    nn_odds_feature_cols: list[str] | None = None
+    # per-race 履歴エンコーダ (serving): 推論時に過去走系列を構築し標準化するための情報。
+    nn_history_norm: tuple | None = None  # (mean, std) ndarray
+    nn_history_max_len: int = 0
+    nn_history_feat_dim: int = 0
 
 
 def load_model_full(path: Path) -> ModelBundle:
@@ -168,6 +174,10 @@ def load_model_full(path: Path) -> ModelBundle:
         nn_race_feature_cols=nn_artifacts["nn_race_feature_cols"],
         nn_preprocessor=nn_artifacts["nn_preprocessor"],
         temperature_scaler=nn_artifacts["temperature_scaler"],
+        nn_odds_feature_cols=nn_artifacts.get("nn_odds_feature_cols"),
+        nn_history_norm=nn_artifacts.get("nn_history_norm"),
+        nn_history_max_len=nn_artifacts.get("nn_history_max_len", 0),
+        nn_history_feat_dim=nn_artifacts.get("nn_history_feat_dim", 0),
     )
 
 

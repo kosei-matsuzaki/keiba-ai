@@ -50,6 +50,13 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
     embed_dim: int = params.get("embed_dim", 32)
     n_heads: int = params.get("n_heads", 4)
 
+    # odds-at-scoring head (v3) / per-race 履歴 (serving)。v2 meta は無キー → OFF/0
+    # → 旧 state_dict と一致 (新サブモジュールなし)。
+    use_odds_head = bool(meta.get("use_odds_head", False))
+    odds_feat_dim = int(meta.get("odds_feat_dim", 0))
+    use_history = bool(meta.get("use_history", False))
+    history_feat_dim = int(meta.get("history_feat_dim", 0))
+
     arch_version = int(meta.get("arch_version", 1))
     if arch_version >= 2:
         from ai.model.net import RaceTransformerModel  # noqa: PLC0415
@@ -67,6 +74,10 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
             race_cat_cardinalities=list(cat_meta.get("race_cat_cardinalities", [])),
             cat_embed_dim=int(params.get("cat_embed_dim", 4)),
             n_transformer_layers=int(params.get("n_transformer_layers", 2)),
+            use_history=use_history,
+            history_feat_dim=history_feat_dim,
+            use_odds_head=use_odds_head,
+            odds_feat_dim=odds_feat_dim,
         )
     else:
         from ai.model.net import RaceModel  # noqa: PLC0415
@@ -95,10 +106,23 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         from ai.model.preprocess import NNPreprocessor  # noqa: PLC0415
         nn_preprocessor = NNPreprocessor.load(preprocessor_path)
 
+    # per-race 履歴の正規化器 (mean/std)。推論時に学習時と同じ標準化を行う。
+    nn_history_norm = None
+    history_norm_path = path / "history_norm.pkl"
+    if use_history and history_norm_path.exists():
+        with history_norm_path.open("rb") as f:
+            hn = _pickle_load(f)
+        nn_history_norm = (hn["mean"], hn["std"])
+    history_meta: dict = meta.get("history_meta", {}) or {}
+
     return {
         "nn_model": race_model,
         "nn_horse_feature_cols": horse_feature_cols,
         "nn_race_feature_cols": race_feature_cols,
         "nn_preprocessor": nn_preprocessor,
         "temperature_scaler": temperature_scaler,
+        "nn_odds_feature_cols": meta.get("odds_feature_cols") if use_odds_head else None,
+        "nn_history_norm": nn_history_norm,
+        "nn_history_max_len": int(history_meta.get("max_len", 0)),
+        "nn_history_feat_dim": history_feat_dim,
     }

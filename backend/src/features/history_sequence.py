@@ -17,6 +17,7 @@ scripts/seq_experiment.py のトークン化 (_margin_num / class_rank / finish_
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -105,6 +106,121 @@ class HistorySequenceCache:
         return len(self.feature_names)
 
 
+_HISTORY_SELECT_COLS = [
+    "horse_id", "race_id", "date", "finish_position", "finish_time",
+    "margin", "agari_3f", "passing", "weight_carried", "horse_weight",
+    "distance", "surface", "race_class",
+]
+
+
+def _history_select():
+    """共通の entries+races SELECT (bulk / inference で再利用)。"""
+    return (
+        select(
+            Entry.horse_id, Entry.race_id, Race.date, Entry.finish_position,
+            Entry.finish_time, Entry.margin, Entry.agari_3f, Entry.passing,
+            Entry.weight_carried, Entry.horse_weight,
+            Race.distance, Race.surface, Race.race_class,
+        )
+        .join(Race, Entry.race_id == Race.race_id)
+        .where(Entry.finish_position.is_not(None))
+        .where(Race.date.is_not(None))
+    )
+
+
+def _tokenize_history_df(df: pd.DataFrame) -> np.ndarray:
+    """entries+races の DataFrame → [N, H] トークン行列 (bulk / inference 共通)。
+
+    df は (horse_id, date, race_id) でソート済みであること (days_since_prev の
+    groupby.shift がチロノロジカルになる)。per-race 集約は df 内の race ごとに
+    計算するので、df には各 race の **全出走馬** が入っている必要がある。
+    """
+    df["_ftn"] = df["finish_time"] / df["distance"].where(df["distance"] > 0)
+    race_grp = df.groupby("race_id", sort=False)
+    field_size = race_grp["finish_position"].transform("size").to_numpy()
+    race_avg_agari = race_grp["agari_3f"].transform("mean").to_numpy()
+    race_avg_ftn = race_grp["_ftn"].transform("mean").to_numpy()
+
+    fin = df["finish_position"].to_numpy(dtype="float64")
+    margin = df["margin"].map(_margin_num).to_numpy(dtype="float64")
+    passing_first = df["passing"].map(_passing_first).to_numpy(dtype="float64")
+    agari = pd.to_numeric(df["agari_3f"], errors="coerce").to_numpy(dtype="float64")
+    wcar = pd.to_numeric(df["weight_carried"], errors="coerce").to_numpy(dtype="float64")
+    hw = pd.to_numeric(df["horse_weight"], errors="coerce").to_numpy(dtype="float64")
+    dist = pd.to_numeric(df["distance"], errors="coerce").to_numpy(dtype="float64")
+    class_rank = df["race_class"].map(lambda c: float(_CLASS_RANK.get(c, 0))).to_numpy(dtype="float64")
+    won = (fin == 1.0).astype("float64")
+    finish_norm = np.divide(fin, field_size, out=np.full_like(fin, np.nan), where=field_size > 0)
+    surf_oh = np.array([_surf_onehot(s) for s in df["surface"]], dtype="float64")
+
+    date_dt = pd.to_datetime(df["date"], errors="coerce")
+    prev_date = date_dt.groupby(df["horse_id"], sort=False).shift(1)
+    days_prev = (date_dt - prev_date).dt.days.to_numpy(dtype="float64")
+
+    tokens = np.column_stack([
+        finish_norm, field_size.astype("float64"), agari, margin, passing_first,
+        wcar, hw, dist, class_rank, days_prev, won,
+        race_avg_agari, race_avg_ftn,
+        surf_oh[:, 0], surf_oh[:, 1], surf_oh[:, 2],
+    ]).astype("float32")
+    assert tokens.shape[1] == H, (tokens.shape, H)
+    return tokens
+
+
+def build_inference_history(
+    session: Session,
+    horse_ids: list[str],
+    before_date: date,
+    max_len: int = MAX_HIST,
+) -> dict[str, np.ndarray]:
+    """推論用: 指定馬の `before_date より厳密に過去` の走りを最大 max_len 走、
+    raw トークン [L, H] にして {horse_id: array} で返す (正規化は呼び出し側)。
+
+    per-race 集約のため、対象馬が走った過去レースの **全出走馬** を読み込んでから
+    対象馬の行だけを取り出す。leak-safe (Race.date < before_date)。
+    """
+    if not horse_ids:
+        return {}
+    before_str = before_date.isoformat()
+    # 1. 対象馬が走った過去レースの race_id 集合
+    rid_rows = session.execute(
+        select(Entry.race_id)
+        .join(Race, Entry.race_id == Race.race_id)
+        .where(Entry.horse_id.in_(horse_ids))
+        .where(Race.date < before_str)
+        .where(Entry.finish_position.is_not(None))
+        .distinct()
+    ).all()
+    past_race_ids = [r[0] for r in rid_rows]
+    if not past_race_ids:
+        return {}
+    # 2. それらレースの全出走馬を読み込み (集約のため)
+    stmt = (
+        _history_select()
+        .where(Entry.race_id.in_(past_race_ids))
+        .order_by(Entry.horse_id, Race.date, Entry.race_id)
+    )
+    df = pd.DataFrame(session.execute(stmt).all(), columns=_HISTORY_SELECT_COLS)
+    if df.empty:
+        return {}
+    tokens = _tokenize_history_df(df)
+    target = set(horse_ids)
+    hid_arr = df["horse_id"].to_numpy()
+    out: dict[str, np.ndarray] = {}
+    n = len(df)
+    start = 0
+    while start < n:
+        end = start
+        hid = hid_arr[start]
+        while end < n and hid_arr[end] == hid:
+            end += 1
+        if hid in target and end > start:
+            lo = max(start, end - max_len)
+            out[str(hid)] = tokens[lo:end]  # その馬の直近 max_len 走 (全て過去)
+        start = end
+    return out
+
+
 def build_history_sequences(session: Session, max_len: int = MAX_HIST) -> HistorySequenceCache:
     """全 (race_id, horse_id) の leak-safe 過去走トークン列を 1 パスで構築。
 
@@ -144,43 +260,9 @@ def build_history_sequences(session: Session, max_len: int = MAX_HIST) -> Histor
     if df.empty:
         return HistorySequenceCache({}, list(TOKEN_FEATURE_NAMES), max_len)
 
-    # --- per-race aggregates (レース全体の文脈) を 1 度だけ groupby で precompute ---
-    df["_ftn"] = df["finish_time"] / df["distance"].where(df["distance"] > 0)
-    race_grp = df.groupby("race_id", sort=False)
-    field_size = race_grp["finish_position"].transform("size").to_numpy()
-    race_avg_agari = race_grp["agari_3f"].transform("mean").to_numpy()
-    race_avg_ftn = race_grp["_ftn"].transform("mean").to_numpy()
-
-    # --- 行ごとのトークン (horse-own + race-context + surface) を vectorized に近い形で ---
-    fin = df["finish_position"].to_numpy(dtype="float64")
-    margin = df["margin"].map(_margin_num).to_numpy(dtype="float64")
-    passing_first = df["passing"].map(_passing_first).to_numpy(dtype="float64")
-    agari = pd.to_numeric(df["agari_3f"], errors="coerce").to_numpy(dtype="float64")
-    wcar = pd.to_numeric(df["weight_carried"], errors="coerce").to_numpy(dtype="float64")
-    hw = pd.to_numeric(df["horse_weight"], errors="coerce").to_numpy(dtype="float64")
-    dist = pd.to_numeric(df["distance"], errors="coerce").to_numpy(dtype="float64")
-    class_rank = df["race_class"].map(lambda c: float(_CLASS_RANK.get(c, 0))).to_numpy(dtype="float64")
-    won = (fin == 1.0).astype("float64")
-    finish_norm = np.divide(fin, field_size, out=np.full_like(fin, np.nan), where=field_size > 0)
-    surf_oh = np.array([_surf_onehot(s) for s in df["surface"]], dtype="float64")  # [N, 3]
-
+    tokens = _tokenize_history_df(df)
     horse_ids = df["horse_id"].to_numpy()
     race_ids = df["race_id"].to_numpy()
-    dates = df["date"].to_numpy()
-
-    # days_since_prev: 同一馬の前走からの日数 (chronological 並び前提)
-    date_dt = pd.to_datetime(df["date"], errors="coerce")
-    prev_date = date_dt.groupby(df["horse_id"], sort=False).shift(1)
-    days_prev = (date_dt - prev_date).dt.days.to_numpy(dtype="float64")
-
-    # [N, H] のトークン行列を一括構築
-    tokens = np.column_stack([
-        finish_norm, field_size.astype("float64"), agari, margin, passing_first,
-        wcar, hw, dist, class_rank, days_prev, won,
-        race_avg_agari, race_avg_ftn,
-        surf_oh[:, 0], surf_oh[:, 1], surf_oh[:, 2],
-    ]).astype("float32")
-    assert tokens.shape[1] == H, (tokens.shape, H)
 
     # --- 馬ごとに連続区間を取り、各レースに「厳密に過去」のスライスを割り当てる ---
     seqs: dict[tuple[str, str], np.ndarray] = {}
