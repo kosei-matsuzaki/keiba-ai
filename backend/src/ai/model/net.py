@@ -333,6 +333,8 @@ class RaceTransformerModel(nn.Module):
         use_history: bool = False,
         history_feat_dim: int = 0,
         history_hidden: int = 64,
+        use_odds_head: bool = False,
+        odds_feat_dim: int = 0,
     ) -> None:
         super().__init__()
 
@@ -378,12 +380,26 @@ class RaceTransformerModel(nn.Module):
             encoder_layer, num_layers=n_transformer_layers
         )
 
-        self.head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 1),
-        )
+        # スコアリング head。odds を ability(transformer 出力) と分離して head で使う。
+        # use_odds_head=False のとき現行 v2 と bit 一致 (self.head のみ、新キーなし)。
+        self.use_odds_head = use_odds_head and odds_feat_dim > 0
+        self.odds_feat_dim = odds_feat_dim if self.use_odds_head else 0
+        if self.use_odds_head:
+            # ability(embed) を LayerNorm → 標準化済み odds を concat → MLP
+            self.head_norm = nn.LayerNorm(embed_dim)
+            self.head_mlp = nn.Sequential(
+                nn.Linear(embed_dim + odds_feat_dim, hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, 1),
+            )
+            self.head = None
+        else:
+            self.head = nn.Sequential(
+                nn.LayerNorm(embed_dim),
+                nn.Linear(embed_dim, hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, 1),
+            )
 
     def _encode_history(
         self, history_seq: torch.Tensor, history_lengths: torch.Tensor
@@ -409,6 +425,7 @@ class RaceTransformerModel(nn.Module):
         mask: torch.Tensor,
         history_seq: torch.Tensor | None = None,
         history_lengths: torch.Tensor | None = None,
+        odds_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute per-horse scores.
 
@@ -418,6 +435,8 @@ class RaceTransformerModel(nn.Module):
             mask:           [B, N] bool — True = valid horse, False = padded
             history_seq:    optional [B, N, L, history_feat_dim] — 過去走系列
             history_lengths: optional [B, N] — 各馬の実履歴長 (0 可)
+            odds_features:  optional [B, N, odds_feat_dim] — 標準化済み odds。
+                            use_odds_head=True のとき head で使う (ability とは分離)。
 
         Returns:
             scores: [B, N] (padded positions = -inf)
@@ -428,6 +447,17 @@ class RaceTransformerModel(nn.Module):
         encoded = self.horse_encoder(horse_features, race_features, history_embed=history_embed)
         key_padding_mask = ~mask
         attended = self.transformer(encoded, src_key_padding_mask=key_padding_mask)
-        scores = self.head(attended).squeeze(-1)
+
+        if self.use_odds_head:
+            normed = self.head_norm(attended)  # [B, N, embed]
+            if odds_features is None:
+                # 欠損オッズ: ability-only で評価 (zeros = 標準化平均)
+                b, n, _ = normed.shape
+                odds_features = normed.new_zeros(b, n, self.odds_feat_dim)
+            h = torch.cat([normed, odds_features], dim=-1)  # [B, N, embed+odds]
+            scores = self.head_mlp(h).squeeze(-1)
+        else:
+            scores = self.head(attended).squeeze(-1)
+
         scores = scores.masked_fill(~mask, float("-inf"))
         return scores

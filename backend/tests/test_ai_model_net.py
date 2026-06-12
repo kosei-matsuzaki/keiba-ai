@@ -315,3 +315,65 @@ class TestRaceTransformerHistory:
         grads = [p.grad for p in model.history_encoder.parameters()]
         assert all(g is not None and torch.isfinite(g).all() for g in grads)
         assert any(g.abs().sum() > 0 for g in grads)
+
+
+ODDS_FEAT_DIM = 2
+
+
+def _odds_features() -> torch.Tensor:
+    torch.manual_seed(13)
+    return torch.randn(BATCH, MAX_HORSES, ODDS_FEAT_DIM)
+
+
+class TestRaceTransformerOddsHead:
+    def _model(self, use_odds_head: bool) -> RaceTransformerModel:
+        return RaceTransformerModel(
+            horse_feat_dim=HORSE_FEAT_DIM,
+            race_feat_dim=RACE_FEAT_DIM,
+            embed_dim=EMBED_DIM,
+            hidden_dim=HIDDEN_DIM,
+            n_heads=N_HEADS,
+            use_odds_head=use_odds_head,
+            odds_feat_dim=ODDS_FEAT_DIM,
+        )
+
+    def test_odds_head_output_shape(self, horse_features, race_features, mask):
+        model = self._model(use_odds_head=True)
+        odds = _odds_features()
+        scores = model(horse_features, race_features, mask, odds_features=odds)
+        assert scores.shape == (BATCH, MAX_HORSES)
+        assert torch.isfinite(scores[mask]).all()
+
+    def test_odds_head_missing_odds_fallback(self, horse_features, race_features, mask):
+        """odds_features=None でも zeros fallback で finite を返す (欠損オッズ耐性)。"""
+        model = self._model(use_odds_head=True)
+        scores = model(horse_features, race_features, mask, odds_features=None)
+        assert torch.isfinite(scores[mask]).all()
+
+    def test_odds_head_false_is_backward_compatible(self, horse_features, race_features, mask):
+        """use_odds_head=False は現行 head のみ・新サブモジュールなし・v2 strict load 可。"""
+        off = self._model(use_odds_head=False)
+        assert off.use_odds_head is False
+        assert off.head is not None
+        assert getattr(off, "head_norm", None) is None
+        assert getattr(off, "head_mlp", None) is None
+        scores = off(horse_features, race_features, mask)
+        assert torch.isfinite(scores[mask]).all()
+        # 同構成 (use_odds_head=False) 同士は state_dict strict load 可
+        off2 = self._model(use_odds_head=False)
+        off2.load_state_dict(off.state_dict(), strict=True)
+
+    def test_odds_head_on_has_split_head(self):
+        on = self._model(use_odds_head=True)
+        assert on.use_odds_head is True
+        assert on.head is None
+        assert on.head_norm is not None and on.head_mlp is not None
+
+    def test_odds_head_grads_flow(self, horse_features, race_features, mask):
+        model = self._model(use_odds_head=True)
+        odds = _odds_features()
+        scores = model(horse_features, race_features, mask, odds_features=odds)
+        scores[mask].sum().backward()
+        grads = [p.grad for p in model.head_mlp.parameters()]
+        assert all(g is not None and torch.isfinite(g).all() for g in grads)
+        assert any(g.abs().sum() > 0 for g in grads)
