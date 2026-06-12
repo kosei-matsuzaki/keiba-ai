@@ -232,8 +232,12 @@ def _compute_winplace_roi_nn(
     device: torch.device,
     history_cache=None,
     history_norm=None,
+    collect_records: list | None = None,
 ) -> tuple[float, float]:
     """Top-1 flat-stake 単勝 / 複勝 ROI on real odds across all races in frame.
+
+    collect_records (任意): 渡すと各レースの top-1 賭け記録
+    {odds, won, tansho_ret, place_ret} を append する (bootstrap CI / オッズ分布用)。
 
     Per race, stake 1 unit on the highest-score horse:
       - 単勝: return = odds_win   if it finished 1st        else 0
@@ -273,13 +277,20 @@ def _compute_winplace_roi_nn(
 
             positions = grp["finish_position"].values
             pos = float(positions[top]) if top < len(positions) else float("nan")
+            won = (not np.isnan(pos)) and int(pos) == 1
+
+            rec_odds: float | None = None
+            rec_tansho: float | None = None
+            rec_place: float | None = None
 
             # 単勝
             if "odds_win" in grp.columns:
                 o = float(grp["odds_win"].values[top])
                 if not (np.isnan(o) or o <= 0.0):
                     t_inv += 1.0
-                    if not np.isnan(pos) and int(pos) == 1:
+                    rec_odds = o
+                    rec_tansho = o if won else 0.0
+                    if won:
                         t_gross += o
 
             # 複勝
@@ -287,8 +298,16 @@ def _compute_winplace_roi_nn(
                 payout_map = _parse_payout_place_cell(grp["payout_place"].values[top])
                 if payout_map:
                     f_inv += 1.0
-                    if not np.isnan(pos) and int(pos) in payout_map:
+                    hit_place = (not np.isnan(pos)) and int(pos) in payout_map
+                    rec_place = payout_map[int(pos)] / 100.0 if hit_place else 0.0
+                    if hit_place:
                         f_gross += payout_map[int(pos)] / 100.0
+
+            if collect_records is not None:
+                collect_records.append({
+                    "odds": rec_odds, "won": won,
+                    "tansho_ret": rec_tansho, "place_ret": rec_place,
+                })
 
     tansho = t_gross / t_inv if t_inv > 0 else float("nan")
     fukusho = f_gross / f_inv if f_inv > 0 else float("nan")
@@ -674,6 +693,7 @@ def train_nn(
     use_history: bool = False,
     history_seq_len: int = 15,
     prebuilt_history=None,
+    return_test_bets: bool = False,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict.
 
@@ -961,10 +981,12 @@ def train_nn(
             horse_feature_cols, race_feature_cols, torch_device, **_hist_kw,
         ) if not valid_df.empty else (float("nan"), float("nan"))
     )
+    test_bets: list = []
     test_tansho_roi, test_fukusho_roi = (
         _compute_winplace_roi_nn(
             race_model, test_df, test_raw_df,
             horse_feature_cols, race_feature_cols, torch_device, **_hist_kw,
+            collect_records=(test_bets if return_test_bets else None),
         ) if not test_df.empty else (float("nan"), float("nan"))
     )
 
@@ -1015,10 +1037,13 @@ def train_nn(
                 )
                 temperature_scaler = None
 
+    # test_bets は metrics に含めない (meta.json 肥大回避)。return_test_bets 時のみ返す。
+    _extra = {"test_bets": test_bets} if return_test_bets else {}
+
     # persist=False: 実験/スイープ用。モデルファイルも model_runs DB 行も書かず
     # metrics だけ返す (keiba.db を read-only に保ち、models/ と DB を汚さない)。
     if not persist:
-        return {"model_dir": None, **metrics}
+        return {"model_dir": None, **metrics, **_extra}
 
     # Save model
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
@@ -1119,7 +1144,7 @@ def train_nn(
 
     log.info("model_runs row inserted.")
 
-    return {"model_dir": str(model_dir), **metrics}
+    return {"model_dir": str(model_dir), **metrics, **_extra}
 
 
 def _cli() -> None:
