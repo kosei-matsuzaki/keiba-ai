@@ -17,9 +17,11 @@ with-odds (odds は常に使う。encoder か head かが違う)。loss=multi(�
 
 from __future__ import annotations
 
+import gc
 import json
 
 import numpy as np
+import torch
 from lightning.pytorch import seed_everything
 
 from ai.training.train_nn import train_nn
@@ -111,6 +113,11 @@ def main() -> None:
             print(f"  tansho_roi={res.get('test_tansho_roi'):.4f} "
                   f"tansho_hit={res.get('test_tansho_hit'):.4f} "
                   f"fukusho_hit={res.get('test_fukusho_hit'):.4f}", flush=True)
+            # メモリ解放 (7.6GB RAM で OOM 回避): res/グラフを捨て GC + CUDA cache 解放
+            del res
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     rng = np.random.default_rng(0)
     print("\n" + "=" * 88)
