@@ -28,7 +28,7 @@ flowchart LR
     O --> EV[バックテスト評価]
 ```
 
-モデルは馬個別の処理（HorseEncoder）と馬同士の相互作用処理（Set Transformer）を分けたアーキテクチャ。学習目的（損失）は `--loss` で切り替える（下記）。
+モデルは **ability（馬の実力）** と **value（市場のオッズ）** を分離したアーキテクチャ。馬個別の処理（`HorseEncoderWithEmb`、オッズを含まない）→ 馬同士の相互作用（Set Transformer）で ability を出し、最後のスコア head でオッズを合成する。学習目的（損失）は `--loss` で切り替える（下記）。
 
 ---
 
@@ -38,29 +38,34 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    HF[馬個別の特徴量<br/>例: 体重・連対率] --> HE
+    HF[馬個別の特徴量<br/>例: 体重・連対率<br/>※オッズは含めない] --> HE
+    HIST[過去走系列<br/>1 走ずつのトークン列] --> GRU[履歴エンコーダ<br/>GRU]
+    GRU --> HE
     RF[レース全体の特徴量<br/>距離・コース・天候 等] --> BC[各馬にコピー]
-    BC --> HE[HorseEncoder<br/>3 層全結合]
-    HE --> EMB[馬ごとの<br/>埋め込みベクトル<br/>32 次元]
-    EMB --> RM[RaceModel<br/>Set Transformer<br/>self-attention 1 層]
+    BC --> HE[HorseEncoderWithEmb<br/>カテゴリ埋め込み + 全結合]
+    HE --> EMB[馬ごとの ability<br/>埋め込みベクトル 32 次元]
+    EMB --> RM[RaceTransformerModel<br/>Set Transformer<br/>多層 TransformerEncoder]
     MASK[マスク<br/>有効馬 vs パディング] --> RM
-    RM --> S[スコア]
-    S --> SM[内レース<br/>ソフトマックス]
-    SM --> WP[単勝確率]
+    RM --> AB[attended ability]
+    AB --> HEAD[スコア head<br/>LayerNorm ability ⊕ 標準化オッズ → MLP]
+    ODDS[標準化オッズ<br/>odds_win・人気] --> HEAD
+    HEAD --> S[スコア]
+    S --> SM[内レース<br/>ソフトマックス /T] --> WP[単勝確率]
     S --> PLM[Plackett-Luce<br/>モンテカルロ]
     PLM --> PP[複勝確率]
-    PLM --> CR[連系の生確率]
-    CR --> CC[連系補正<br/>馬券種別 単調回帰]
-    CC --> CCP[連系確率]
+    PLM --> CR[連系確率<br/>解析的 PL・外部校正なし]
 ```
 
 ### 構成
 
 | ブロック | 種類 | 役割 |
 |---|---|---|
-| HorseEncoder | 全結合 3 層 | 各馬を独立に処理し、特徴量を 32 次元の埋め込みベクトルに変換する。レース全体の特徴量（距離・コース・天候など）は全馬にコピーしてから入力に連結 |
-| RaceModel | Set Transformer 1 層 + 出力ヘッド | 同じレースに出走している馬同士の相互作用を self-attention で表現する。「16 頭立てで突出した強い馬がいるレース」と「8 頭立ての横一線レース」では各馬のスコア解釈が変わる、という効果を構造的に取り込む |
+| 履歴エンコーダ | GRU | 各馬の過去走を「1 走ずつのトークン列」として時系列に要約する。集約スカラー（連対率など）が潰してしまう「その日のレース内容ごとの情報」を保つ。過去走 0 件の馬は zero ベクトル。leak-safe（レース日より厳密に過去のみ） |
+| HorseEncoderWithEmb | カテゴリ埋め込み + 全結合 | 各馬を独立に **実力（ability）** として処理し 32 次元埋め込みに変換する。カテゴリ特徴は `nn.Embedding`、レース全体特徴は全馬にコピーして連結、履歴 GRU 出力も連結。**オッズ（市場予想）はここには入れない** |
+| RaceTransformerModel | 多層 TransformerEncoder + スコア head | 馬同士の相互作用を self-attention（GELU・pre-norm・FFN）で表現。「16 頭立てで突出した強い馬がいるレース」と「8 頭立ての横一線レース」でスコア解釈が変わる効果を取り込む。スコア head は ability を LayerNorm したものに **標準化済みオッズを連結** して MLP に通す（ability→value 分離） |
 | マスク | bool 行列 | 異なる頭数のレースを 1 つのバッチにまとめるために、最大頭数までゼロ埋めしたパディング部分を attention から除外する |
+
+> **オッズの扱い**: `odds_win` / `popularity` は ability エンコーダではなくスコア head で使う（馬の実力評価に市場予想を混ぜない）。`KEIBA_EXCLUDE_ODDS_FEATURES=1` のときはオッズ次元 0 で head が ability のみを入力に取る（オッズ未確定時の検証用）。`history_feat_dim` / `odds_feat_dim` は *次元* で 0 ならその入力なし。旧 v1/v2 アーキと gated フラグ（`use_history` / `use_odds_head` / `arch_version`）は 2026-06 に全廃し、この構成が唯一の正規アーキ。
 
 ### 学習（既定は ROI 志向 = decision-focused）
 
