@@ -121,7 +121,7 @@ class ModelBundle:
         model_dir:             モデルディレクトリのパス
         meta:                  meta.json の内容 (dict)
         feature_columns:       全特徴量列
-        nn_model:              RaceModel インスタンス (eval 済み)
+        nn_model:              RaceTransformerModel インスタンス (eval 済み)
         nn_horse_feature_cols: 馬ごとの特徴量列
         nn_race_feature_cols:  レースレベルの特徴量列
         nn_preprocessor:       カテゴリ map + 数値標準化 (train で fit 済み)。
@@ -140,12 +140,19 @@ class ModelBundle:
     nn_preprocessor: NNPreprocessor | None = None
     # 温度スケーリング (optional)
     temperature_scaler: TemperatureScaler | None = None
+    # odds-at-scoring head: odds は encoder でなく head で使う標準化済み列。
+    # exclude-odds (ability-only) のとき空リスト。
+    nn_odds_feature_cols: list[str] | None = None
+    # per-race 履歴エンコーダ (serving): 推論時に過去走系列を構築し標準化するための情報。
+    nn_history_norm: tuple | None = None  # (mean, std) ndarray
+    nn_history_max_len: int = 0
+    nn_history_feat_dim: int = 0
 
 
 def load_model_full(path: Path) -> ModelBundle:
     """Load a NN ModelBundle from a model directory.
 
-    RaceModel (eval mode) + horse/race feature column lists + optional
+    RaceTransformerModel (eval mode) + horse/race feature column lists + optional
     preprocessor / temperature scaler。
 
     torch がインストールされていない環境ではロードに失敗する (ImportError)。
@@ -168,6 +175,10 @@ def load_model_full(path: Path) -> ModelBundle:
         nn_race_feature_cols=nn_artifacts["nn_race_feature_cols"],
         nn_preprocessor=nn_artifacts["nn_preprocessor"],
         temperature_scaler=nn_artifacts["temperature_scaler"],
+        nn_odds_feature_cols=nn_artifacts.get("nn_odds_feature_cols"),
+        nn_history_norm=nn_artifacts.get("nn_history_norm"),
+        nn_history_max_len=nn_artifacts.get("nn_history_max_len", 0),
+        nn_history_feat_dim=nn_artifacts.get("nn_history_feat_dim", 0),
     )
 
 

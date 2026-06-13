@@ -63,6 +63,48 @@ def test_train_nn_creates_artifacts(syn_engine_small, tmp_path, monkeypatch):
     assert meta.get("has_preprocessor") is True
 
 
+def test_train_nn_target_arch_runs(syn_engine_small, tmp_path, monkeypatch):
+    """target arch (per-race 履歴エンコーダ + odds-at-scoring head) が end-to-end で
+    学習・評価できる。両者は常時有効 (gated フラグ廃止)。"""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file,
+        train_end=None,
+        valid_months=2,
+        test_months=1,
+        loss="plackett_luce",
+        hidden_dim=16,
+        embed_dim=8,
+        n_heads=2,
+        batch_size=4,
+        max_epochs=2,
+        device="cpu",
+        persist=False,
+        history_seq_len=10,
+    )
+    assert "test_ndcg1" in result
+    assert "valid_ndcg3" in result
+    # 評価は ROI + 的中率 (ndcg は非考慮へ移行)
+    assert "test_tansho_hit" in result
+    assert "test_fukusho_hit" in result
+
+
+def test_train_nn_target_arch_roi_loss(syn_engine_small, tmp_path, monkeypatch):
+    """本番目的 (ROI 系損失 + valid_tansho_roi 監視) で target arch が動く。"""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth", monitor="valid_tansho_roi",
+        hidden_dim=16, embed_dim=8, n_heads=2, batch_size=4, max_epochs=2,
+        device="cpu", persist=False, history_seq_len=10,
+    )
+    assert "test_tansho_roi" in result
+    assert "test_tansho_hit" in result
+
+
 def test_train_nn_persist_false_writes_nothing(syn_engine_small, tmp_path, monkeypatch):
     """persist=False returns metrics with model_dir=None and writes no model
     files nor a model_runs DB row (for sweeps / feature A-B)."""
@@ -131,11 +173,17 @@ def test_train_nn_meta_json_structure(syn_engine_small, tmp_path, monkeypatch):
     assert "loss_type" in meta
     assert meta["loss_type"] == "plackett_luce"
 
-    # arch v2: cat metadata + new optimizer params present in meta
-    assert meta.get("arch_version") == 2
+    # target arch: cat metadata + odds-head / history reconstruction info in meta
     assert "cat_metadata" in meta
     assert "n_transformer_layers" in meta["params"]
     assert "weight_decay" in meta["params"]
+    # odds は head へ、履歴エンコーダは常時 → serving 再構築用の dims が meta にある
+    assert meta["odds_feat_dim"] == len(meta["odds_feature_cols"])
+    assert meta["history_feat_dim"] > 0
+    # 旧 gated フラグ / arch_version は廃止済み
+    assert "arch_version" not in meta
+    assert "use_odds_head" not in meta
+    assert "use_history" not in meta
 
     # metrics must contain NDCG keys
     metrics = meta["metrics"]

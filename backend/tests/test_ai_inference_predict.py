@@ -1,6 +1,6 @@
 """Tests for NN inference via predict_race and predict_race_with_combinations.
 
-Uses small synthetic RaceModel instances to avoid long training times.
+Uses small synthetic RaceTransformerModel instances to avoid long training times.
 """
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ import pandas as pd
 import torch
 
 from ai.inference.predict import predict_race, predict_race_with_combinations
-from ai.model.net import RaceModel
+from ai.model.net import RaceTransformerModel
+from ai.model.preprocess import NNPreprocessor
 from ai.model.registry import ModelBundle, load_model_full, save_nn_model
 
 # ---------------------------------------------------------------------------
@@ -24,27 +25,55 @@ _RACE_COLS = ["course", "distance"]
 
 
 def _make_bundle(tmp_path: Path, n_horses_in_model: int = 4) -> ModelBundle:
-    """Build a small RaceModel, save it, and load it as a ModelBundle."""
-    model = RaceModel(
+    """Build a small RaceTransformerModel (degenerate target: no cats/history/odds),
+    save it with a fitted preprocessor, and load it as a ModelBundle."""
+    model = RaceTransformerModel(
         horse_feat_dim=len(_HORSE_COLS),
         race_feat_dim=len(_RACE_COLS),
         embed_dim=8,
         hidden_dim=16,
         n_heads=2,
+        cat_embed_dim=4,
+        n_transformer_layers=2,
     )
     model_dir = tmp_path / "nn-model"
     model_dir.mkdir()
     pt_path = model_dir / "model.pt"
     torch.save(model.state_dict(), pt_path)
 
+    # 推論には fitted preprocessor が必須。course は数値で fit (cat 埋め込みなし)。
+    train_like = pd.DataFrame(
+        {
+            "feat_a": [0.0, 1.0, 2.0, 3.0],
+            "feat_b": [1.0, 2.0, 3.0, 4.0],
+            "feat_c": [0.5, 0.5, 0.5, 0.5],
+            "feat_d": [-1.0, 0.0, 1.0, 2.0],
+            "course": [0.0, 1.0, 0.0, 1.0],
+            "distance": [1600.0, 2000.0, 1200.0, 1800.0],
+        }
+    )
+    NNPreprocessor.fit(train_like, _HORSE_COLS, _RACE_COLS).save(
+        model_dir / "preprocessor.pkl"
+    )
+
     meta_dict = {
         "model_type": "nn",
-        "loss_type": "plackett_luce",
-        "params": {"hidden_dim": 16, "embed_dim": 8, "n_heads": 2},
-        "metrics": {"ndcg1": 0.5},
+        "loss_type": "multi",
+        "params": {
+            "hidden_dim": 16, "embed_dim": 8, "n_heads": 2,
+            "n_transformer_layers": 2, "cat_embed_dim": 4,
+        },
+        "metrics": {"test_tansho_roi": 0.9},
         "feature_columns": _HORSE_COLS + _RACE_COLS,
         "horse_feature_cols": _HORSE_COLS,
         "race_feature_cols": _RACE_COLS,
+        "cat_metadata": {
+            "horse_cat_positions": [], "horse_cat_cardinalities": [],
+            "race_cat_positions": [], "race_cat_cardinalities": [],
+        },
+        "odds_feat_dim": 0,
+        "odds_feature_cols": [],
+        "history_feat_dim": 0,
         "train_range": None,
         "valid_range": None,
     }
@@ -64,7 +93,7 @@ def _make_race_frame(n_horses: int = 6) -> pd.DataFrame:
         for col in _HORSE_COLS:
             row[col] = float(rng.standard_normal())
         # Race-level features (constant within the race)
-        row["course"] = 0.0  # already numeric after _encode_categoricals
+        row["course"] = 0.0  # numeric (preprocessor standardises it)
         row["distance"] = 1600.0
         rows.append(row)
     return pd.DataFrame(rows)
@@ -178,9 +207,7 @@ def test_predict_race_with_combinations_bundle_nn_combination_prediction_fields(
 
 
 def test_predict_race_bundle_nn_uses_preprocessor_when_present(tmp_path):
-    """When preprocessor.pkl is in the model dir, predict_race uses it (not legacy encode)."""
-    from ai.model.preprocess import NNPreprocessor
-
+    """predict_race applies the bundled preprocessor (incl. categorical course maps)."""
     bundle = _make_bundle(tmp_path)
     # Fit and save a preprocessor next to the model
     train_like = pd.DataFrame(
@@ -202,10 +229,9 @@ def test_predict_race_bundle_nn_uses_preprocessor_when_present(tmp_path):
     assert bundle.nn_preprocessor is not None
 
     frame = _make_race_frame(6)
-    # course=0.0 in _make_race_frame would NOT be a known category for the
-    # fitted preprocessor, so the preprocessor maps it to -1.  The point of
-    # this test is just to confirm inference runs without error and uses the
-    # bundled preprocessor (not the legacy per-frame encoder).
+    # course=0.0 in _make_race_frame is NOT a known category for the fitted
+    # preprocessor, so it maps to the unknown sentinel.  The point of this test
+    # is to confirm inference runs without error using the bundled preprocessor.
     result = predict_race(bundle, frame)
     assert set(result.columns) >= {"horse_id", "score", "win_prob", "place_prob"}
     assert abs(result["win_prob"].sum() - 1.0) < 1e-4

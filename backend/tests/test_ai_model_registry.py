@@ -11,7 +11,7 @@ from pathlib import Path
 
 import torch
 
-from ai.model.net import RaceModel
+from ai.model.net import RaceTransformerModel
 from ai.model.registry import ModelBundle, load_model_full, save_nn_model
 
 # ---------------------------------------------------------------------------
@@ -19,17 +19,35 @@ from ai.model.registry import ModelBundle, load_model_full, save_nn_model
 # ---------------------------------------------------------------------------
 
 
-def _make_small_race_model(horse_feat_dim: int = 4, race_feat_dim: int = 2) -> RaceModel:
-    return RaceModel(
+def _make_small_model(
+    horse_feat_dim: int = 4,
+    race_feat_dim: int = 2,
+    *,
+    history_feat_dim: int = 0,
+    odds_feat_dim: int = 0,
+) -> RaceTransformerModel:
+    return RaceTransformerModel(
         horse_feat_dim=horse_feat_dim,
         race_feat_dim=race_feat_dim,
         embed_dim=8,
         hidden_dim=16,
         n_heads=2,
+        cat_embed_dim=4,
+        n_transformer_layers=2,
+        history_feat_dim=history_feat_dim,
+        odds_feat_dim=odds_feat_dim,
     )
 
 
-def _save_nn_artifacts(tmp_path: Path, model: RaceModel, horse_cols: list[str], race_cols: list[str]) -> Path:
+def _save_nn_artifacts(
+    tmp_path: Path,
+    model: RaceTransformerModel,
+    horse_cols: list[str],
+    race_cols: list[str],
+    *,
+    odds_cols: list[str] | None = None,
+    extra_meta: dict | None = None,
+) -> Path:
     """Save model.pt + call save_nn_model; returns model_dir."""
     model_dir = tmp_path / "test-nn"
     model_dir.mkdir()
@@ -37,22 +55,36 @@ def _save_nn_artifacts(tmp_path: Path, model: RaceModel, horse_cols: list[str], 
     pt_path = model_dir / "model.pt"
     torch.save(model.state_dict(), pt_path)
 
-    all_cols = horse_cols + race_cols
+    odds_cols = odds_cols or []
+    all_cols = horse_cols + race_cols + odds_cols
     meta_dict = {
         "model_type": "nn",
-        "loss_type": "plackett_luce",
+        "loss_type": "multi",
         "params": {
             "hidden_dim": 16,
             "embed_dim": 8,
             "n_heads": 2,
+            "n_transformer_layers": 2,
+            "cat_embed_dim": 4,
         },
-        "metrics": {"ndcg1": 0.5, "ndcg3": 0.6},
+        "metrics": {"test_tansho_roi": 0.9},
         "feature_columns": all_cols,
         "horse_feature_cols": horse_cols,
         "race_feature_cols": race_cols,
+        "cat_metadata": {
+            "horse_cat_positions": [],
+            "horse_cat_cardinalities": [],
+            "race_cat_positions": [],
+            "race_cat_cardinalities": [],
+        },
+        "odds_feat_dim": len(odds_cols),
+        "odds_feature_cols": odds_cols,
+        "history_feat_dim": 0,
         "train_range": None,
         "valid_range": None,
     }
+    if extra_meta:
+        meta_dict.update(extra_meta)
 
     save_nn_model(pt_path, meta_dict)
     return model_dir
@@ -67,7 +99,7 @@ def test_save_nn_model_writes_meta_json(tmp_path):
     """save_nn_model writes meta.json next to model.pt."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     assert (model_dir / "meta.json").exists()
@@ -81,7 +113,7 @@ def test_load_model_full_nn_returns_bundle(tmp_path):
     """load_model_full on an NN dir returns ModelBundle with model_type='nn'."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     bundle = load_model_full(model_dir)
@@ -91,23 +123,23 @@ def test_load_model_full_nn_returns_bundle(tmp_path):
 
 
 def test_load_model_full_nn_has_nn_model(tmp_path):
-    """Loaded NN bundle has a non-None nn_model (RaceModel instance)."""
+    """Loaded NN bundle has a non-None nn_model (RaceTransformerModel instance)."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     bundle = load_model_full(model_dir)
 
     assert bundle.nn_model is not None
-    assert isinstance(bundle.nn_model, RaceModel)
+    assert isinstance(bundle.nn_model, RaceTransformerModel)
 
 
 def test_load_model_full_nn_feature_columns(tmp_path):
     """Loaded NN bundle has correct feature_columns, horse_feature_cols, race_feature_cols."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     bundle = load_model_full(model_dir)
@@ -121,7 +153,7 @@ def test_load_model_full_nn_optional_fields_none(tmp_path):
     """NN bundle has None for optional calibrator/scaler fields when absent."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     bundle = load_model_full(model_dir)
@@ -133,7 +165,7 @@ def test_load_model_full_nn_model_eval_mode(tmp_path):
     """Loaded NN model is in eval mode (no dropout active by default)."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     bundle = load_model_full(model_dir)
@@ -145,7 +177,7 @@ def test_load_model_full_nn_weights_preserved(tmp_path):
     """State dict is correctly restored after save → load."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    original = _make_small_race_model(len(horse_cols), len(race_cols))
+    original = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, original, horse_cols, race_cols)
 
     bundle = load_model_full(model_dir)
@@ -166,7 +198,7 @@ def test_load_model_full_nn_loads_preprocessor_when_present(tmp_path):
 
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
 
     train_df = pd.DataFrame(
@@ -190,10 +222,10 @@ def test_load_model_full_nn_loads_preprocessor_when_present(tmp_path):
 
 
 def test_load_model_full_nn_preprocessor_none_when_absent(tmp_path):
-    """Legacy NN models without preprocessor.pkl get nn_preprocessor=None."""
+    """A model dir without preprocessor.pkl yields nn_preprocessor=None on the bundle."""
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
-    model = _make_small_race_model(len(horse_cols), len(race_cols))
+    model = _make_small_model(len(horse_cols), len(race_cols))
     model_dir = _save_nn_artifacts(tmp_path, model, horse_cols, race_cols)
     # no preprocessor.pkl written
 
@@ -202,18 +234,15 @@ def test_load_model_full_nn_preprocessor_none_when_absent(tmp_path):
     assert bundle.nn_preprocessor is None
 
 
-def test_load_model_full_nn_arch_v2(tmp_path):
-    """arch_version=2 → registry instantiates RaceTransformerModel with cat metadata."""
+def test_load_model_full_reconstructs_cat_metadata(tmp_path):
+    """registry rebuilds RaceTransformerModel with categorical embedding metadata."""
     import pandas as pd
 
-    from ai.model.net import RaceTransformerModel
     from ai.model.preprocess import NNPreprocessor
 
     horse_cols = ["feat_a", "feat_b", "feat_c", "feat_d"]
     race_cols = ["course", "distance"]
 
-    horse_cat_positions: list[int] = []
-    horse_cat_cardinalities: list[int] = []
     race_cat_positions = [0]
     race_cat_cardinalities = [3]
 
@@ -223,22 +252,21 @@ def test_load_model_full_nn_arch_v2(tmp_path):
         embed_dim=8,
         hidden_dim=16,
         n_heads=2,
-        horse_cat_positions=horse_cat_positions,
-        horse_cat_cardinalities=horse_cat_cardinalities,
+        horse_cat_positions=[],
+        horse_cat_cardinalities=[],
         race_cat_positions=race_cat_positions,
         race_cat_cardinalities=race_cat_cardinalities,
         cat_embed_dim=4,
         n_transformer_layers=2,
     )
 
-    model_dir = tmp_path / "test-nn-v2"
+    model_dir = tmp_path / "test-nn-cat"
     model_dir.mkdir()
     torch.save(model.state_dict(), model_dir / "model.pt")
 
     meta = {
         "model_type": "nn",
-        "arch_version": 2,
-        "loss_type": "plackett_luce",
+        "loss_type": "multi",
         "params": {
             "hidden_dim": 16,
             "embed_dim": 8,
@@ -246,13 +274,13 @@ def test_load_model_full_nn_arch_v2(tmp_path):
             "n_transformer_layers": 2,
             "cat_embed_dim": 4,
         },
-        "metrics": {"ndcg1": 0.5},
+        "metrics": {},
         "feature_columns": horse_cols + race_cols,
         "horse_feature_cols": horse_cols,
         "race_feature_cols": race_cols,
         "cat_metadata": {
-            "horse_cat_positions": horse_cat_positions,
-            "horse_cat_cardinalities": horse_cat_cardinalities,
+            "horse_cat_positions": [],
+            "horse_cat_cardinalities": [],
             "race_cat_positions": race_cat_positions,
             "race_cat_cardinalities": race_cat_cardinalities,
         },
@@ -275,3 +303,42 @@ def test_load_model_full_nn_arch_v2(tmp_path):
 
     assert bundle.model_type == "nn"
     assert isinstance(bundle.nn_model, RaceTransformerModel)
+    # 重み一致 (strict load)
+    for k, v in model.state_dict().items():
+        assert torch.allclose(bundle.nn_model.state_dict()[k], v)
+
+
+def test_load_model_full_odds_head_roundtrip(tmp_path):
+    """odds-at-scoring head: odds 列を head で concat する構成を save→load で復元し、
+    nn_odds_feature_cols を bundle に戻し、重みが一致する。"""
+    import pandas as pd
+
+    from ai.model.preprocess import NNPreprocessor
+
+    horse_cols = ["feat_a", "feat_b"]
+    race_cols = ["distance"]
+    odds_cols = ["odds_win", "popularity"]
+
+    model = _make_small_model(
+        len(horse_cols), len(race_cols), odds_feat_dim=len(odds_cols)
+    )
+    model_dir = _save_nn_artifacts(
+        tmp_path, model, horse_cols, race_cols, odds_cols=odds_cols
+    )
+
+    train_df = pd.DataFrame({
+        "feat_a": [0.0, 1.0, 2.0], "feat_b": [1.0, 2.0, 3.0],
+        "distance": [1600.0, 2000.0, 1800.0],
+        "odds_win": [2.0, 5.0, 10.0], "popularity": [1.0, 2.0, 3.0],
+    })
+    NNPreprocessor.fit(
+        train_df, horse_cols, race_cols, odds_feature_cols=odds_cols
+    ).save(model_dir / "preprocessor.pkl")
+
+    bundle = load_model_full(model_dir)
+    assert isinstance(bundle.nn_model, RaceTransformerModel)
+    assert bundle.nn_model.odds_feat_dim == len(odds_cols)
+    assert bundle.nn_odds_feature_cols == odds_cols
+    # 重み一致 (odds head 含む strict load)
+    for k, v in model.state_dict().items():
+        assert torch.allclose(bundle.nn_model.state_dict()[k], v)

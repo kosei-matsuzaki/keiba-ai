@@ -109,6 +109,7 @@ def derive_wide_prob_from_triple(
 def predict_race(
     bundle: ModelBundle,
     frame: pd.DataFrame,
+    session: Session | None = None,
 ) -> pd.DataFrame:
     """Score all horses in a single race using a NN ModelBundle.
 
@@ -116,18 +117,65 @@ def predict_race(
         bundle: ModelBundle loaded via registry.load_model_full().
         frame:  Feature DataFrame for one race. Must contain horse_id and
                 the feature columns used at training time.
+        session: optional DB session.  Required for models that use the
+                per-race history encoder (bundle.nn_history_feat_dim > 0) — the
+                past-race sequences are built leak-safe from the DB at inference.
+                None で履歴モデルを呼ぶと履歴寄与なし (ability-only) に degrade。
 
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob.
         Sorted by score descending.
     """
-    return _predict_race_nn(bundle, frame)
+    return _predict_race_nn(bundle, frame, session=session)
 
 
-def _predict_race_nn(bundle: ModelBundle, frame: pd.DataFrame) -> pd.DataFrame:
+def _build_inference_history_tensors(bundle, frame, session, torch):
+    """推論レースの per-race 履歴を [1,n,L,H] + lengths [1,n] テンソルに。
+
+    leak-safe (race date より過去のみ)。学習時と同じ正規化器 (bundle.nn_history_norm)
+    で標準化。過去走 0 件の馬は length=0 (zero 行)。
+    """
+    from datetime import date as _date
+
+    from features.history_sequence import build_inference_history
+
+    horse_ids = [str(h) for h in frame["horse_id"].tolist()]
+    before = _date.fromisoformat(str(frame["date"].iloc[0]))
+    max_len = bundle.nn_history_max_len or 15
+    seqs = build_inference_history(session, horse_ids, before, max_len)
+
+    hdim = bundle.nn_history_feat_dim
+    mean, std = bundle.nn_history_norm if bundle.nn_history_norm else (None, None)
+    per_horse: list[np.ndarray] = []
+    lengths: list[int] = []
+    for hid in horse_ids:
+        raw = seqs.get(hid)
+        if raw is None or len(raw) == 0:
+            per_horse.append(np.zeros((0, hdim), dtype="float32"))
+            lengths.append(0)
+        else:
+            if mean is not None:
+                raw = np.nan_to_num((raw - mean) / std, nan=0.0).astype("float32")
+            per_horse.append(raw)
+            lengths.append(len(raw))
+
+    l_max = max((s.shape[0] for s in per_horse), default=0)
+    l_max = max(l_max, 1)
+    arr = np.zeros((len(horse_ids), l_max, hdim), dtype="float32")
+    for j, s in enumerate(per_horse):
+        if s.shape[0] > 0:
+            arr[j, : s.shape[0]] = s
+    history_seq_t = torch.tensor(arr, dtype=torch.float32).unsqueeze(0)  # [1, n, L, H]
+    history_lengths_t = torch.tensor(lengths, dtype=torch.long).unsqueeze(0)  # [1, n]
+    return history_seq_t, history_lengths_t
+
+
+def _predict_race_nn(
+    bundle: ModelBundle, frame: pd.DataFrame, session: Session | None = None
+) -> pd.DataFrame:
     """NN inference for a single race.
 
-    Builds a single-batch tensor from frame, runs the RaceModel forward pass,
+    Builds a single-batch tensor from frame, runs the RaceTransformerModel forward pass,
     converts scores to win_prob (softmax) and place_prob (Plackett-Luce MC),
     and returns a DataFrame with columns horse_id, score, win_prob, place_prob.
 
@@ -140,16 +188,13 @@ def _predict_race_nn(bundle: ModelBundle, frame: pd.DataFrame) -> pd.DataFrame:
 
     horse_feature_cols: list[str] = bundle.nn_horse_feature_cols or []
     race_feature_cols: list[str] = bundle.nn_race_feature_cols or []
-    all_feat_cols = horse_feature_cols + race_feature_cols
 
-    if bundle.nn_preprocessor is not None:
-        encoded = bundle.nn_preprocessor.transform(frame)
-    else:
-        # Legacy fallback: NN models saved before preprocessor.pkl was introduced.
-        # The mapping is computed from the single race only, which means the
-        # categorical encoding will not match what the model was trained with.
-        from ai.training.train_nn import _encode_categoricals  # noqa: PLC0415
-        encoded = _encode_categoricals(frame, all_feat_cols)
+    if bundle.nn_preprocessor is None:
+        raise ValueError(
+            "ModelBundle.nn_preprocessor is None — cannot run inference without the "
+            "fitted preprocessor (categorical maps + numeric standardization)."
+        )
+    encoded = bundle.nn_preprocessor.transform(frame)
 
     n_horses = len(encoded)
 
@@ -169,11 +214,32 @@ def _predict_race_nn(bundle: ModelBundle, frame: pd.DataFrame) -> pd.DataFrame:
 
     mask = torch.ones(1, n_horses, dtype=torch.bool)  # all valid
 
+    # odds-at-scoring head: odds は head へ (encoder には入らない)。encoded は
+    # transform 済みなので標準化済みオッズ。odds 列なし (exclude-odds) は None。
+    odds_t = None
+    odds_cols = bundle.nn_odds_feature_cols or []
+    if odds_cols:
+        odds_np = encoded[odds_cols].values.astype("float32")
+        odds_t = torch.tensor(odds_np, dtype=torch.float32).unsqueeze(0)  # [1, n, odds_dim]
+
+    # per-race 履歴エンコーダ: 推論時に過去走系列を leak-safe に構築 (要 session)。
+    history_seq_t = history_lengths_t = None
+    if bundle.nn_history_feat_dim > 0 and session is not None and "date" in frame.columns:
+        history_seq_t, history_lengths_t = _build_inference_history_tensors(
+            bundle, frame, session, torch
+        )
+
     model = bundle.nn_model
     assert model is not None, "nn_model is None in NN bundle"
 
+    # forward は履歴/odds が None でも graceful (履歴は zero、odds は zero or なし)。
     with torch.no_grad():
-        scores_t = model(hf, rf, mask)  # [1, n_horses]
+        scores_t = model(
+            hf, rf, mask,
+            history_seq=history_seq_t,
+            history_lengths=history_lengths_t,
+            odds_features=odds_t,
+        )  # [1, n_horses]
     scores: np.ndarray = scores_t[0, :n_horses].cpu().numpy()
 
     # Masked -inf positions (shouldn't occur for single-race batch) → replace with min
@@ -226,7 +292,7 @@ def predict_race_with_combinations(
     Returns:
         Dict mapping bet_type name to list of CombinationPrediction.
     """
-    base_df = _predict_race_nn(bundle, frame)
+    base_df = _predict_race_nn(bundle, frame, session=session)
     if frame.empty or frame["post_position"].isna().any():
         return {bt: [] for bt in COMBINATION_BET_TYPES}
     return _combinations_from_base(

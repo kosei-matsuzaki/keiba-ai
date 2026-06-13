@@ -46,6 +46,9 @@ class NNPreprocessor:
     categorical_maps: dict[str, dict[str, int]] = field(default_factory=dict)
     numeric_means: dict[str, float] = field(default_factory=dict)
     numeric_stds: dict[str, float] = field(default_factory=dict)
+    # odds-at-scoring head 用の odds 特徴列 (odds_win/popularity)。encoder ではなく
+    # head で使うが、標準化は同じ仕組みで行う。空 = 現行 (odds は horse 側)。
+    odds_feature_cols: list[str] = field(default_factory=list)
 
     @classmethod
     def fit(
@@ -53,10 +56,12 @@ class NNPreprocessor:
         train_df: pd.DataFrame,
         horse_feature_cols: list[str],
         race_feature_cols: list[str],
+        odds_feature_cols: list[str] | None = None,
     ) -> NNPreprocessor:
         """Fit categorical maps and numeric standardization stats on train only."""
         cat_set = set(CATEGORICAL_FEATURES)
-        all_cols = list(horse_feature_cols) + list(race_feature_cols)
+        odds_feature_cols = list(odds_feature_cols or [])
+        all_cols = list(horse_feature_cols) + list(race_feature_cols) + odds_feature_cols
 
         categorical_maps: dict[str, dict[str, int]] = {}
         numeric_means: dict[str, float] = {}
@@ -95,6 +100,7 @@ class NNPreprocessor:
             categorical_maps=categorical_maps,
             numeric_means=numeric_means,
             numeric_stds=numeric_stds,
+            odds_feature_cols=odds_feature_cols,
         )
 
     def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
@@ -107,7 +113,8 @@ class NNPreprocessor:
         Non-feature columns are passed through unchanged.
         """
         result = frame.copy()
-        all_cols = list(self.horse_feature_cols) + list(self.race_feature_cols)
+        odds_cols = list(self.odds_feature_cols or [])
+        all_cols = list(self.horse_feature_cols) + list(self.race_feature_cols) + odds_cols
 
         for col in all_cols:
             if col in self.categorical_maps:
