@@ -168,6 +168,14 @@ async def run_backfill(
     with session_scope(keiba_engine) as session:
         race_ids = _select_race_ids(session, start, end, oldest_first, limit)
 
+    # keiba.db is only needed for the race-id list above. Drop the engine's
+    # pooled connection now so the multi-hour fetch loop below never keeps an
+    # open keiba.db handle: on /mnt/c DrvFs, SQLite cannot be opened
+    # concurrently, so a lingering connection makes a parallel train_nn /
+    # experiment fail at `PRAGMA journal_mode=WAL` ("unable to open database
+    # file"). From here on the loop only touches odds.db.
+    keiba_engine.dispose()
+
     total = len(race_ids)
     logger.info("Odds backfill: %d races queued", total)
     counters = {"done": 0, "resumed_skip": 0, "no_odds": 0, "partial": 0, "errors": 0}
