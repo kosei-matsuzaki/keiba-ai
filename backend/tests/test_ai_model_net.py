@@ -1,11 +1,11 @@
-"""Tests for ai.model.net (HorseEncoder, RaceModel, RaceTransformerModel)."""
+"""Tests for ai.model.net (HorseEncoderWithEmb, RaceTransformerModel)."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from ai.model.net import HorseEncoder, HorseEncoderWithEmb, RaceModel, RaceTransformerModel
+from ai.model.net import HorseEncoderWithEmb, RaceTransformerModel
 
 BATCH = 2
 MAX_HORSES = 8
@@ -37,75 +37,6 @@ def mask() -> torch.Tensor:
     return m
 
 
-class TestHorseEncoder:
-    def test_output_shape(self, horse_features, race_features):
-        encoder = HorseEncoder(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM)
-        out = encoder(horse_features, race_features)
-        assert out.shape == (BATCH, MAX_HORSES, EMBED_DIM)
-
-    def test_gradient_flows(self, horse_features, race_features):
-        horse_features = horse_features.requires_grad_(True)
-        encoder = HorseEncoder(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM)
-        out = encoder(horse_features, race_features)
-        out.sum().backward()
-        assert horse_features.grad is not None
-
-    def test_all_params_receive_grad(self, horse_features, race_features):
-        encoder = HorseEncoder(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM)
-        out = encoder(horse_features, race_features)
-        out.sum().backward()
-        for name, p in encoder.named_parameters():
-            assert p.grad is not None, f"param {name} has no gradient"
-
-
-class TestRaceModel:
-    def test_output_shape(self, horse_features, race_features, mask):
-        model = RaceModel(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM, N_HEADS)
-        scores = model(horse_features, race_features, mask)
-        assert scores.shape == (BATCH, MAX_HORSES)
-
-    def test_padded_positions_are_neg_inf(self, horse_features, race_features, mask):
-        """Positions where mask=False should be -inf in scores."""
-        model = RaceModel(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM, N_HEADS)
-        scores = model(horse_features, race_features, mask)
-        # batch 1: positions 6, 7 are padded
-        assert torch.all(scores[1, 6:] == float("-inf"))
-
-    def test_valid_positions_are_finite(self, horse_features, race_features, mask):
-        model = RaceModel(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM, N_HEADS)
-        scores = model(horse_features, race_features, mask)
-        assert torch.all(torch.isfinite(scores[0]))
-        assert torch.all(torch.isfinite(scores[1, :6]))
-
-    def test_padded_scores_have_zero_gradient(self, horse_features, race_features, mask):
-        """Backward should not propagate non-zero gradients through padded horse positions."""
-        horse_features = horse_features.clone().requires_grad_(True)
-        model = RaceModel(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM, N_HEADS)
-        scores = model(horse_features, race_features, mask)
-
-        # Only accumulate loss over valid (finite) scores to avoid NaN in backward
-        valid_scores = scores[mask]
-        valid_scores.sum().backward()
-
-        # Gradient in padded positions (batch 1, horses 6-7) should be 0
-        grad = horse_features.grad
-        assert grad is not None
-        assert torch.all(grad[1, 6:] == 0.0)
-
-    def test_all_params_receive_grad(self, horse_features, race_features, mask):
-        model = RaceModel(HORSE_FEAT_DIM, RACE_FEAT_DIM, EMBED_DIM, HIDDEN_DIM, N_HEADS)
-        scores = model(horse_features, race_features, mask)
-        valid_scores = scores[mask]
-        valid_scores.sum().backward()
-        for name, p in model.named_parameters():
-            assert p.grad is not None, f"param {name} has no gradient"
-
-
-# ---------------------------------------------------------------------------
-# Arch v2: HorseEncoderWithEmb / RaceTransformerModel
-# ---------------------------------------------------------------------------
-
-
 HORSE_CAT_POSITIONS = [0, 1]     # 2 categorical horse cols
 HORSE_CAT_CARDINALITIES = [3, 7]
 RACE_CAT_POSITIONS = [2]         # 1 categorical race col
@@ -113,7 +44,7 @@ RACE_CAT_CARDINALITIES = [4]
 CAT_EMBED_DIM = 4
 
 
-def _make_v2_features(
+def _make_features(
     batch: int = BATCH,
     n_horses: int = MAX_HORSES,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -134,7 +65,7 @@ def _make_v2_features(
 
 class TestHorseEncoderWithEmb:
     def test_output_shape(self):
-        horse, race = _make_v2_features()
+        horse, race = _make_features()
         encoder = HorseEncoderWithEmb(
             horse_feat_dim=HORSE_FEAT_DIM,
             race_feat_dim=RACE_FEAT_DIM,
@@ -162,7 +93,7 @@ class TestHorseEncoderWithEmb:
 
     def test_unknown_category_does_not_crash(self):
         """Value -1 (preprocessor's unknown sentinel) must map to index 0 cleanly."""
-        horse, race = _make_v2_features()
+        horse, race = _make_features()
         horse[..., HORSE_CAT_POSITIONS[0]] = -1.0  # all unknown
         race[..., RACE_CAT_POSITIONS[0]] = -1.0
         encoder = HorseEncoderWithEmb(
@@ -180,7 +111,7 @@ class TestHorseEncoderWithEmb:
         assert torch.all(torch.isfinite(out))
 
     def test_grads_flow_through_embeddings(self):
-        horse, race = _make_v2_features()
+        horse, race = _make_features()
         encoder = HorseEncoderWithEmb(
             horse_feat_dim=HORSE_FEAT_DIM,
             race_feat_dim=RACE_FEAT_DIM,
@@ -200,7 +131,7 @@ class TestHorseEncoderWithEmb:
 
 class TestRaceTransformerModel:
     def test_output_shape(self, mask):
-        horse, race = _make_v2_features()
+        horse, race = _make_features()
         model = RaceTransformerModel(
             horse_feat_dim=HORSE_FEAT_DIM,
             race_feat_dim=RACE_FEAT_DIM,
@@ -218,7 +149,7 @@ class TestRaceTransformerModel:
         assert scores.shape == (BATCH, MAX_HORSES)
 
     def test_padded_positions_are_neg_inf(self, mask):
-        horse, race = _make_v2_features()
+        horse, race = _make_features()
         model = RaceTransformerModel(
             horse_feat_dim=HORSE_FEAT_DIM,
             race_feat_dim=RACE_FEAT_DIM,
@@ -267,32 +198,38 @@ def _history_inputs(lengths_pattern: list[list[int]] | None = None):
 
 
 class TestRaceTransformerHistory:
-    def _model(self, use_history: bool) -> RaceTransformerModel:
+    def _model(self, with_history: bool) -> RaceTransformerModel:
+        # history_feat_dim>0 で履歴 GRU を構築、0 で履歴入力なし。
         return RaceTransformerModel(
             horse_feat_dim=HORSE_FEAT_DIM,
             race_feat_dim=RACE_FEAT_DIM,
             embed_dim=EMBED_DIM,
             hidden_dim=HIDDEN_DIM,
             n_heads=N_HEADS,
-            use_history=use_history,
-            history_feat_dim=HISTORY_FEAT_DIM,
+            history_feat_dim=HISTORY_FEAT_DIM if with_history else 0,
             history_hidden=16,
         )
 
-    def test_use_history_output_shape(self, horse_features, race_features, mask):
-        model = self._model(use_history=True)
+    def test_history_output_shape(self, horse_features, race_features, mask):
+        model = self._model(with_history=True)
         seq, lengths = _history_inputs()
         scores = model(horse_features, race_features, mask, history_seq=seq, history_lengths=lengths)
         assert scores.shape == (BATCH, MAX_HORSES)
         # valid positions finite
         assert torch.isfinite(scores[mask]).all()
 
-    def test_use_history_false_is_backward_compatible(self, horse_features, race_features, mask):
-        """use_history=False のモデルは履歴を渡さず現行 API で動き、in_dim も不変。"""
-        model = self._model(use_history=False)
-        assert model.use_history is False
+    def test_history_seq_omitted_uses_zero_embed(self, horse_features, race_features, mask):
+        """履歴 GRU 付きでも history_seq を渡さなければ zero 埋めで動く (推論の graceful path)。"""
+        model = self._model(with_history=True)
+        assert model.history_encoder is not None
+        scores = model(horse_features, race_features, mask)
+        assert scores.shape == (BATCH, MAX_HORSES)
+        assert torch.isfinite(scores[mask]).all()
+
+    def test_no_history_has_no_gru(self, horse_features, race_features, mask):
+        """history_feat_dim=0 のモデルは GRU を持たず、encoder の入力次元も増えない。"""
+        model = self._model(with_history=False)
         assert model.history_encoder is None
-        # in_dim に履歴分が足されていない (= 現行と同じ第1層形状)
         assert model.horse_encoder.history_embed_dim == 0
         scores = model(horse_features, race_features, mask)
         assert scores.shape == (BATCH, MAX_HORSES)
@@ -300,7 +237,7 @@ class TestRaceTransformerHistory:
 
     def test_zero_length_horse_does_not_crash(self, horse_features, race_features, mask):
         """過去走 0 件の馬 (length=0) を含んでも落ちず有限スコアを返す。"""
-        model = self._model(use_history=True)
+        model = self._model(with_history=True)
         seq, lengths = _history_inputs()
         lengths[0, 0] = 0  # 1 頭目を履歴なしに
         lengths[1, 5] = 0
@@ -308,7 +245,7 @@ class TestRaceTransformerHistory:
         assert torch.isfinite(scores[mask]).all()
 
     def test_history_grads_flow(self, horse_features, race_features, mask):
-        model = self._model(use_history=True)
+        model = self._model(with_history=True)
         seq, lengths = _history_inputs()
         scores = model(horse_features, race_features, mask, history_seq=seq, history_lengths=lengths)
         scores[mask].sum().backward()
@@ -326,19 +263,19 @@ def _odds_features() -> torch.Tensor:
 
 
 class TestRaceTransformerOddsHead:
-    def _model(self, use_odds_head: bool) -> RaceTransformerModel:
+    def _model(self, with_odds: bool) -> RaceTransformerModel:
+        # odds_feat_dim>0 で head に odds を concat、0 で ability-only head。
         return RaceTransformerModel(
             horse_feat_dim=HORSE_FEAT_DIM,
             race_feat_dim=RACE_FEAT_DIM,
             embed_dim=EMBED_DIM,
             hidden_dim=HIDDEN_DIM,
             n_heads=N_HEADS,
-            use_odds_head=use_odds_head,
-            odds_feat_dim=ODDS_FEAT_DIM,
+            odds_feat_dim=ODDS_FEAT_DIM if with_odds else 0,
         )
 
     def test_odds_head_output_shape(self, horse_features, race_features, mask):
-        model = self._model(use_odds_head=True)
+        model = self._model(with_odds=True)
         odds = _odds_features()
         scores = model(horse_features, race_features, mask, odds_features=odds)
         assert scores.shape == (BATCH, MAX_HORSES)
@@ -346,31 +283,29 @@ class TestRaceTransformerOddsHead:
 
     def test_odds_head_missing_odds_fallback(self, horse_features, race_features, mask):
         """odds_features=None でも zeros fallback で finite を返す (欠損オッズ耐性)。"""
-        model = self._model(use_odds_head=True)
+        model = self._model(with_odds=True)
         scores = model(horse_features, race_features, mask, odds_features=None)
         assert torch.isfinite(scores[mask]).all()
 
-    def test_odds_head_false_is_backward_compatible(self, horse_features, race_features, mask):
-        """use_odds_head=False は現行 head のみ・新サブモジュールなし・v2 strict load 可。"""
-        off = self._model(use_odds_head=False)
-        assert off.use_odds_head is False
-        assert off.head is not None
-        assert getattr(off, "head_norm", None) is None
-        assert getattr(off, "head_mlp", None) is None
+    def test_odds_head_dim_in_mlp(self):
+        """head_mlp の入力次元 = embed + odds_feat_dim (odds を head で concat)。"""
+        on = self._model(with_odds=True)
+        assert on.odds_feat_dim == ODDS_FEAT_DIM
+        assert on.head_mlp[0].in_features == EMBED_DIM + ODDS_FEAT_DIM
+
+    def test_ability_only_head_dim(self, horse_features, race_features, mask):
+        """odds_feat_dim=0 (exclude-odds) は head が ability のみを入力に取る。"""
+        off = self._model(with_odds=False)
+        assert off.odds_feat_dim == 0
+        assert off.head_mlp[0].in_features == EMBED_DIM
         scores = off(horse_features, race_features, mask)
         assert torch.isfinite(scores[mask]).all()
-        # 同構成 (use_odds_head=False) 同士は state_dict strict load 可
-        off2 = self._model(use_odds_head=False)
+        # 同構成同士は state_dict strict load 可
+        off2 = self._model(with_odds=False)
         off2.load_state_dict(off.state_dict(), strict=True)
 
-    def test_odds_head_on_has_split_head(self):
-        on = self._model(use_odds_head=True)
-        assert on.use_odds_head is True
-        assert on.head is None
-        assert on.head_norm is not None and on.head_mlp is not None
-
     def test_odds_head_grads_flow(self, horse_features, race_features, mask):
-        model = self._model(use_odds_head=True)
+        model = self._model(with_odds=True)
         odds = _odds_features()
         scores = model(horse_features, race_features, mask, odds_features=odds)
         scores[mask].sum().backward()

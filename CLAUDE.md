@@ -58,6 +58,13 @@ UV_PROJECT_ENVIRONMENT=/tmp/keiba-linux-venv PYTHONPATH=src \
 
 ブランチ切替時の汚染回避用に `/tmp/keiba-linux-venv-main` のような別 venv を併存させる運用もある (`.claude/settings.local.json` 参照)。`/tmp/` 上に置く理由は (1) `/mnt/c/` の Linux I/O が遅い、(2) Windows 側の `.venv/` と上書きが起こると両方壊れる、の 2 点。逆に Windows 側から起動する uvicorn / pytest は素の `uv sync` / `uv run` で OK (環境変数なし)。
 
+### 正本は `/mnt/c` (Windows) — single source of truth
+2026-06-09 に ext4 (`~/keiba-ai`) へ移行を試みたが定着せず、2026-06-11 に **`/mnt/c/.../keiba-ai` (Windows) を正本に再統合**した。`~/keiba-ai` (ext4) が残っていても **stale なフォールバック**であり使わない (古い DB を掴むので app/training/ingest を誤起動しないこと。落ち着いたら削除/リネーム推奨)。
+
+- **2 つのクローンは自動同期されない**。`data/*.db` は両方で gitignore のため **DB は git で運ばれない** (各コピーの `keiba.db` / `odds.db` は別ファイル、揃えるのは手動 `cp` のみ)。コードは push→GitHub→pull でしか揃わない。`core/paths.py` の `data_dir()` は **実行したコードの `.git` ルート**基準 (cwd ではない) なので、`/mnt/c` から起動すれば /mnt/c の DB、ext4 から起動すれば ext4 の DB を見る (`KEIBA_DATA_DIR` / `KEIBA_ODDS_DB` で上書き可)。
+- **複数 Claude セッションが /mnt/c で同時稼働しうる**。git の checkout/commit/reset/stash は明示合意なしにやらない。
+- **corruption 回避** (ext4 移行の元理由): WSL から /mnt/c の SQLite を WAL モードで触ると壊れる (`database disk image is malformed` の実績あり)。安全運用は (1) **odds.db は `journal_mode=TRUNCATE`** なので WSL から /mnt/c へ書いて OK (odds backfill はこの安全パス)、(2) **web/uvicorn は Windows から起動** (C: ネイティブは DrvFs 問題なし)、(3) WAL の SQLite を WSL から /mnt/c へ書かない、(4) 素のファイル `cp`/`mv` は常に安全。
+
 ## アーキテクチャ要点
 
 ### 依存方向 (厳守)
@@ -70,7 +77,8 @@ core / settings は横断
 `ai/` は依存 DAG の層に沿って機能サブパッケージ化されている: `core/` (types/labels/splits/temperature/probabilities = 最下層) → `model/` (registry/_artifacts_nn + NN 実装 net/loss/dataset/preprocess) → `training/` (train_nn) / `inference/` (predict) / `betting/` (odds/strategy) / `simulation/` (engine/persistence) / `evaluation/` (backtest)。NN 専用化で旧 `ai/nn/` は廃止。`features/` は公開オーケストレータ `builder.py` と per-domain 抽出器 `features/extractors/*` に分離。
 
 ### 推論パスは bundle 経由 (NN 専用)
-- `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceModel、`nn_preprocessor` / `temperature_scaler` は optional
+- `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceTransformerModel、`nn_preprocessor` / `temperature_scaler` は optional
+- **アーキは単一 (target)**: ability エンコーダ = 集約特徴 + per-race 履歴 GRU (odds は含めない)、value = スコア head で標準化済み odds を concat (ability→value 分離)。`history_feat_dim`/`odds_feat_dim` は *次元* で、0 ならその入力なし (`odds_feat_dim=0` は `KEIBA_EXCLUDE_ODDS_FEATURES`)。旧 v1/v2 や gated フラグ (`use_history`/`use_odds_head`/`arch_version`) は全廃 (2026-06-13)
 - 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/inference/predict.py`)
 - combo 確率は NN スコア → 解析的 Plackett-Luce で導出する。外部 isotonic 校正 (`combo_calibrators` / win / place) は全廃済み。連系の校正は `combo_nll` / `multi` 損失で **NN 内部に学習**させる (下記「連系の校正を NN 内部へ」)。combo 確率は解析的 PL の出力をそのまま使う (外部後処理なし)
 - SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (ルーター互換のための残置スタブ)

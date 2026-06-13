@@ -48,13 +48,13 @@ class RaceDataset(Dataset):
         self.race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
         self.label_col = label_col
         self.time_col = time_col
-        # odds-at-scoring head 用の標準化済み odds 列 (任意)。None/空なら現行と
-        # 完全に同一の dict を返す (odds_features キーを足さない)。
+        # odds-at-scoring head 用の標準化済み odds 列。空 (exclude-odds) なら
+        # odds_features キーを足さず forward は ability-only で評価する。
         self.odds_feature_cols = [c for c in (odds_feature_cols or []) if c in frame.columns]
         # Raw (un-standardised) 単勝 odds for the betting-return losses.  Kept as
         # a separate non-feature column so NNPreprocessor never standardises it.
         self.odds_col = odds_col
-        # 履歴エンコーダ用 (任意)。None なら現行 (集約のみ) と完全に同一の dict を返す。
+        # per-race 履歴エンコーダ用の系列キャッシュ。None なら履歴系列を付与しない。
         self.history_cache = history_cache
         self.history_norm = history_norm
 

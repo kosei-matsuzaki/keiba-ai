@@ -53,7 +53,6 @@ from core.paths import data_dir, db_path
 from db.models.model_run import ModelRun
 from db.session import make_engine, session_scope
 from features.builder import (
-    CATEGORICAL_FEATURES,
     ODDS_FEATURE_COLUMNS,
     build_training_frame,
     get_active_features,
@@ -76,49 +75,22 @@ RACE_FEATURE_COLS: list[str] = [
 
 
 def _split_feature_cols(
-    all_feature_cols: list[str], *, route_odds_to_head: bool = False
+    all_feature_cols: list[str],
 ) -> tuple[list[str], list[str], list[str]]:
     """Split feature columns into (horse, race, odds) groups.
 
-    Race-level features are constant within a race (RACE_FEATURE_COLS).
-    route_odds_to_head=True のとき odds (ODDS_FEATURE_COLUMNS) を horse から外し
-    odds グループへ (= odds-at-scoring head 用)。False(既定)なら odds は horse に
-    含まれ odds グループは空 (= 現行 v2)。各リストは all_feature_cols 内の列のみ。
+    Race-level features are constant within a race (RACE_FEATURE_COLS).  Odds
+    (ODDS_FEATURE_COLUMNS) are always routed out of the horse (ability) encoder
+    into the scoring head (ability→value separation).  Under
+    ``KEIBA_EXCLUDE_ODDS_FEATURES`` the odds group is empty.  Each returned list
+    contains only columns present in ``all_feature_cols``.
     """
     race_set = set(RACE_FEATURE_COLS)
-    odds_set = set(ODDS_FEATURE_COLUMNS) if route_odds_to_head else set()
+    odds_set = set(ODDS_FEATURE_COLUMNS)
     race_cols = [c for c in all_feature_cols if c in race_set]
     odds_cols = [c for c in all_feature_cols if c in odds_set]
     horse_cols = [c for c in all_feature_cols if c not in race_set and c not in odds_set]
     return horse_cols, race_cols, odds_cols
-
-
-def _encode_categoricals(frame: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    """Legacy: label-encode categoricals + numeric coercion, fitting on the frame itself.
-
-    **Bugged when called separately on train/valid/test** — each split produces its
-    own mapping (e.g. course=Tokyo could be 5.0 in train and 2.0 in valid).
-    Use :class:`NNPreprocessor` instead, which fits on train and applies the same
-    mapping to all splits + inference.
-
-    Retained only as a fallback for inference against legacy NN models saved
-    before preprocessor.pkl was introduced.
-    """
-    frame = frame.copy()
-    cat_set = set(CATEGORICAL_FEATURES)
-
-    for col in feature_cols:
-        if col not in frame.columns:
-            frame[col] = 0.0
-            continue
-        if col in cat_set or frame[col].dtype == object:
-            unique_vals = [v for v in frame[col].dropna().unique()]
-            mapping = {v: float(i) for i, v in enumerate(sorted(unique_vals, key=str))}
-            frame[col] = frame[col].map(mapping).fillna(-1.0)
-        else:
-            frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0.0)
-
-    return frame
 
 
 def _sample_history_kw(sample: dict, device: torch.device) -> dict:
@@ -374,7 +346,7 @@ def _fit_temperature_scaler_nn(
     RaceDataset (same indexing order as groupby("race_id", sort=True)).
 
     Args:
-        model: Trained RaceModel (already in eval mode).
+        model: Trained RaceTransformerModel (already in eval mode).
         valid_df: Transformed validation DataFrame (used only for model forward
             via RaceDataset).
         raw_df: Pre-transform outcome frame (raw odds_win / payout_place /
@@ -549,7 +521,7 @@ def _build_loss_fn(
 
 
 class RaceLitModule(pl.LightningModule):
-    """Lightning wrapper around RaceModel / RaceTransformerModel.
+    """Lightning wrapper around RaceTransformerModel.
 
     Args:
         model: torch.nn.Module exposing (horse_features, race_features, mask) -> scores
@@ -750,11 +722,9 @@ def train_nn(
     combo_bet_type: str = "馬連",
     combo_weight: float = 0.01,
     persist: bool = True,
-    use_history: bool = False,
     history_seq_len: int = 15,
     prebuilt_history=None,
     return_test_bets: bool = False,
-    use_odds_head: bool = False,
 ) -> dict:
     """Run the full NN training pipeline. Returns metrics dict.
 
@@ -803,18 +773,16 @@ def train_nn(
         train_df = frame.copy()
         valid_df = pd.DataFrame(columns=frame.columns)
 
-    # Feature column split (3-way when use_odds_head: odds → head, not encoder)
+    # Feature column split (3-way): odds は ability encoder から外し head へ。
     all_feature_cols = get_active_features()
     horse_feature_cols, race_feature_cols, odds_feature_cols = _split_feature_cols(
-        all_feature_cols, route_odds_to_head=use_odds_head
+        all_feature_cols
     )
 
     # Only keep cols that are actually present in the frame
     horse_feature_cols = [c for c in horse_feature_cols if c in frame.columns]
     race_feature_cols = [c for c in race_feature_cols if c in frame.columns]
     odds_feature_cols = [c for c in odds_feature_cols if c in frame.columns]
-    # exclude-odds 等で odds 列が空なら odds head は自動無効
-    effective_use_odds_head = use_odds_head and len(odds_feature_cols) > 0
 
     log.info(
         "Features — horse: %d, race: %d, odds(head): %d",
@@ -825,8 +793,8 @@ def train_nn(
 
     # Fit preprocessor on train only — categorical maps and numeric mean/std
     # are computed once and applied identically to train/valid/test (and later
-    # at inference via bundle.nn_preprocessor).  Calling _encode_categoricals
-    # per-split was the previous behavior and produced inconsistent mappings.
+    # at inference via bundle.nn_preprocessor).  Fitting per-split would produce
+    # inconsistent categorical mappings, so always fit on train only.
     preprocessor = NNPreprocessor.fit(
         train_df, horse_feature_cols, race_feature_cols,
         odds_feature_cols=odds_feature_cols,
@@ -849,29 +817,25 @@ def train_nn(
     horse_feat_dim = len(horse_feature_cols)
     race_feat_dim = len(race_feature_cols)
 
-    # 履歴系列エンコーダ (任意)。use_history=True のとき per-(race,horse) 過去走
-    # トークンを leak-safe に構築し、train split から正規化を fit する。
-    history_cache = None
-    history_norm = None
-    history_feat_dim = 0
-    if use_history:
-        from features.history_sequence import (
-            build_history_sequences,
-            fit_history_normalizer,
-        )
-        if prebuilt_history is not None:
-            history_cache = prebuilt_history
-        else:
-            log.info("Building per-(race,horse) history sequences…")
-            with session_scope(engine) as _session:
-                history_cache = build_history_sequences(_session, max_len=history_seq_len)
-        history_feat_dim = history_cache.n_features
-        train_race_ids = set(train_df["race_id"].unique())
-        history_norm = fit_history_normalizer(history_cache, train_race_ids)
-        log.info(
-            "History encoder ON — %d (race,horse) seqs, %d token features",
-            len(history_cache.seqs), history_feat_dim,
-        )
+    # 履歴系列エンコーダ: per-(race,horse) 過去走トークンを leak-safe に構築し、
+    # train split から正規化を fit する (ability encoder の per-race 履歴入力)。
+    from features.history_sequence import (
+        build_history_sequences,
+        fit_history_normalizer,
+    )
+    if prebuilt_history is not None:
+        history_cache = prebuilt_history
+    else:
+        log.info("Building per-(race,horse) history sequences…")
+        with session_scope(engine) as _session:
+            history_cache = build_history_sequences(_session, max_len=history_seq_len)
+    history_feat_dim = history_cache.n_features
+    train_race_ids = set(train_df["race_id"].unique())
+    history_norm = fit_history_normalizer(history_cache, train_race_ids)
+    log.info(
+        "History encoder — %d (race,horse) seqs, %d token features",
+        len(history_cache.seqs), history_feat_dim,
+    )
 
     # Build datasets
     train_dataset = RaceDataset(
@@ -935,9 +899,7 @@ def train_nn(
         race_cat_cardinalities=race_cat_cardinalities,
         cat_embed_dim=cat_embed_dim,
         n_transformer_layers=n_transformer_layers,
-        use_history=use_history,
         history_feat_dim=history_feat_dim,
-        use_odds_head=effective_use_odds_head,
         odds_feat_dim=len(odds_feature_cols),
     )
 
@@ -1163,21 +1125,18 @@ def train_nn(
     preprocessor.save(model_dir / "preprocessor.pkl")
     log.info("preprocessor.pkl saved to %s", model_dir)
 
-    # 履歴有効時: 推論で同じ標準化を使うため履歴正規化器 (mean/std) を保存。
-    has_history = use_history and history_norm is not None
-    if has_history:
-        import pickle
+    # 推論で同じ標準化を使うため履歴正規化器 (mean/std) を保存。
+    import pickle
 
-        from features.history_sequence import TOKEN_SPEC_VERSION
-        mean, std = history_norm
-        with (model_dir / "history_norm.pkl").open("wb") as f:
-            pickle.dump({"mean": mean, "std": std}, f)
-        log.info("history_norm.pkl saved to %s", model_dir)
+    from features.history_sequence import TOKEN_SPEC_VERSION
+    mean, std = history_norm
+    with (model_dir / "history_norm.pkl").open("wb") as f:
+        pickle.dump({"mean": mean, "std": std}, f)
+    log.info("history_norm.pkl saved to %s", model_dir)
     history_max_len = history_seq_len
 
     meta_dict = {
         "model_type": "nn",
-        "arch_version": 3 if (effective_use_odds_head or has_history) else 2,
         "loss_type": loss,
         "monitor": monitor,
         "combo_bet_type": (
@@ -1210,20 +1169,16 @@ def train_nn(
             "race_cat_positions": race_cat_positions,
             "race_cat_cardinalities": race_cat_cardinalities,
         },
-        # odds-at-scoring head (v3)。OFF のとき False/0/[] → v2 と再構築が一致。
-        "use_odds_head": effective_use_odds_head,
+        # odds-at-scoring head: odds は encoder でなく head で使う。
+        # odds_feat_dim=0 は exclude-odds (ability-only)。serving の再構築に必要。
         "odds_feat_dim": len(odds_feature_cols),
         "odds_feature_cols": odds_feature_cols,
         # per-race 履歴エンコーダ (serving 用に再構築情報を保存)。
-        "use_history": bool(use_history),
         "history_feat_dim": history_feat_dim,
         "history_meta": {
             "max_len": history_max_len,
-            "token_spec_version": (
-                TOKEN_SPEC_VERSION if has_history else None
-            ),
+            "token_spec_version": TOKEN_SPEC_VERSION,
         },
-        "has_history_norm": has_history,
         "train_range": train_range,
         "valid_range": valid_range,
         "test_range": test_range,
@@ -1377,28 +1332,10 @@ def _cli() -> None:
         ),
     )
     parser.add_argument(
-        "--use-history",
-        action="store_true",
-        default=False,
-        help=(
-            "Enable the per-past-race history sequence encoder (GRU) in addition "
-            "to the aggregate features.  Builds leak-safe history once (slow cold)."
-        ),
-    )
-    parser.add_argument(
         "--history-seq-len",
         type=int,
         default=15,
         help="Max past races per horse fed to the history encoder (default 15).",
-    )
-    parser.add_argument(
-        "--use-odds-head",
-        action="store_true",
-        default=False,
-        help=(
-            "Route odds (odds_win/popularity) out of the horse (ability) encoder "
-            "and into the scoring head (ability→value separation)."
-        ),
     )
     args = parser.parse_args()
 
@@ -1426,9 +1363,7 @@ def _cli() -> None:
         init_from=args.init_from,
         combo_bet_type=args.combo_bet_type,
         combo_weight=args.combo_weight,
-        use_history=args.use_history,
         history_seq_len=args.history_seq_len,
-        use_odds_head=args.use_odds_head,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

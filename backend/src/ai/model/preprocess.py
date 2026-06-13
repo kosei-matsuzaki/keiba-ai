@@ -113,8 +113,7 @@ class NNPreprocessor:
         Non-feature columns are passed through unchanged.
         """
         result = frame.copy()
-        # getattr ガード: odds_feature_cols 無しの旧 pickle も transform 可能。
-        odds_cols = list(getattr(self, "odds_feature_cols", []) or [])
+        odds_cols = list(self.odds_feature_cols or [])
         all_cols = list(self.horse_feature_cols) + list(self.race_feature_cols) + odds_cols
 
         for col in all_cols:
@@ -182,7 +181,4 @@ class NNPreprocessor:
             obj = legacy_pickle_load(f)
         if not isinstance(obj, cls):
             raise TypeError(f"Expected NNPreprocessor, got {type(obj).__name__}")
-        # 旧 pickle は odds_feature_cols フィールドを持たない → 補う (後方互換)。
-        if not hasattr(obj, "odds_feature_cols"):
-            obj.odds_feature_cols = []
         return obj

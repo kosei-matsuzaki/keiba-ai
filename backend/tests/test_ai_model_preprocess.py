@@ -211,16 +211,3 @@ def test_empty_odds_cols_equals_current_behavior():
     pd.testing.assert_frame_equal(pp_a.transform(train), pp_b.transform(train))
 
 
-def test_legacy_pickle_without_odds_cols(tmp_path):
-    """odds_feature_cols フィールドを持たない旧 pickle も load/transform 可能。"""
-    train = _make_odds_train_df()
-    pp = NNPreprocessor.fit(train, ["distance", "odds_win"], [])
-    # 旧 pickle を模倣: 属性を削除して save
-    del pp.odds_feature_cols
-    assert not hasattr(pp, "odds_feature_cols")
-    p = tmp_path / "preprocessor.pkl"
-    pp.save(p)
-    loaded = NNPreprocessor.load(p)
-    assert loaded.odds_feature_cols == []  # load が補完
-    out = loaded.transform(train)
-    assert "odds_win" in out.columns

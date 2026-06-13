@@ -1,155 +1,25 @@
 """Neural network model: per-horse Encoder + race-level Set Transformer.
 
-Two architectures live here:
+The production architecture is :class:`HorseEncoderWithEmb` + :class:`RaceTransformerModel`:
 
-* ``HorseEncoder`` + ``RaceModel`` (arch v1) — original single-MHA design,
-  kept for backward-compatibility loading of legacy checkpoints.
-* ``HorseEncoderWithEmb`` + ``RaceTransformerModel`` (arch v2) — adds
-  ``nn.Embedding`` for categorical inputs and stacks
-  ``nn.TransformerEncoderLayer`` blocks (GELU + pre-norm + FFN).
+* The per-horse encoder assesses **ability** — aggregate + per-race history
+  features fed through ``nn.Embedding`` (categoricals) + an MLP.  Odds are
+  deliberately *not* part of the ability encoder.
+* Cross-horse interaction is modelled by a stacked ``nn.TransformerEncoder``
+  (GELU + pre-norm + FFN).
+* The scoring head combines the ability representation with standardised
+  **odds** (market value) — ``head_norm(ability) ⊕ odds → head_mlp``.
+
+``history_feat_dim`` / ``odds_feat_dim`` are *dimensions*: 0 means that input
+is absent (e.g. ``odds_feat_dim=0`` under ``KEIBA_EXCLUDE_ODDS_FEATURES``),
+otherwise the corresponding sub-module is built.  Production training always
+supplies both.
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-
-
-class HorseEncoder(nn.Module):
-    """MLP that encodes each horse independently using horse + race features.
-
-    Args:
-        horse_feat_dim: dimension of per-horse feature vector
-        race_feat_dim: dimension of race-level feature vector (broadcast to each horse)
-        embed_dim: output embedding dimension
-        hidden_dim: hidden layer size
-        dropout: dropout probability
-    """
-
-    def __init__(
-        self,
-        horse_feat_dim: int,
-        race_feat_dim: int,
-        embed_dim: int = 32,
-        hidden_dim: int = 64,
-        dropout: float = 0.2,
-    ) -> None:
-        super().__init__()
-        in_dim = horse_feat_dim + race_feat_dim
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, embed_dim),
-        )
-
-    def forward(
-        self,
-        horse_features: torch.Tensor,
-        race_features: torch.Tensor,
-    ) -> torch.Tensor:
-        """Encode horses.
-
-        Args:
-            horse_features: [B, max_n_horses, horse_feat_dim]
-            race_features:  [B, race_feat_dim]
-
-        Returns:
-            [B, max_n_horses, embed_dim]
-        """
-        # Broadcast race_features to each horse position: [B, 1, race_feat_dim]
-        race_expanded = race_features.unsqueeze(1).expand(
-            -1, horse_features.size(1), -1
-        )
-        combined = torch.cat([horse_features, race_expanded], dim=-1)
-        return self.net(combined)
-
-
-class RaceModel(nn.Module):
-    """Set Transformer-style model: HorseEncoder + multi-head self-attention + score head.
-
-    Produces a scalar score per horse.  Padded positions (mask=False) receive
-    -inf so that downstream loss functions can safely ignore them.
-
-    Args:
-        horse_feat_dim: dimension of per-horse feature vector
-        race_feat_dim: dimension of race-level feature vector
-        embed_dim: embedding / attention dimension
-        hidden_dim: hidden layer size in HorseEncoder and score head
-        n_heads: number of attention heads
-        dropout: dropout probability
-    """
-
-    def __init__(
-        self,
-        horse_feat_dim: int,
-        race_feat_dim: int,
-        embed_dim: int = 32,
-        hidden_dim: int = 64,
-        n_heads: int = 4,
-        dropout: float = 0.2,
-    ) -> None:
-        super().__init__()
-        self.horse_encoder = HorseEncoder(
-            horse_feat_dim=horse_feat_dim,
-            race_feat_dim=race_feat_dim,
-            embed_dim=embed_dim,
-            hidden_dim=hidden_dim,
-            dropout=dropout,
-        )
-        self.attn = nn.MultiheadAttention(
-            embed_dim=embed_dim,
-            num_heads=n_heads,
-            batch_first=True,
-            dropout=dropout,
-        )
-        self.norm = nn.LayerNorm(embed_dim)
-        self.head = nn.Sequential(
-            nn.Linear(embed_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def forward(
-        self,
-        horse_features: torch.Tensor,
-        race_features: torch.Tensor,
-        mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute per-horse scores.
-
-        Args:
-            horse_features: [B, max_n_horses, horse_feat_dim]
-            race_features:  [B, race_feat_dim]
-            mask:           [B, max_n_horses] bool — True = valid horse, False = padded
-
-        Returns:
-            scores: [B, max_n_horses]  (padded positions = -inf)
-        """
-        encoded = self.horse_encoder(horse_features, race_features)
-
-        # MultiheadAttention key_padding_mask: True means *ignore* that position
-        key_padding_mask = ~mask  # [B, max_n_horses]
-
-        attended, _ = self.attn(
-            encoded, encoded, encoded, key_padding_mask=key_padding_mask
-        )
-        # Residual + LayerNorm
-        residual = self.norm(encoded + attended)
-
-        scores = self.head(residual).squeeze(-1)  # [B, max_n_horses]
-
-        # Mask padded positions with -inf so losses can safely ignore them
-        scores = scores.masked_fill(~mask, float("-inf"))
-        return scores
-
-
-# ---------------------------------------------------------------------------
-# Arch v2: categorical embeddings + stacked TransformerEncoder
-# ---------------------------------------------------------------------------
 
 
 class HorseEncoderWithEmb(nn.Module):
@@ -306,13 +176,14 @@ class HorseEncoderWithEmb(nn.Module):
 class RaceTransformerModel(nn.Module):
     """Set Transformer with categorical embeddings + stacked encoder blocks.
 
-    Compared to :class:`RaceModel` (v1):
-
     * Categorical inputs feed ``nn.Embedding`` tables (see
       :class:`HorseEncoderWithEmb`).
+    * The ability encoder optionally consumes a per-race history sequence
+      (``history_feat_dim > 0``) via a GRU.
     * Cross-horse interaction is modelled by a multi-layer
-      ``nn.TransformerEncoder`` with GELU + pre-norm + FFN, instead of a
-      single ``nn.MultiheadAttention`` layer.
+      ``nn.TransformerEncoder`` with GELU + pre-norm + FFN.
+    * The scoring head combines the ability representation with standardised
+      odds (``odds_feat_dim > 0``) — ability→value separation.
     """
 
     def __init__(
@@ -330,18 +201,16 @@ class RaceTransformerModel(nn.Module):
         cat_embed_dim: int = 4,
         n_transformer_layers: int = 2,
         ff_dim: int | None = None,
-        use_history: bool = False,
         history_feat_dim: int = 0,
         history_hidden: int = 64,
-        use_odds_head: bool = False,
         odds_feat_dim: int = 0,
     ) -> None:
         super().__init__()
 
         # 履歴エンコーダ (per-past-race 系列 → 馬ごとの 1 ベクトル)。
-        # use_history=False のとき完全に無効 (現行モデルと bit 一致)。
-        self.use_history = use_history and history_feat_dim > 0
-        if self.use_history:
+        # history_feat_dim=0 のとき履歴入力なし (GRU を作らない)。本番は常に >0。
+        self.history_hidden = history_hidden
+        if history_feat_dim > 0:
             self.history_encoder = nn.GRU(
                 input_size=history_feat_dim,
                 hidden_size=history_hidden,
@@ -380,26 +249,16 @@ class RaceTransformerModel(nn.Module):
             encoder_layer, num_layers=n_transformer_layers
         )
 
-        # スコアリング head。odds を ability(transformer 出力) と分離して head で使う。
-        # use_odds_head=False のとき現行 v2 と bit 一致 (self.head のみ、新キーなし)。
-        self.use_odds_head = use_odds_head and odds_feat_dim > 0
-        self.odds_feat_dim = odds_feat_dim if self.use_odds_head else 0
-        if self.use_odds_head:
-            # ability(embed) を LayerNorm → 標準化済み odds を concat → MLP
-            self.head_norm = nn.LayerNorm(embed_dim)
-            self.head_mlp = nn.Sequential(
-                nn.Linear(embed_dim + odds_feat_dim, hidden_dim),
-                nn.GELU(),
-                nn.Linear(hidden_dim, 1),
-            )
-            self.head = None
-        else:
-            self.head = nn.Sequential(
-                nn.LayerNorm(embed_dim),
-                nn.Linear(embed_dim, hidden_dim),
-                nn.GELU(),
-                nn.Linear(hidden_dim, 1),
-            )
+        # スコアリング head: ability(transformer 出力) を LayerNorm したものに
+        # 標準化済み odds(市場価値) を concat して MLP に通す (ability→value 分離)。
+        # odds_feat_dim=0 (exclude-odds) のとき odds concat なし = ability-only。
+        self.odds_feat_dim = max(odds_feat_dim, 0)
+        self.head_norm = nn.LayerNorm(embed_dim)
+        self.head_mlp = nn.Sequential(
+            nn.Linear(embed_dim + self.odds_feat_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1),
+        )
 
     def _encode_history(
         self, history_seq: torch.Tensor, history_lengths: torch.Tensor
@@ -436,28 +295,31 @@ class RaceTransformerModel(nn.Module):
             history_seq:    optional [B, N, L, history_feat_dim] — 過去走系列
             history_lengths: optional [B, N] — 各馬の実履歴長 (0 可)
             odds_features:  optional [B, N, odds_feat_dim] — 標準化済み odds。
-                            use_odds_head=True のとき head で使う (ability とは分離)。
+                            head で ability とは分離して使う。None なら zero 埋め。
 
         Returns:
             scores: [B, N] (padded positions = -inf)
         """
         history_embed = None
-        if self.use_history and history_seq is not None and history_lengths is not None:
-            history_embed = self._encode_history(history_seq, history_lengths)
+        if self.history_encoder is not None:
+            if history_seq is not None and history_lengths is not None:
+                history_embed = self._encode_history(history_seq, history_lengths)
+            else:
+                # 履歴系列が渡されない場合は zero ベクトル (encoder の入力次元を保つ)。
+                b, n, _ = horse_features.shape
+                history_embed = horse_features.new_zeros(b, n, self.history_hidden)
         encoded = self.horse_encoder(horse_features, race_features, history_embed=history_embed)
         key_padding_mask = ~mask
         attended = self.transformer(encoded, src_key_padding_mask=key_padding_mask)
 
-        if self.use_odds_head:
-            normed = self.head_norm(attended)  # [B, N, embed]
+        normed = self.head_norm(attended)  # [B, N, embed]
+        if self.odds_feat_dim > 0:
             if odds_features is None:
                 # 欠損オッズ: ability-only で評価 (zeros = 標準化平均)
                 b, n, _ = normed.shape
                 odds_features = normed.new_zeros(b, n, self.odds_feat_dim)
-            h = torch.cat([normed, odds_features], dim=-1)  # [B, N, embed+odds]
-            scores = self.head_mlp(h).squeeze(-1)
-        else:
-            scores = self.head(attended).squeeze(-1)
+            normed = torch.cat([normed, odds_features], dim=-1)  # [B, N, embed+odds]
+        scores = self.head_mlp(normed).squeeze(-1)
 
         scores = scores.masked_fill(~mask, float("-inf"))
         return scores

@@ -175,7 +175,7 @@ def _predict_race_nn(
 ) -> pd.DataFrame:
     """NN inference for a single race.
 
-    Builds a single-batch tensor from frame, runs the RaceModel forward pass,
+    Builds a single-batch tensor from frame, runs the RaceTransformerModel forward pass,
     converts scores to win_prob (softmax) and place_prob (Plackett-Luce MC),
     and returns a DataFrame with columns horse_id, score, win_prob, place_prob.
 
@@ -188,16 +188,13 @@ def _predict_race_nn(
 
     horse_feature_cols: list[str] = bundle.nn_horse_feature_cols or []
     race_feature_cols: list[str] = bundle.nn_race_feature_cols or []
-    all_feat_cols = horse_feature_cols + race_feature_cols
 
-    if bundle.nn_preprocessor is not None:
-        encoded = bundle.nn_preprocessor.transform(frame)
-    else:
-        # Legacy fallback: NN models saved before preprocessor.pkl was introduced.
-        # The mapping is computed from the single race only, which means the
-        # categorical encoding will not match what the model was trained with.
-        from ai.training.train_nn import _encode_categoricals  # noqa: PLC0415
-        encoded = _encode_categoricals(frame, all_feat_cols)
+    if bundle.nn_preprocessor is None:
+        raise ValueError(
+            "ModelBundle.nn_preprocessor is None — cannot run inference without the "
+            "fitted preprocessor (categorical maps + numeric standardization)."
+        )
+    encoded = bundle.nn_preprocessor.transform(frame)
 
     n_horses = len(encoded)
 
@@ -217,8 +214,8 @@ def _predict_race_nn(
 
     mask = torch.ones(1, n_horses, dtype=torch.bool)  # all valid
 
-    # odds-at-scoring head (v3): odds は head へ (encoder には入らない)。encoded は
-    # transform 済みなので標準化済みオッズ。
+    # odds-at-scoring head: odds は head へ (encoder には入らない)。encoded は
+    # transform 済みなので標準化済みオッズ。odds 列なし (exclude-odds) は None。
     odds_t = None
     odds_cols = bundle.nn_odds_feature_cols or []
     if odds_cols:
@@ -235,16 +232,14 @@ def _predict_race_nn(
     model = bundle.nn_model
     assert model is not None, "nn_model is None in NN bundle"
 
-    # 履歴/odds kwargs は使うときだけ渡す (v1 RaceModel / v2 OFF は受け取らない)。
-    extra_kw: dict = {}
-    if history_seq_t is not None:
-        extra_kw["history_seq"] = history_seq_t
-        extra_kw["history_lengths"] = history_lengths_t
-    if odds_t is not None:
-        extra_kw["odds_features"] = odds_t
-
+    # forward は履歴/odds が None でも graceful (履歴は zero、odds は zero or なし)。
     with torch.no_grad():
-        scores_t = model(hf, rf, mask, **extra_kw)  # [1, n_horses]
+        scores_t = model(
+            hf, rf, mask,
+            history_seq=history_seq_t,
+            history_lengths=history_lengths_t,
+            odds_features=odds_t,
+        )  # [1, n_horses]
     scores: np.ndarray = scores_t[0, :n_horses].cpu().numpy()
 
     # Masked -inf positions (shouldn't occur for single-race batch) → replace with min
