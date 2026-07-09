@@ -122,7 +122,16 @@ export function PastRaces({ embedded = false }: PastRacesProps = {}) {
   const { data, isPending, isError } = useRacesByDate(selectedDate);
 
   function handleDateChange(value: string) {
-    setSearchParams(value ? { date: value } : {});
+    // Races タブに埋め込まれたとき ?tab=past を消さないよう既存 param を維持する。
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set('date', value);
+        else next.delete('date');
+        return next;
+      },
+      { replace: true },
+    );
   }
 
   function handleRowClick(race: RaceSummary) {

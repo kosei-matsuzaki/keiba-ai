@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { CalendarClock, RefreshCw, Sparkles } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
 import { useRunShutuba } from '@/hooks/useRunShutuba';
+import { RunResultsDialog } from '@/components/RunResultsDialog';
 import { useJobStatus } from '@/hooks/useJobStatus';
 import { useBulkPredictions } from '@/hooks/useBulkPredictions';
 import { EmptyState } from '@/components/EmptyState';
@@ -211,6 +212,7 @@ function _relativeTimeJa(timestamp: number): string {
 
 export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data, isPending, isError, refetch, dataUpdatedAt } = useThisWeekendRaces();
   // dataUpdatedAt は react-query の最終 fetch 成功時刻 (ms)。これを 30 秒
   // 間隔で再評価して "X 分前" 表示を実時間更新する。
@@ -316,6 +318,60 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
     bootstrap.phase === 'discovering' || bootstrap.phase === 'scraping';
 
   const daySections = data ? groupByDayAndCourse(data.races) : [];
+  const hasWeekend = daySections.length > 0;
+
+  // タブ選択は ?tab= で URL 駆動する。これにより RaceDetail からの戻りリンク
+  // (`/races?tab=past&date=...`) が Past タブを正しく復元できる。
+  const validTabs = hasWeekend
+    ? [...daySections.map((d) => d.date), 'past']
+    : ['weekend', 'past'];
+  const requestedTab = searchParams.get('tab');
+  const activeTab =
+    requestedTab && validTabs.includes(requestedTab)
+      ? requestedTab
+      : hasWeekend
+        ? daySections[0].date
+        : 'weekend';
+
+  function handleTabChange(value: string) {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', value);
+        // date は Past タブ専用。他タブへ移動したら除去する。
+        if (value !== 'past') next.delete('date');
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  // 今週末のレースが無い / 取得前 / 取得中のときに weekend タブへ出す内容。
+  // Past タブを常時表示するため、この空状態は Tabs を潰さずタブ内に描画する。
+  const weekendPlaceholder =
+    bootstrap.phase === 'no_races' ? (
+      <EmptyState
+        message="今週末の JRA レースはありません"
+        description="開催予定がない週末です。次の開催日にご利用ください。"
+      />
+    ) : bootstrap.phase === 'error' ? (
+      <EmptyState
+        message="レース情報の自動取得に失敗しました"
+        description={bootstrap.message}
+      />
+    ) : isBootstrapping ? (
+      <TableSkeleton />
+    ) : (
+      <EmptyState
+        message="今週末のレースは未取得です"
+        description="自動取得は行いません。下のボタンで今週末の JRA レースを取り込んでください。"
+      >
+        <Button onClick={() => handleStartIngest(false)} disabled={isBootstrapping}>
+          <RefreshCw className="mr-1.5 h-4 w-4" />
+          今週末のレースを取得
+        </Button>
+      </EmptyState>
+    );
 
   const headerActions = (
     <>
@@ -343,6 +399,7 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
         <RefreshCw className="mr-1.5 h-4 w-4" />
         再取込
       </Button>
+      <RunResultsDialog />
     </>
   );
 
@@ -394,65 +451,55 @@ export function UpcomingRaces({ embedded = false }: UpcomingRacesProps = {}) {
           message="レース情報の取得に失敗しました"
           description="バックエンドが起動しているか確認してください。"
         />
-      ) : daySections.length === 0 ? (
-        bootstrap.phase === 'no_races' ? (
-          <EmptyState
-            message="今週末の JRA レースはありません"
-            description="開催予定がない週末です。次の開催日にご利用ください。"
-          />
-        ) : bootstrap.phase === 'error' ? (
-          <EmptyState
-            message="レース情報の自動取得に失敗しました"
-            description={bootstrap.message}
-          />
-        ) : isBootstrapping ? (
-          <TableSkeleton />
-        ) : (
-          <EmptyState
-            message="今週末のレースは未取得です"
-            description="自動取得は行いません。下のボタンで今週末の JRA レースを取り込んでください。"
-          >
-            <Button onClick={() => handleStartIngest(false)} disabled={isBootstrapping}>
-              <RefreshCw className="mr-1.5 h-4 w-4" />
-              今週末のレースを取得
-            </Button>
-          </EmptyState>
-        )
       ) : (
-        <Tabs defaultValue={daySections[0].date} className="flex flex-col gap-6">
+        <Tabs
+          value={activeTab}
+          onValueChange={handleTabChange}
+          className="flex flex-col gap-6"
+        >
           <TabsList className="self-start">
-            {daySections.map((day) => {
-              const total = day.courseSections.reduce(
-                (sum, s) => sum + s.races.length,
-                0,
-              );
-              return (
-                <TabsTrigger key={day.date} value={day.date}>
-                  {day.label}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {total}
-                  </span>
-                </TabsTrigger>
-              );
-            })}
+            {hasWeekend ? (
+              daySections.map((day) => {
+                const total = day.courseSections.reduce(
+                  (sum, s) => sum + s.races.length,
+                  0,
+                );
+                return (
+                  <TabsTrigger key={day.date} value={day.date}>
+                    {day.label}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {total}
+                    </span>
+                  </TabsTrigger>
+                );
+              })
+            ) : (
+              <TabsTrigger value="weekend">今週末</TabsTrigger>
+            )}
             <TabsTrigger value="past">Past</TabsTrigger>
           </TabsList>
-          {daySections.map((day) => (
-            <TabsContent
-              key={day.date}
-              value={day.date}
-              className="mt-0 flex flex-col gap-6"
-            >
-              {day.courseSections.map((section) => (
-                <RaceTable
-                  key={`${day.date}-${section.course}`}
-                  section={section}
-                  predictions={predictions}
-                  onRowClick={handleRowClick}
-                />
-              ))}
+          {hasWeekend ? (
+            daySections.map((day) => (
+              <TabsContent
+                key={day.date}
+                value={day.date}
+                className="mt-0 flex flex-col gap-6"
+              >
+                {day.courseSections.map((section) => (
+                  <RaceTable
+                    key={`${day.date}-${section.course}`}
+                    section={section}
+                    predictions={predictions}
+                    onRowClick={handleRowClick}
+                  />
+                ))}
+              </TabsContent>
+            ))
+          ) : (
+            <TabsContent value="weekend" className="mt-0">
+              {weekendPlaceholder}
             </TabsContent>
-          ))}
+          )}
           <TabsContent value="past" className="mt-0">
             <PastRaces embedded />
           </TabsContent>

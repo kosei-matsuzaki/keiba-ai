@@ -18,6 +18,7 @@ vi.mock('../lib/api', () => ({
   fetchBulkPredictions: vi.fn(),
   discoverThisWeekendRaceIds: vi.fn(),
   runShutubaScraper: vi.fn(),
+  runResultsScraper: vi.fn(),
   fetchJob: vi.fn(),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
 }));
