@@ -1,9 +1,8 @@
 """robots.txt fetch and compliance check with 24-hour in-memory cache.
 
-Fail behaviour (M2):
-  On fetch failure, log a warning and allow the request (fail-open).
-  TODO(M3): change to fail-fast (raise RobotsFetchError) once we have
-  reliable connectivity monitoring in place.
+Fail behaviour:
+  On fetch failure, log a warning and deny all requests (fail-closed)。
+  失敗結果は短い TTL でキャッシュし、一時的なネットワーク障害から自動回復する。
 """
 
 from __future__ import annotations
@@ -17,6 +16,8 @@ from core.logging import get_logger
 logger = get_logger(__name__)
 
 _CACHE_TTL_SECONDS = 24 * 3600
+# 取得失敗時の再試行間隔。成功時より短くして一時障害から回復できるようにする。
+_FAILURE_TTL_SECONDS = 10 * 60
 
 
 class RobotsFetchError(Exception):
@@ -24,36 +25,45 @@ class RobotsFetchError(Exception):
 
 
 class RobotsCache:
-    """Per-domain robots.txt cache with 24-hour TTL."""
+    """Per-domain robots.txt cache with 24-hour TTL (fail-closed on fetch error)."""
 
     def __init__(self, user_agent: str) -> None:
         self._user_agent = user_agent
-        # domain -> (RobotFileParser, fetched_at)
-        self._store: dict[str, tuple[RobotFileParser, float]] = {}
+        # domain -> (RobotFileParser | None, fetched_at)。None = 取得失敗 (拒否扱い)
+        self._store: dict[str, tuple[RobotFileParser | None, float]] = {}
 
     def _robots_url(self, url: str) -> str:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}/robots.txt"
 
-    def _load(self, robots_url: str) -> RobotFileParser:
+    def _load(self, robots_url: str) -> RobotFileParser | None:
         rp = RobotFileParser()
         rp.set_url(robots_url)
         try:
             rp.read()
         except Exception as exc:
-            # M2: fail-open with warning.  M3 should raise RobotsFetchError.
-            logger.warning("Failed to fetch %s: %s — allowing all requests", robots_url, exc)
+            logger.warning(
+                "Failed to fetch %s: %s — denying all requests (fail-closed)",
+                robots_url, exc,
+            )
+            return None
         return rp
 
-    def _get_parser(self, url: str) -> RobotFileParser:
+    def _get_parser(self, url: str) -> RobotFileParser | None:
         domain = urlparse(url).netloc
         entry = self._store.get(domain)
-        if entry is None or time.time() - entry[1] > _CACHE_TTL_SECONDS:
-            robots_url = self._robots_url(url)
-            rp = self._load(robots_url)
-            self._store[domain] = (rp, time.time())
-        return self._store[domain][0]
+        if entry is not None:
+            rp, fetched_at = entry
+            ttl = _CACHE_TTL_SECONDS if rp is not None else _FAILURE_TTL_SECONDS
+            if time.time() - fetched_at <= ttl:
+                return rp
+        robots_url = self._robots_url(url)
+        rp = self._load(robots_url)
+        self._store[domain] = (rp, time.time())
+        return rp
 
     def is_allowed(self, url: str) -> bool:
         rp = self._get_parser(url)
+        if rp is None:
+            return False
         return rp.can_fetch(self._user_agent, url)

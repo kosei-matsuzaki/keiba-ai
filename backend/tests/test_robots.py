@@ -60,3 +60,32 @@ def test_ttl_uses_cached_parser():
     cache.is_allowed("https://db.netkeiba.com/race/1/")
     cache.is_allowed("https://db.netkeiba.com/race/2/")
     assert load_count == 1  # fetched only once
+
+
+def test_fetch_failure_denies_requests():
+    """robots.txt が取得できない場合は fail-closed で全リクエストを拒否する。"""
+    cache = RobotsCache(user_agent="TestAgent")
+    cache._load = lambda url: None  # type: ignore[method-assign]
+    assert cache.is_allowed("https://db.netkeiba.com/race/1/") is False
+
+
+def test_fetch_failure_is_retried_after_failure_ttl(monkeypatch):
+    """失敗キャッシュは短い TTL で再試行され、成功後は許可される。"""
+    from scraper import robots as robots_mod
+
+    cache = _make_cache_with_mock_fetch(_ROBOTS_TXT)
+    good_load = cache._load
+    cache._load = lambda url: None  # type: ignore[method-assign]
+    assert cache.is_allowed("https://db.netkeiba.com/race/1/") is False
+
+    # 失敗 TTL 経過前はキャッシュされた失敗を使う（再取得しない）
+    assert cache.is_allowed("https://db.netkeiba.com/race/1/") is False
+
+    # 失敗 TTL を経過させると再取得し、今度は成功して許可される
+    real_time = robots_mod.time.time
+    monkeypatch.setattr(
+        robots_mod.time, "time",
+        lambda: real_time() + robots_mod._FAILURE_TTL_SECONDS + 1,
+    )
+    cache._load = good_load  # type: ignore[method-assign]
+    assert cache.is_allowed("https://db.netkeiba.com/race/1/") is True
