@@ -13,7 +13,12 @@ from ai.betting.odds import compute_race_odds_with_sources
 from ai.betting.strategy import recommend_for_race
 from ai.inference.predict import predict_race, predict_race_with_combinations
 from ai.model.registry import get_active, load_model_full
-from api.deps import build_inference_frame_or_404, get_session, get_settings_store
+from api.deps import (
+    build_inference_frame_or_404,
+    get_odds_session,
+    get_session,
+    get_settings_store,
+)
 from core.bet_types import DEFAULT_ENABLED_BET_TYPES
 from core.logging import get_logger
 from core.settings_store import SettingsStore
@@ -44,6 +49,7 @@ class RecommendationsResponse(BaseModel):
 
 def _resolve_odds_source(
     session: Session,
+    odds_session: Session | None,
     race_id: str,
 ) -> tuple[
     dict[str, dict[str, float]] | None,
@@ -62,7 +68,9 @@ def _resolve_odds_source(
         (race_odds, sources, odds_source_label).
         race_odds / sources are None when no data is available at all.
     """
-    odds, sources = compute_race_odds_with_sources(session, race_id)
+    odds, sources = compute_race_odds_with_sources(
+        session, race_id, odds_session=odds_session
+    )
     if not odds:
         return None, None, "unknown"
 
@@ -86,6 +94,7 @@ def _resolve_odds_source(
 def get_recommendations(
     race_id: str,
     session: Annotated[Session, Depends(get_session)],
+    odds_session: Annotated[Session, Depends(get_odds_session)],
     store: Annotated[SettingsStore, Depends(get_settings_store)],
     top_n_horses: Annotated[int, Query(ge=1, le=18, description="Top-N horses for box/formation candidates (1-18)")] = 3,
     top_k: Annotated[int, Query(ge=1, le=200, description="Combination upper limit per bet type (1-200)")] = 50,
@@ -121,8 +130,10 @@ def get_recommendations(
     pp_map = dict(zip(frame["horse_id"].values, frame["post_position"].values, strict=True))
     predictions["post_position"] = predictions["horse_id"].map(pp_map)
 
-    # Step 4: resolve confirmed + implied odds + per-combo source
-    race_odds, race_odds_sources, odds_source = _resolve_odds_source(session, race_id)
+    # Step 4: resolve confirmed + scraped(実オッズ) + implied odds + per-combo source
+    race_odds, race_odds_sources, odds_source = _resolve_odds_source(
+        session, odds_session, race_id
+    )
     if odds_source == "unknown":
         logger.warning(
             "No confirmed odds available for race %s — est_odds will be null", race_id

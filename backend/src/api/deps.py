@@ -29,6 +29,34 @@ def get_session(
         yield s
 
 
+def get_odds_engine(request: Request) -> Engine:
+    """odds.db の Engine。lifespan が設定済みならそれを使い、無ければ遅延生成する。
+
+    lifespan startup が（reload のタイミング等で）app.state.odds_engine を設定し
+    損ねても 500 にならないよう、ここで idempotent に生成して app.state へキャッシュ
+    する。create_app() を lifespan 無しで使うテスト経路にも耐える。
+    """
+    state = request.app.state
+    engine = getattr(state, "odds_engine", None)
+    if engine is None:
+        from db.odds_db import init_odds_db, make_odds_engine
+
+        engine = make_odds_engine()
+        init_odds_db(engine)
+        state.odds_engine = engine
+    return engine
+
+
+def get_odds_session(
+    odds_engine: Annotated[Engine, Depends(get_odds_engine)],
+) -> Iterator[Session]:
+    """odds.db（実オッズ）の読み取り用セッション。"""
+    from db.odds_db import odds_session_scope
+
+    with odds_session_scope(odds_engine) as s:
+        yield s
+
+
 def get_settings_store(request: Request) -> SettingsStore:
     return request.app.state.settings_store
 

@@ -261,17 +261,24 @@ export function RecommendationsCard({
                 })}
               </TableBody>
             </Table>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {data.odds_source === 'live'
-                ? '※ 当日の市場オッズ（単勝由来）。'
-                : data.odds_source === 'past'
-                  ? '※ 確定オッズ。'
-                  : '※ オッズ取得待ち or 該当データなし。'}
-              <span className="ml-1">
-                未取得の combo は単勝由来 Plackett-Luce 推定で補完
-                (バッジ「推定」、控除率込み)。
-              </span>
-            </p>
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              <p>
+                {data.odds_source === 'live'
+                  ? '※ 当日のライブ市場オッズ（全馬券の実オッズ。未公開の組合せは単勝由来で推定）。'
+                  : data.odds_source === 'past'
+                    ? '※ 確定オッズ。外れ combo は確定払戻が無いため推定で補完。'
+                    : '※ オッズ取得待ち or 該当データなし。'}
+                <span className="ml-1">
+                  未取得の combo は単勝由来 Plackett-Luce 推定で補完
+                  (バッジ「推定」、控除率込み)。
+                </span>
+              </p>
+              <p>
+                ※ 本番モデルは単複の ROI を直接最適化（OOS 単勝 0.856 / 複勝 0.894、
+                いずれも人気1番超）。連系確率は NN 内部で校正済みだが控除率 25% で依然
+                -EV。EV&gt;1.0 でも回収率 1.0 超は未達なので実買いは慎重に。
+              </p>
+            </div>
           </>
         )}
       </CardContent>

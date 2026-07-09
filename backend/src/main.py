@@ -32,6 +32,7 @@ from api.routers import (
 from core.paths import db_path
 from core.settings_store import SettingsStore
 from db.base import Base
+from db.odds_db import init_odds_db, make_odds_engine
 from db.session import make_engine
 
 _DEFAULT_ORIGINS = [
@@ -57,6 +58,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # simulation_runs などの新テーブルが無くても落ちないようにする。
     Base.metadata.create_all(engine)
     app.state.engine = engine
+    # 別ファイル odds.db（confirmed/live 実オッズ）。読み取りに使う（推奨買目の実オッズ）。
+    odds_engine = make_odds_engine()
+    init_odds_db(odds_engine)
+    app.state.odds_engine = odds_engine
     app.state.settings_store = SettingsStore()
     app.state.job_registry = JobRegistry()
     try:
@@ -64,6 +69,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Shutdown
         engine.dispose()
+        odds_engine.dispose()
 
 
 def create_app() -> FastAPI:
