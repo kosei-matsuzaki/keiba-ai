@@ -209,239 +209,243 @@ def test_raises_parse_error_on_empty_html():
         parse_shutuba("<html><body><p>no table here</p></body></html>", "202406010111")
 
 
-# ── 実 HTML フィクスチャ（race.netkeiba.com 実ページ） ────────────────────────
+# ── race.netkeiba.com 形式の合成フィクスチャ ──────────────────────────────────
 
-# fixtures/shutuba_real_arima.html:
+# 実ページ capture の再配布を避けるため、実 HTML と同じ DOM 構造・列名
+# （厩舎 / 馬体重(増減) / 更新、"---.-" / "**" プレースホルダ、EUC-JP）だけを
+# 再現した合成フィクスチャを使う。
+#
+# fixtures/shutuba_synthetic_arima.html:
 #   race_id=202406050911, EUC-JP エンコード
-#   実際のレースはホープフルS（2024-12-28, 中山, 芝2000m, 18頭）
+#   ホープフルS 相当（2024-12-28, 中山, 芝2000m, 18頭）
 #   発走前の HTML のためオッズ/人気は "---.-" / "**" で未公開
 #
-# fixtures/shutuba_real_r1.html:
+# fixtures/shutuba_synthetic_r1.html:
 #   race_id=202401010101, EUC-JP エンコード
-#   ２歳未勝利（2024-07-20, 札幌, 芝1200m, 5頭）
+#   ２歳未勝利 相当（2024-07-20, 札幌, 芝1200m, 5頭）
 
 
 def _read_euc(path: Path) -> str:
-    """EUC-JP エンコードの実 HTML をデコードして返す。"""
+    """EUC-JP エンコードの HTML（実ページと同じ符号化の合成フィクスチャ）をデコードして返す。"""
     return path.read_bytes().decode("euc-jp", errors="replace")
 
 
 @pytest.fixture()
-def real_arima_html() -> str:
-    return _read_euc(FIXTURES / "shutuba_real_arima.html")
+def synthetic_arima_html() -> str:
+    return _read_euc(FIXTURES / "shutuba_synthetic_arima.html")
 
 
 @pytest.fixture()
-def real_r1_html() -> str:
-    return _read_euc(FIXTURES / "shutuba_real_r1.html")
+def synthetic_r1_html() -> str:
+    return _read_euc(FIXTURES / "shutuba_synthetic_r1.html")
 
 
-RACE_ID_REAL_ARIMA = "202406050911"
-RACE_ID_REAL_R1 = "202401010101"
-
-
-@pytest.fixture()
-def parsed_real_arima(real_arima_html: str) -> ParsedShutuba:
-    return parse_shutuba(real_arima_html, RACE_ID_REAL_ARIMA)
+RACE_ID_SYNTH_ARIMA = "202406050911"
+RACE_ID_SYNTH_R1 = "202401010101"
 
 
 @pytest.fixture()
-def parsed_real_r1(real_r1_html: str) -> ParsedShutuba:
-    return parse_shutuba(real_r1_html, RACE_ID_REAL_R1)
+def parsed_synthetic_arima(synthetic_arima_html: str) -> ParsedShutuba:
+    return parse_shutuba(synthetic_arima_html, RACE_ID_SYNTH_ARIMA)
 
 
-class TestRealHtmlArima:
-    """実 HTML (shutuba_real_arima.html) — ホープフルS 2024 (Nakayama, G1)。
+@pytest.fixture()
+def parsed_synthetic_r1(synthetic_r1_html: str) -> ParsedShutuba:
+    return parse_shutuba(synthetic_r1_html, RACE_ID_SYNTH_R1)
+
+
+class TestSyntheticArima:
+    """race.netkeiba 形式の合成フィクスチャ (shutuba_synthetic_arima.html) — G1 18頭。
 
     オッズ・人気は発走前未公開なので None が正しい。
     """
 
-    def test_race_id(self, parsed_real_arima):
-        assert parsed_real_arima.race_id == RACE_ID_REAL_ARIMA
+    def test_race_id(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.race_id == RACE_ID_SYNTH_ARIMA
 
-    def test_date(self, parsed_real_arima):
+    def test_date(self, parsed_synthetic_arima):
         # <title> タグから抽出: "2024年12月28日"
-        assert parsed_real_arima.date == "2024-12-28"
+        assert parsed_synthetic_arima.date == "2024-12-28"
 
-    def test_course(self, parsed_real_arima):
+    def test_course(self, parsed_synthetic_arima):
         # race_id[4:6] = "06" -> 中山
-        assert parsed_real_arima.course == "中山"
+        assert parsed_synthetic_arima.course == "中山"
 
-    def test_race_name(self, parsed_real_arima):
+    def test_race_name(self, parsed_synthetic_arima):
         # <h1 class="RaceName"> から取得
-        assert parsed_real_arima.name == "ホープフルS"
+        assert parsed_synthetic_arima.name == "ホープフルS"
 
-    def test_race_class(self, parsed_real_arima):
+    def test_race_class(self, parsed_synthetic_arima):
         # <title> に "(G1)" が含まれる
-        assert parsed_real_arima.race_class == "G1"
+        assert parsed_synthetic_arima.race_class == "G1"
 
-    def test_surface(self, parsed_real_arima):
-        assert parsed_real_arima.surface == "芝"
+    def test_surface(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.surface == "芝"
 
-    def test_distance(self, parsed_real_arima):
-        assert parsed_real_arima.distance == 2000
+    def test_distance(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.distance == 2000
 
-    def test_weather(self, parsed_real_arima):
-        assert parsed_real_arima.weather == "晴"
+    def test_weather(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.weather == "晴"
 
-    def test_n_runners(self, parsed_real_arima):
-        assert parsed_real_arima.n_runners == 18
+    def test_n_runners(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.n_runners == 18
 
-    def test_entries_count(self, parsed_real_arima):
-        assert len(parsed_real_arima.entries) == 18
+    def test_entries_count(self, parsed_synthetic_arima):
+        assert len(parsed_synthetic_arima.entries) == 18
 
-    def test_post_positions_sequential(self, parsed_real_arima):
+    def test_post_positions_sequential(self, parsed_synthetic_arima):
         """馬番が 1〜n_runners の連番であること。"""
-        positions = [e.post_position for e in parsed_real_arima.entries]
+        positions = [e.post_position for e in parsed_synthetic_arima.entries]
         assert positions == list(range(1, 19))
 
-    def test_first_entry_horse_id(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].horse_id == "2022103995"
+    def test_first_entry_horse_id(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].horse_id == "2022103995"
 
-    def test_first_entry_horse_name(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].horse_name == "ジョバンニ"
+    def test_first_entry_horse_name(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].horse_name == "ジョバンニ"
 
-    def test_first_entry_post_position(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].post_position == 1
+    def test_first_entry_post_position(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].post_position == 1
 
-    def test_first_entry_sex_age(self, parsed_real_arima):
-        entry = parsed_real_arima.entries[0]
+    def test_first_entry_sex_age(self, parsed_synthetic_arima):
+        entry = parsed_synthetic_arima.entries[0]
         assert entry.sex == "牡"
         assert entry.age == 2
 
-    def test_first_entry_weight_carried(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].weight_carried == pytest.approx(56.0)
+    def test_first_entry_weight_carried(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].weight_carried == pytest.approx(56.0)
 
-    def test_first_entry_jockey_id(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].jockey_id == "01126"
+    def test_first_entry_jockey_id(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].jockey_id == "01126"
 
-    def test_first_entry_jockey_name(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].jockey_name == "松山"
+    def test_first_entry_jockey_name(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].jockey_name == "松山"
 
-    def test_first_entry_trainer_id(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].trainer_id == "01157"
+    def test_first_entry_trainer_id(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].trainer_id == "01157"
 
-    def test_first_entry_trainer_name(self, parsed_real_arima):
-        assert parsed_real_arima.entries[0].trainer_name == "杉山晴"
+    def test_first_entry_trainer_name(self, parsed_synthetic_arima):
+        assert parsed_synthetic_arima.entries[0].trainer_name == "杉山晴"
 
-    def test_first_entry_horse_weight(self, parsed_real_arima):
+    def test_first_entry_horse_weight(self, parsed_synthetic_arima):
         # "484(0)" -> horse_weight=484, horse_weight_diff=0
-        assert parsed_real_arima.entries[0].horse_weight == 484
-        assert parsed_real_arima.entries[0].horse_weight_diff == 0
+        assert parsed_synthetic_arima.entries[0].horse_weight == 484
+        assert parsed_synthetic_arima.entries[0].horse_weight_diff == 0
 
-    def test_entry_horse_weight_with_diff(self, parsed_real_arima):
+    def test_entry_horse_weight_with_diff(self, parsed_synthetic_arima):
         # 2番: "478 (+2)"
-        assert parsed_real_arima.entries[1].horse_weight == 478
-        assert parsed_real_arima.entries[1].horse_weight_diff == 2
+        assert parsed_synthetic_arima.entries[1].horse_weight == 478
+        assert parsed_synthetic_arima.entries[1].horse_weight_diff == 2
 
-    def test_odds_win_none_before_race(self, parsed_real_arima):
+    def test_odds_win_none_before_race(self, parsed_synthetic_arima):
         """発走前は単勝オッズ "---.-" -> None となること。"""
-        for e in parsed_real_arima.entries:
+        for e in parsed_synthetic_arima.entries:
             assert e.odds_win is None
 
-    def test_popularity_none_before_race(self, parsed_real_arima):
+    def test_popularity_none_before_race(self, parsed_synthetic_arima):
         """発走前は人気 "**" -> None となること。"""
-        for e in parsed_real_arima.entries:
+        for e in parsed_synthetic_arima.entries:
             assert e.popularity is None
 
-    def test_finish_position_none(self, parsed_real_arima):
-        for e in parsed_real_arima.entries:
+    def test_finish_position_none(self, parsed_synthetic_arima):
+        for e in parsed_synthetic_arima.entries:
             assert e.finish_position is None
 
-    def test_no_duplicate_horse_ids(self, parsed_real_arima):
-        horse_ids = [e.horse_id for e in parsed_real_arima.entries]
+    def test_no_duplicate_horse_ids(self, parsed_synthetic_arima):
+        horse_ids = [e.horse_id for e in parsed_synthetic_arima.entries]
         assert len(horse_ids) == len(set(horse_ids))
 
-    def test_all_entries_have_race_id(self, parsed_real_arima):
-        for e in parsed_real_arima.entries:
-            assert e.race_id == RACE_ID_REAL_ARIMA
+    def test_all_entries_have_race_id(self, parsed_synthetic_arima):
+        for e in parsed_synthetic_arima.entries:
+            assert e.race_id == RACE_ID_SYNTH_ARIMA
 
-    def test_all_entries_have_trainer_id(self, parsed_real_arima):
+    def test_all_entries_have_trainer_id(self, parsed_synthetic_arima):
         """全エントリで trainer_id が取得できること（厩舎列の修正確認）。"""
-        for e in parsed_real_arima.entries:
+        for e in parsed_synthetic_arima.entries:
             assert e.trainer_id is not None, f"trainer_id missing for horse {e.horse_name}"
 
-    def test_all_entries_have_horse_weight(self, parsed_real_arima):
+    def test_all_entries_have_horse_weight(self, parsed_synthetic_arima):
         """全エントリで馬体重が取得できること（馬体重(増減)列の修正確認）。"""
-        for e in parsed_real_arima.entries:
+        for e in parsed_synthetic_arima.entries:
             assert e.horse_weight is not None, f"horse_weight missing for horse {e.horse_name}"
 
 
-class TestRealHtmlR1:
-    """実 HTML (shutuba_real_r1.html) — ２歳未勝利 2024-07-20 札幌1R (5頭)。"""
+class TestSyntheticR1:
+    """race.netkeiba 形式の合成フィクスチャ (shutuba_synthetic_r1.html) — ２歳未勝利 札幌1R (5頭)。"""
 
-    def test_race_id(self, parsed_real_r1):
-        assert parsed_real_r1.race_id == RACE_ID_REAL_R1
+    def test_race_id(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.race_id == RACE_ID_SYNTH_R1
 
-    def test_date(self, parsed_real_r1):
-        assert parsed_real_r1.date == "2024-07-20"
+    def test_date(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.date == "2024-07-20"
 
-    def test_course(self, parsed_real_r1):
+    def test_course(self, parsed_synthetic_r1):
         # race_id[4:6] = "01" -> 札幌
-        assert parsed_real_r1.course == "札幌"
+        assert parsed_synthetic_r1.course == "札幌"
 
-    def test_race_name(self, parsed_real_r1):
-        assert parsed_real_r1.name == "2歳未勝利"
+    def test_race_name(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.name == "2歳未勝利"
 
-    def test_race_class(self, parsed_real_r1):
-        assert parsed_real_r1.race_class == "未勝利"
+    def test_race_class(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.race_class == "未勝利"
 
-    def test_surface(self, parsed_real_r1):
-        assert parsed_real_r1.surface == "芝"
+    def test_surface(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.surface == "芝"
 
-    def test_distance(self, parsed_real_r1):
-        assert parsed_real_r1.distance == 1200
+    def test_distance(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.distance == 1200
 
-    def test_weather(self, parsed_real_r1):
-        assert parsed_real_r1.weather == "晴"
+    def test_weather(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.weather == "晴"
 
-    def test_n_runners(self, parsed_real_r1):
-        assert parsed_real_r1.n_runners == 5
+    def test_n_runners(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.n_runners == 5
 
-    def test_entries_count(self, parsed_real_r1):
-        assert len(parsed_real_r1.entries) == 5
+    def test_entries_count(self, parsed_synthetic_r1):
+        assert len(parsed_synthetic_r1.entries) == 5
 
-    def test_post_positions_sequential(self, parsed_real_r1):
-        positions = [e.post_position for e in parsed_real_r1.entries]
+    def test_post_positions_sequential(self, parsed_synthetic_r1):
+        positions = [e.post_position for e in parsed_synthetic_r1.entries]
         assert positions == list(range(1, 6))
 
-    def test_first_entry_horse_id(self, parsed_real_r1):
-        assert parsed_real_r1.entries[0].horse_id == "2022105762"
+    def test_first_entry_horse_id(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.entries[0].horse_id == "2022105762"
 
-    def test_first_entry_horse_name(self, parsed_real_r1):
-        assert parsed_real_r1.entries[0].horse_name == "ルージュアマリア"
+    def test_first_entry_horse_name(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.entries[0].horse_name == "ルージュアマリア"
 
-    def test_first_entry_sex_age(self, parsed_real_r1):
-        entry = parsed_real_r1.entries[0]
+    def test_first_entry_sex_age(self, parsed_synthetic_r1):
+        entry = parsed_synthetic_r1.entries[0]
         assert entry.sex == "牝"
         assert entry.age == 2
 
-    def test_first_entry_weight_carried(self, parsed_real_r1):
-        assert parsed_real_r1.entries[0].weight_carried == pytest.approx(55.0)
+    def test_first_entry_weight_carried(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.entries[0].weight_carried == pytest.approx(55.0)
 
-    def test_first_entry_jockey_id(self, parsed_real_r1):
-        assert parsed_real_r1.entries[0].jockey_id == "01188"
+    def test_first_entry_jockey_id(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.entries[0].jockey_id == "01188"
 
-    def test_first_entry_trainer_id(self, parsed_real_r1):
-        assert parsed_real_r1.entries[0].trainer_id == "01133"
+    def test_first_entry_trainer_id(self, parsed_synthetic_r1):
+        assert parsed_synthetic_r1.entries[0].trainer_id == "01133"
 
-    def test_first_entry_horse_weight(self, parsed_real_r1):
+    def test_first_entry_horse_weight(self, parsed_synthetic_r1):
         # "410 (+6)"
-        assert parsed_real_r1.entries[0].horse_weight == 410
-        assert parsed_real_r1.entries[0].horse_weight_diff == 6
+        assert parsed_synthetic_r1.entries[0].horse_weight == 410
+        assert parsed_synthetic_r1.entries[0].horse_weight_diff == 6
 
-    def test_all_entries_have_trainer_id(self, parsed_real_r1):
-        for e in parsed_real_r1.entries:
+    def test_all_entries_have_trainer_id(self, parsed_synthetic_r1):
+        for e in parsed_synthetic_r1.entries:
             assert e.trainer_id is not None
 
-    def test_all_entries_have_horse_weight(self, parsed_real_r1):
-        for e in parsed_real_r1.entries:
+    def test_all_entries_have_horse_weight(self, parsed_synthetic_r1):
+        for e in parsed_synthetic_r1.entries:
             assert e.horse_weight is not None
 
-    def test_odds_win_none_before_race(self, parsed_real_r1):
-        for e in parsed_real_r1.entries:
+    def test_odds_win_none_before_race(self, parsed_synthetic_r1):
+        for e in parsed_synthetic_r1.entries:
             assert e.odds_win is None
 
-    def test_popularity_none_before_race(self, parsed_real_r1):
-        for e in parsed_real_r1.entries:
+    def test_popularity_none_before_race(self, parsed_synthetic_r1):
+        for e in parsed_synthetic_r1.entries:
             assert e.popularity is None
