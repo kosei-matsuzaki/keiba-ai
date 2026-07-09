@@ -272,7 +272,8 @@ def simulate_active_model(
 
     Args:
         session: SQLAlchemy session bound to the keiba DB.
-        model_path: Path to a model directory (model.txt + binary.txt + calibrator.pkl).
+        model_path: Path to an NN model directory (model.pt + meta.json,
+            optionally preprocessor.pkl / temperature_scaler.pkl).
         start / end: window date range (YYYY-MM-DD), inclusive. Both optional.
         budget: 初期資産 (円)。各 race ごとに残資産 (= budget + 累計 profit) を
             bankroll として Kelly stake を計算する (compounding wealth)。

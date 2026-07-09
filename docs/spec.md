@@ -19,7 +19,6 @@
 | DB | SQLite 3 |
 | AI / ML | PyTorch 2.x + Lightning（NN, optional extra）, pandas 2.x, numpy 1.26 以上, scikit-learn 1.4 以上 |
 | スクレイピング | httpx（非同期 HTTP）, BeautifulSoup4 |
-| スケジューラ | APScheduler（週次自動取り込み用） |
 
 ### フロントエンド（TypeScript）
 
@@ -66,18 +65,25 @@
 │   │   │       ├── horse_detail.py    # 馬詳細 (name/sex/birth_date)
 │   │   │       └── horse_pedigree.py  # 馬血統 (sire/dam)
 │   │   ├── features/      # 特徴量エンジニアリング
-│   │   │   ├── builder.py         # FEATURE_COLUMNS (38 列) 定義・build_training_frame / build_inference_frame（レース単位バッチ処理）
-│   │   │   ├── course.py          # レース・馬番・馬体重系特徴量
-│   │   │   ├── horse_history.py   # 馬の過去成績（直近平均着順・上がり3F・同コース実績 等 11 列）
-│   │   │   ├── jockey.py          # 騎手成績統計
-│   │   │   ├── odds.py            # オッズ・人気系特徴量
-│   │   │   ├── pedigree.py        # 血統特徴量（父/母の産駒勝率）
-│   │   │   ├── relative_features.py # 同レース内相対特徴量（馬体重 percentile・オッズ順位 等 6 列）
-│   │   │   └── trainer.py         # 調教師成績統計
-│   │   ├── ai/            # NN 学習・推論・評価
-│   │   │   ├── nn/        # PyTorch 固有 (model.py / train_nn.py / dataset.py / loss.py / preprocess.py)
-│   │   │   └── *.py       # 共有: predict / registry / evaluate / calibrate / temperature / bet_* / simulation 等
-│   │   └── jobs/          # APScheduler ジョブ定義（週次取り込み・月次再学習）
+│   │   │   ├── builder.py         # FEATURE_COLUMNS (46 列) 定義・build_training_frame / build_inference_frame（レース単位バッチ処理）
+│   │   │   ├── history_sequence.py # 履歴 GRU 用の過去走トークン列生成
+│   │   │   └── extractors/        # ドメイン別抽出器
+│   │   │       ├── course.py          # レース・馬番・馬体重系特徴量
+│   │   │       ├── horse_history.py   # 馬の過去成績（直近平均着順・上がり3F・脚質 等）
+│   │   │       ├── jockey.py          # 騎手成績統計
+│   │   │       ├── odds.py            # オッズ・人気系特徴量
+│   │   │       ├── pedigree.py        # 血統特徴量（父/母の産駒勝率）
+│   │   │       ├── relative_features.py # 同レース内相対特徴量（馬体重 percentile 等）
+│   │   │       └── trainer.py         # 調教師成績統計
+│   │   ├── ai/            # NN 学習・推論・評価（依存 DAG の層で機能サブパッケージ化）
+│   │   │   ├── core/       # types / labels / splits / temperature / probabilities（最下層）
+│   │   │   ├── model/      # registry / _artifacts_nn + NN 実装 (net / loss / dataset / preprocess)
+│   │   │   ├── training/   # train_nn
+│   │   │   ├── inference/  # predict（bundle-aware 推論）
+│   │   │   ├── betting/    # odds / strategy
+│   │   │   ├── simulation/ # engine / persistence
+│   │   │   └── evaluation/ # backtest
+│   │   └── jobs/          # 取り込み・運用 CLI（ingest / ingest_range / ingest_odds / backup_db 等）
 │   └── tests/                 # pytest テスト群
 │
 ├── frontend/                  # React + Vite + TypeScript
@@ -164,7 +170,8 @@
 ├── data/                      # ローカルデータ（.gitignore 対象）
 │   ├── raw/                   # HTML キャッシュ（<yyyy>/<mm>/<race_id>.html）
 │   ├── keiba.db               # SQLite DB 本体
-│   └── models/                # 学習済みモデル（<YYYYMMDD-HHMMSS>/{model.txt, meta.json}）
+│   ├── odds.db                # 確定オッズ DB（race_odds テーブル、keiba.db と分離）
+│   └── models/                # 学習済みモデル（<YYYYMMDDTHHMMSS>-nn/{model.pt, meta.json, ...}）
 │
 └── scripts/                   # 運用スクリプト
     └── dev.sh                 # uv sync + alembic + pnpm install + uvicorn + Vite を一発起動
@@ -174,13 +181,22 @@
 
 ## DB スキーマ
 
-SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 3 ファイルが定義されている。
+SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 12 ファイル（`0001`〜`0012`）が定義されている。
 
 | ファイル | revision | 内容 |
 |---|---|---|
-| `0001_initial.py` | 0001 | 初期スキーマ（全 8 テーブル作成） |
+| `0001_initial.py` | 0001 | 初期スキーマ（8 テーブル作成） |
 | `0002_add_agari_passing.py` | 0002 | entries テーブルに `agari_3f` / `passing` 列を追加 |
 | `0003_add_scrape_log_fetched_at_index.py` | 0003 | `scrape_log.fetched_at` に単一カラムインデックスを追加（`recent_activity` エンドポイントの full scan 防止） |
+| `0004_add_bet_records.py` | 0004 | `bet_records` テーブル追加（ベット記録台帳） |
+| `0005_add_race_name.py` | 0005 | races テーブルに `name` 列（レース名）を追加 |
+| `0006_add_live_odds.py` | 0006 | `live_odds` テーブル追加（後に 0010 で廃止） |
+| `0007_add_simulation_runs.py` | 0007 | `simulation_runs` テーブル追加（バックテスト履歴） |
+| `0008_add_model_type.py` | 0008 | model_runs テーブルに `model_type` 列を追加 |
+| `0009_add_simulation_model_run_id.py` | 0009 | simulation_runs に `model_run_id` 列を追加 |
+| `0010_drop_live_odds.py` | 0010 | `live_odds` テーブル廃止（オッズは odds.db に分離） |
+| `0011_model_type_default_nn.py` | 0011 | `model_type` のデフォルトを `"nn"` に変更（NN 専用化） |
+| `0012_add_horses_sire_dam_index.py` | 0012 | horses の `sire` / `dam` にインデックス追加（血統特徴量の集計高速化） |
 
 ### ID 型の方針
 
@@ -215,7 +231,7 @@ SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convent
 
 ### スキーマ定義
 
-8 テーブル全て ORM 化されている（`races` / `horses` / `jockeys` / `trainers` / `entries` / `payouts` / `scrape_log` / `model_runs`）。
+keiba.db の 10 テーブル全て ORM 化されている（`races` / `horses` / `jockeys` / `trainers` / `entries` / `payouts` / `scrape_log` / `model_runs` / `bet_records` / `simulation_runs`）。このほか確定オッズは別ファイル `data/odds.db` の `race_odds` テーブル（`db/odds_db.py`。Alembic 管理外・`is_confirmed` 列でライブ snapshot と確定値を区別）に保持する。以下は主要テーブルのスキーマ抜粋。
 
 ```sql
 -- レース基本情報
@@ -307,13 +323,14 @@ CREATE TABLE scrape_log (
 CREATE TABLE model_runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at  TEXT NOT NULL,          -- ISO 8601
-    model_path  TEXT NOT NULL,          -- data/models/<YYYYMMDD-HHMMSS>/  （ディレクトリパス）
+    model_path  TEXT NOT NULL,          -- data/models/<YYYYMMDDTHHMMSS>-nn/  （ディレクトリパス）
     params_json TEXT,                   -- 学習ハイパーパラメータ JSON
     train_range TEXT,                   -- 学習期間（例: "2022-01-01/2024-01-01"）
     valid_range TEXT,                   -- 検証期間
     metrics_json TEXT,                  -- 評価指標 JSON
     notes       TEXT,
-    is_active   INTEGER DEFAULT 0       -- 推論に使用する active モデルフラグ (0/1)
+    is_active   INTEGER DEFAULT 0,      -- 推論に使用する active モデルフラグ (0/1)
+    model_type  TEXT NOT NULL DEFAULT 'nn'  -- 常に "nn"（NN 専用化済み。履歴互換のため残置）
 );
 ```
 
@@ -526,16 +543,16 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi
 uv run python -m ai.training.train_nn --loss multi --train-end 2025-12-31
 
 # バックテスト評価（学習済みモデルディレクトリを指定）
-uv run python -m ai.evaluation.backtest --model data/models/20260101-120000
+uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn
 
 # 評価結果を model_runs.metrics_json にマージ保存する（Dashboard MetricCard に反映させる場合は必須）
-uv run python -m ai.evaluation.backtest --model data/models/20260101-120000 --persist
+uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn --persist
 
 # 評価期間を絞る
-uv run python -m ai.evaluation.backtest --model data/models/20260101-120000 \
+uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
     --start 2025-06-01 --end 2025-12-31
 
 # 1 番人気常時投票ベースラインとの比較（{model, baseline_favorite, delta} を出力）
-uv run python -m ai.evaluation.backtest --model data/models/20260101-120000 \
+uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
     --baseline favorite
 ```

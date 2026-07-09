@@ -191,7 +191,7 @@ paired 比較、`persist=False` で models/・keiba.db 非書込）。
 
 実装は `features/` 配下の各モジュールと `features/builder.py` の `FEATURE_COLUMNS` / `CATEGORICAL_FEATURES` に集約されている。NN ではレース全体に共通する列（`distance`, `surface`, `course`, `weather`, `track_condition`, `race_class`, `n_runners`）を「レース特徴量」として馬個別の列と分離して使う。
 
-合計 50 列前後（PR ごとに微増）。**欠損値の扱い**: imputation は行わず、NN では数値列はそのまま（NaN→標準化後 0）、カテゴリ列はラベル符号化してから tensor 化する。
+合計 46 列。2026-06 の特徴量監査で、他列と相関 r≥0.94 の冗長列（`post_position_ratio` / `log_odds_win` / `odds_win_rank` / `odds_win_diff_from_favorite` / `jockey_recent_win_rate_vs_field`）は削除済み。**欠損値の扱い**: imputation は行わず、NN では数値列はそのまま（NaN→標準化後 0）、カテゴリ列はラベル符号化してから tensor 化する。
 
 ### レース・馬番
 
@@ -200,7 +200,6 @@ paired 比較、`persist=False` で models/・keiba.db 非書込）。
 | `distance` | `features/extractors/course.py` | 距離 (m) |
 | `n_runners` | `features/extractors/course.py` | 出走頭数 |
 | `post_position` | `features/extractors/course.py` | 馬番 |
-| `post_position_ratio` | `features/extractors/course.py` | 馬番 / 出走頭数 |
 | `age` | `features/extractors/course.py` | 馬齢 |
 | `horse_weight` | `features/extractors/course.py` | 馬体重 (kg) |
 | `horse_weight_diff` | `features/extractors/course.py` | 馬体重増減 |
@@ -211,7 +210,6 @@ paired 比較、`persist=False` で models/・keiba.db 非書込）。
 |---|---|---|
 | `odds_win` | `features/extractors/odds.py` | 単勝オッズ |
 | `popularity` | `features/extractors/odds.py` | 人気順位 |
-| `log_odds_win` | `features/extractors/odds.py` | log(単勝オッズ) |
 
 ### 馬の過去成績
 
@@ -233,6 +231,11 @@ paired 比較、`persist=False` で models/・keiba.db 非書込）。
 | `recent_best_margin_in_top3` | `features/extractors/horse_history.py` | 直近 3 着以内に入ったときの最良着差 |
 | `recent_avg_position_change` | `features/extractors/horse_history.py` | 通過順 → 着順の差の平均（末脚指標） |
 | `recent_passing_volatility` | `features/extractors/horse_history.py` | 通過順位の標準偏差 |
+| `recent_early_position_ratio` | `features/extractors/horse_history.py` | 平均（第 1 コーナー位置 / 頭数）。低 = 逃げ・先行、高 = 追い込み（脚質指標） |
+| `recent_late_position_ratio` | `features/extractors/horse_history.py` | 平均（最終コーナー位置 / 頭数）。勝負所での位置取り |
+| `recent_best_agari_3f` | `features/extractors/horse_history.py` | 直近の最速上がり 3F（瞬発力のピーク） |
+| `class_change` | `features/builder.py`（horse_history の raw 値から算出） | 今走 class weight − 前走（昇級 + / 降級 −） |
+| `weight_carried_diff` | `features/builder.py`（horse_history の raw 値から算出） | 今走 斤量 − 前走 斤量 |
 
 ### 騎手・調教師
 
@@ -256,16 +259,13 @@ paired 比較、`persist=False` で models/・keiba.db 非書込）。
 
 ### 同レース内 相対特徴量
 
-レース内の他馬との相対値を計算した列。
+レース内の他馬との相対値を計算した列（`features/extractors/relative_features.py`）。
 
 | カラム名 | 内容 |
 |---|---|
 | `horse_weight_pct` | 馬体重の percentile |
-| `odds_win_rank` | 単勝オッズ順位（1 = 最低オッズ = 1 番人気） |
 | `weight_carried_pct` | 斤量の percentile |
-| `jockey_recent_win_rate_vs_field` | 騎手勝率 − レース平均 |
 | `course_place_rate_vs_field` | 同コース複勝率 − レース平均 |
-| `odds_win_diff_from_favorite` | 当馬オッズ − レース内最低オッズ |
 
 ### 血統
 
@@ -274,7 +274,7 @@ paired 比較、`persist=False` で models/・keiba.db 非書込）。
 | `sire_progeny_win_rate` | `features/extractors/pedigree.py` | 父の産駒勝率 |
 | `dam_progeny_win_rate` | `features/extractors/pedigree.py` | 母の産駒勝率 |
 
-> 父系・母系の **ID** 自体（`sire_id` / `dam_sire_id`）は高基数で過学習源になりやすいため学習特徴量には含めない方針（`HIGH_CARDINALITY_ID_FEATURES` 定数で防御。詳細は #204）。代わりに集約値（産駒勝率）を使う。
+> 父系・母系の **ID** 自体（`sire_id` / `dam_sire_id`）は、ユニーク値が数万に及ぶ高基数カテゴリで過学習源になりやすいため学習特徴量には含めない方針（`HIGH_CARDINALITY_ID_FEATURES` 定数 + リグレッションテストで防御）。代わりに集約値（産駒勝率）を使う。
 
 ### リーク防止の実装保証
 
@@ -370,7 +370,7 @@ uv run python -m ai.training.train_nn --device cuda
 
 ```bash
 # 学習済みモデルをバックテスト評価する
-uv run python -m ai.evaluation.backtest --model data/models/20260101-120000
+uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn
 
 # 1 番人気常時投票ベースラインと比較する
 uv run python -m ai.evaluation.backtest --model data/models/... --baseline favorite

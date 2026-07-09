@@ -233,20 +233,20 @@ class TestModelRunModel:
     def test_insert_select(self, db_session):
         mr = ModelRun(
             created_at="2024-06-01T00:00:00+00:00",
-            model_path="data/models/20240601/model.lgb",
+            model_path="data/models/20240601/model.pt",
             is_active=0,
         )
         db_session.add(mr)
         db_session.commit()
         result = db_session.execute(select(ModelRun)).scalar_one()
-        assert result.model_path == "data/models/20240601/model.lgb"
+        assert result.model_path == "data/models/20240601/model.pt"
         assert result.is_active == 0
 
     def test_is_active_default(self, db_session):
         """is_active defaults to 0 when not explicitly set via server_default."""
         mr = ModelRun(
             created_at="2024-06-01T00:00:00+00:00",
-            model_path="data/models/x/model.lgb",
+            model_path="data/models/x/model.pt",
         )
         db_session.add(mr)
         db_session.commit()

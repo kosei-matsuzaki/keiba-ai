@@ -54,16 +54,16 @@ netkeiba へのアクセスは以下のルールを厳守する。
 |---|---|
 | 最小間隔 | 3 秒 |
 | ジッター範囲 | 3〜6 秒（一様乱数で加算） |
-| 深夜帯（0〜6 時 JST）| 5 秒以上 |
+| 夜間帯（22:00〜翌 5:00 JST）| 5 秒以上 |
 | 並列リクエスト数 | 1（直列のみ） |
 
 ```python
-# レート制御の疑似コード
+# レート制御の疑似コード（実装は scraper/rate_limiter.py）
 import random, asyncio
 
 async def rate_limited_get(url: str) -> str:
     wait = 3.0 + random.uniform(0, 3.0)
-    if is_midnight_jst():
+    if is_night_jst():  # 22:00〜翌 5:00 JST
         wait = max(wait, 5.0)
     await asyncio.sleep(wait)
     return await http_client.get(url)
@@ -77,6 +77,8 @@ async def rate_limited_get(url: str) -> str:
 | 429 Too Many Requests | 60 秒ペナルティ待機後にリトライ |
 | 4xx（404 等） | リトライせずエラーとして `scrape_log` に記録 |
 
+429 が繰り返し返る場合は自動リトライに任せず手動で停止し、数時間〜半日置いてから再開する（[operations.md](operations.md) のトラブルシューティング参照）。
+
 ---
 
 ## robots.txt 遵守ポリシー
@@ -85,15 +87,17 @@ async def rate_limited_get(url: str) -> str:
 2. 取得結果をドメイン単位でインメモリキャッシュし、24 時間以内は再取得しない
 3. `Disallow` に一致するパスへのリクエストは発行しない
 
-`robots.txt` の取得に失敗した場合（ネットワーク障害等）は、警告ログを出力してリクエストを許可する（fail-open 動作）。
+`robots.txt` の取得に失敗した場合（ネットワーク障害等）は、警告ログを出力して**全リクエストを拒否する（fail-closed 動作）**。失敗結果は成功時（24 時間）より短い 10 分の TTL でキャッシュし、一時的な障害からは自動で回復する（実装は `scraper/robots.py`）。
 
 ```python
-# robots.txt フェッチ: fail-open
+# robots.txt フェッチ: fail-closed
 try:
     rp.read()
 except Exception as exc:
-    logger.warning("Failed to fetch robots.txt: %s — allowing all requests", exc)
-# 失敗してもキャッシュに空の parser を格納し、can_fetch は True を返す
+    logger.warning("Failed to fetch robots.txt: %s — denying all requests", exc)
+    return None
+# 失敗（None）をキャッシュした間は is_allowed が False を返し、
+# 10 分後の再取得で成功すれば通常判定に戻る
 ```
 
 `User-Agent` は Settings 画面で設定可能（`PUT /api/settings` で変更できる）。
@@ -167,7 +171,7 @@ uv run python -m jobs.ingest_range \
 ### 大規模取り込み時の運用ノート
 
 - 長期連続稼働（数日〜数週間）になるため、PC が安定して動作できる環境で実行すること
-- アクセスが集中する土日の正レース時間帯（午前 10 時〜午後 5 時 JST）はなるべく避け、深夜〜早朝に実行する
+- サイト負荷軽減のため、アクセスが集中する土日の正レース時間帯（午前 10 時〜午後 5 時 JST）はなるべく避けて実行する（夜間帯 22:00〜翌 5:00 JST はレート制御の最小間隔が 5 秒に引き上げられる）
 - `scrape_log` を定期的に確認し、大量のエラーが発生していないか監視する
 - ディスク容量の目安: レース結果 HTML（`data/raw/<yyyy>/<mm>/`）+ SQLite 合計で約 1 GB（5 年分）。misc キャッシュは各日完了後に自動削除されるため、**5 GB 以上**の空きがあれば十分
 - 初回取り込み時、新規 horse ごとに詳細ページ・血統ページの 2 ページを追加フェッチするため 1 頭あたり 6〜12 秒（3〜6 秒 × 2 リクエスト）が加算される。5 年分の初回取り込みでは数千頭の新規 horse が登場するため、総所要時間は数時間単位で増加する（同一 horse が複数レースに出走するケースは 2 回目以降スキップされる）
@@ -215,7 +219,7 @@ uv run python -m jobs.ingest_range \
 ## 運用上の注意
 
 - スクレイピングは netkeiba の利用規約上グレーゾーンであることを認識した上で、節度ある利用を徹底する
-- アクセスが集中する土日の正レース時間帯（午前 10 時〜午後 5 時 JST）はなるべく避け、深夜〜早朝に実行する
+- サイト負荷軽減のため、アクセスが集中する土日の正レース時間帯（午前 10 時〜午後 5 時 JST）はなるべく避けて実行する（夜間帯 22:00〜翌 5:00 JST はレート制御の最小間隔が 5 秒に引き上げられる）
 - `scrape_log` を定期的に確認し、大量のエラーが発生していないか監視する
 - netkeiba のサイト構造が変更された場合（HTML セレクタが壊れた場合等）は、スクレイパーを停止して修正する前に全取得を再実行しない
 

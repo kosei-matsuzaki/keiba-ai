@@ -113,13 +113,13 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 
 ```bash
 # バックテスト評価（NDCG@1/3/5, Top-1 hit, place_hit, payback_win, payback_place）
-uv run python -m ai.evaluation.backtest --model data/models/20260501-120000
+uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn
 
 # 評価結果を model_runs.metrics_json に保存する（Dashboard MetricCard に反映させる場合は必須）
-uv run python -m ai.evaluation.backtest --model data/models/20260501-120000 --persist
+uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn --persist
 
 # 1 番人気常時投票ベースラインとの比較（delta = model - baseline を追加出力）
-uv run python -m ai.evaluation.backtest --model data/models/20260501-120000 \
+uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
     --baseline favorite
 ```
 
@@ -151,19 +151,21 @@ UI の Models 画面でも Activate ボタンから操作できます。
 
 ```text
 backend/data/models/
-├── 20260501-120000-nn/
+├── 20260501T120000-nn/
 │   ├── model.pt         # PyTorch state_dict
 │   ├── meta.json        # params / train_range / valid_range / metrics / feature_columns / loss_type
-│   ├── preprocessor.pkl # NNPreprocessor（標準化・カテゴリ符号化）
-│   └── temperature_scaler.pkl  # win_prob 温度スケーリング（optional）
-├── 20260601-090000-nn/
+│   ├── preprocessor.pkl # NNPreprocessor（標準化・カテゴリ符号化、optional）
+│   ├── temperature_scaler.pkl  # win_prob 温度スケーリング（optional）
+│   ├── history_norm.pkl        # 履歴 GRU トークンの正規化統計（optional）
+│   └── speed_figure.pkl        # タイム指数の par-time 統計（KEIBA_SPEED_FIGURE 有効時のみ）
+├── 20260601T090000-nn/
 │   └── ...
 ```
 
-- ディレクトリ名は `datetime.now().strftime("%Y%m%d-%H%M%S")` で生成します
+- ディレクトリ名は UTC 時刻 `%Y%m%dT%H%M%S` + サフィックス `-nn` で生成します
 - active モデルはシンボリックリンクではなく、`model_runs` テーブルの `is_active=1` で管理します
 - 古いモデルは自動削除されません。手動で削除するまで保持されます
-- ディスク容量の目安: 1 モデルあたり 5〜50 MB（特徴量数・leaf 数による）
+- ディスク容量の目安: 1 モデルあたり数 MB 程度（NN のパラメータ数による）
 
 モデル一覧・詳細は `GET /api/models[/{id}]`、UI の Models 画面でも確認できます。
 
@@ -199,8 +201,7 @@ uv run keiba-backup --db keiba      # keiba.db のみ
 uv run keiba-backup --keep 14       # 保持世代数を変更
 ```
 
-WSL から `/mnt/c` 上の DB を開くと WAL の mmap 問題で失敗することがある（drvfs）。
-バックアップは Windows 側から実行するのが確実。
+SQLite ファイルを素の `cp` で複製する場合は、書き込みプロセスが停止していることを確認してから行うこと。
 
 | 対象 | 推奨頻度 | 備考 |
 |---|---|---|
@@ -289,21 +290,21 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 # バックエンド
 cd backend
 uv sync
-uv run alembic upgrade head  # 現在の最新: 0003_add_scrape_log_fetched_at_index
+uv run alembic upgrade head  # 現在の最新: 0012_add_horses_sire_dam_index
 
 # フロントエンド（別ターミナル）
 cd frontend
 pnpm install
 ```
 
-`uv sync` で SQLAlchemy / Alembic / pandas / numpy / scikit-learn / FastAPI / uvicorn / pydantic-settings を含む全依存関係がインストールされます（NN 学習・推論には `uv sync --extra nn` で torch / lightning を追加）。`alembic upgrade head` を実行すると `data/keiba.db` に全 8 テーブルが作成されます。
+`uv sync` で SQLAlchemy / Alembic / pandas / numpy / scikit-learn / FastAPI / uvicorn / pydantic-settings を含む全依存関係がインストールされます（NN 学習・推論には `uv sync --extra nn` で torch / lightning を追加）。`alembic upgrade head` を実行すると `data/keiba.db` に全 10 テーブル（races / horses / jockeys / trainers / entries / payouts / scrape_log / model_runs / bet_records / simulation_runs）が作成されます。確定オッズ用の `data/odds.db`（race_odds テーブル）は Alembic 管理外で、`db/odds_db.py` が初回アクセス時に自動作成します。
 
-既存 DB を持つ場合（例: `0002` 適用済みの DB を使い続けている場合）も同じコマンドで差分のみ適用されます。
+既存 DB を持つ場合（例: 途中のリビジョンまで適用済みの DB を使い続けている場合）も同じコマンドで差分のみ適用されます。
 
 ```bash
 cd backend
 uv run alembic current   # 適用済みリビジョンを確認
-uv run alembic upgrade head  # 0003 を適用（scrape_log.fetched_at インデックス追加）
+uv run alembic upgrade head  # 未適用のリビジョン（最新: 0012）を差分適用
 ```
 
 ### 開発サーバ起動

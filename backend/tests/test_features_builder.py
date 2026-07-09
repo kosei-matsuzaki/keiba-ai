@@ -219,7 +219,7 @@ def test_phase_c_features_present():
 def test_high_cardinality_id_features_not_in_feature_columns():
     """sire_id / dam_sire_id は高基数 ID のため FEATURE_COLUMNS に含まれてはならない。
 
-    LightGBM での高基数カテゴリ特徴量は過学習・メモリ増大を招くため除外する。
+    ユニーク値が数万に及ぶ高基数カテゴリ特徴量は過学習・メモリ増大を招くため除外する。
     代わりに sire_progeny_win_rate / dam_progeny_win_rate の集約特徴量を使う。
     このテストは将来の誤追加に対するリグレッションガードである。
     """
