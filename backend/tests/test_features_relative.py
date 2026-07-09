@@ -179,3 +179,42 @@ def test_jockey_recent_win_rate_vs_field(rel_engine):
 def test_empty_entries_returns_empty_dict():
     result = compute_within_race_features([])
     assert result == {}
+
+
+def test_pace_features_absent_without_early_positions(rel_engine):
+    """early_position_ratios 未指定なら projected_pace / pace_fit は出ない (B2 off)。"""
+    entries = _get_entries(rel_engine)
+    result = compute_within_race_features(entries)
+    for feats in result.values():
+        assert "projected_pace" not in feats
+        assert "pace_fit" not in feats
+
+
+def test_projected_pace_is_front_runner_share(rel_engine):
+    """projected_pace = 脚質 < 0.30 の馬の比率 (全馬で同一)。"""
+    entries = _get_entries(rel_engine)
+    styles = {"H001": 0.1, "H002": 0.5, "H003": 0.8, "H004": 0.2}  # 2/4 front
+    result = compute_within_race_features(entries, early_position_ratios=styles)
+    for feats in result.values():
+        assert feats["projected_pace"] == pytest.approx(0.5)
+
+
+def test_pace_fit_sign_front_vs_closer(rel_engine):
+    """先行馬 (脚質<mean) は pace_fit 負、追込馬 (脚質>mean) は正。"""
+    entries = _get_entries(rel_engine)
+    styles = {"H001": 0.1, "H002": 0.5, "H003": 0.8, "H004": 0.2}
+    result = compute_within_race_features(entries, early_position_ratios=styles)
+    # field_mean = 0.4, front_share = 0.5
+    assert result["H001"]["pace_fit"] == pytest.approx((0.1 - 0.4) * 0.5)  # front -> neg
+    assert result["H003"]["pace_fit"] == pytest.approx((0.8 - 0.4) * 0.5)  # closer -> pos
+    assert result["H001"]["pace_fit"] < 0 < result["H003"]["pace_fit"]
+
+
+def test_pace_fit_nan_for_missing_style(rel_engine):
+    """脚質が NaN の馬は pace_fit NaN だが projected_pace は field 共通値。"""
+    entries = _get_entries(rel_engine)
+    styles = {"H001": 0.1, "H002": 0.5, "H003": 0.8}  # H004 missing
+    result = compute_within_race_features(entries, early_position_ratios=styles)
+    assert math.isnan(result["H004"]["pace_fit"])
+    # front_share over 3 valid styles: 0.1<0.30 only -> 1/3
+    assert result["H004"]["projected_pace"] == pytest.approx(1 / 3)

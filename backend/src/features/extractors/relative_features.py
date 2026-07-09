@@ -43,11 +43,18 @@ def _percentile_rank(values: list[float]) -> list[float]:
     return result
 
 
+# B2: 脚質 (recent_early_position_ratio = 平均コーナー1位置/頭数、低=逃げ先行) が
+# この閾値未満の馬を「先行馬」とみなす。position/field_size なので ~0..1 に分布し、
+# 概ね前 3 割を先行と扱う。projected_pace = フィールド内の先行馬比率。
+_FRONT_RUNNER_THRESHOLD = 0.30
+
+
 def compute_within_race_features(
     entries: list[Entry],
     *,
     jockey_recent_win_rates: dict[str, float] | None = None,
     horse_course_place_rates: dict[str, float] | None = None,
+    early_position_ratios: dict[str, float] | None = None,
 ) -> dict[str, dict]:
     """Compute relative features for each horse within a single race.
 
@@ -58,6 +65,9 @@ def compute_within_race_features(
             re-querying per-entry.
         horse_course_place_rates: Pre-computed {horse_id: place_rate} mapping
             for same-course place rate of each horse.
+        early_position_ratios: Pre-computed {horse_id: recent_early_position_ratio}
+            (脚質). Passed only when KEIBA_PACE_FEATURES is set; enables the B2
+            projected_pace / pace_fit features.
 
     Returns:
         {horse_id: {feature_name: value}} where value is float or NaN.
@@ -69,6 +79,9 @@ def compute_within_race_features(
         jockey_recent_win_rate_vs_field: jockey win rate minus race-average win rate
         course_place_rate_vs_field: horse course place rate minus race-average
         odds_win_diff_from_favorite: this horse's odds_win minus minimum odds_win in race
+        projected_pace: 先行馬比率 (B2, race-level; many front-runners → fast pace)
+        pace_fit: (own_style − field_mean) × projected_pace (B2 interaction;
+            closer in a contested-lead race advantaged, front-runner disadvantaged)
     """
     if not entries:
         return {}
@@ -136,9 +149,37 @@ def compute_within_race_features(
     else:
         cpr_vs_field = [nan] * len(entries)
 
+    # B2: projected_pace (先行馬比率) + pace_fit (脚質 × ペースの交互作用)。
+    # early_position_ratios が渡されたときのみ計算 (KEIBA_PACE_FEATURES 有効時)。
+    pace_features: dict[str, dict[str, float]] | None = None
+    if early_position_ratios is not None:
+        styles = [early_position_ratios.get(hid, nan) for hid in horse_ids]
+        valid_styles = [v for v in styles if not math.isnan(v)]
+        if valid_styles:
+            field_mean = sum(valid_styles) / len(valid_styles)
+            front_share = sum(
+                1 for v in valid_styles if v < _FRONT_RUNNER_THRESHOLD
+            ) / len(valid_styles)
+        else:
+            field_mean = nan
+            front_share = nan
+        pace_features = {}
+        for hid, s in zip(horse_ids, styles, strict=False):
+            # closer (s>mean) in a contested-lead race (high front_share) → +;
+            # front-runner (s<mean) with many rivals up front → −. NaN style → NaN.
+            fit = (
+                nan
+                if math.isnan(s) or math.isnan(field_mean)
+                else (s - field_mean) * front_share
+            )
+            pace_features[hid] = {
+                "projected_pace": front_share,
+                "pace_fit": fit,
+            }
+
     result: dict[str, dict] = {}
     for i, entry in enumerate(entries):
-        result[entry.horse_id] = {
+        feats = {
             "horse_weight_pct": weight_pcts[i],
             "odds_win_rank": odds_ranks[i],
             "weight_carried_pct": carried_pcts[i],
@@ -146,5 +187,8 @@ def compute_within_race_features(
             "course_place_rate_vs_field": cpr_vs_field[i],
             "odds_win_diff_from_favorite": odds_diffs[i],
         }
+        if pace_features is not None:
+            feats.update(pace_features[entry.horse_id])
+        result[entry.horse_id] = feats
 
     return result

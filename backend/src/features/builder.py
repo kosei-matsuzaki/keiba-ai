@@ -169,6 +169,29 @@ ODDS_FEATURE_COLUMNS: list[str] = [
     "popularity",
 ]
 
+# 欠損インジケータ (A1)。NNPreprocessor は数値の NaN を 0 (= 標準化後の平均) に
+# 埋めるため、「データ無し (新馬 / 新騎手 / 血統不明 / 馬体重未発表)」と「本当に
+# 平均的な馬」を NN が区別できない。distinct な欠損源ごとにバイナリ {col}_is_missing
+# を立て、この情報を回復する。collinear な源 (新馬は履歴系が同時に NaN) もあるが、
+# NN/embedding は冗長性に耐えるので distinct な機構を網羅する方を優先する。
+# KEIBA_MISSING_INDICATORS=1 で get_active_features に追加され、builder が emit する。
+MISSING_INDICATOR_SOURCE_COLS: list[str] = [
+    "recent_avg_finish",         # 過去走なし = 新馬 / 未出走
+    "days_since_last_race",      # 過去走なし / 長期休養明け
+    "jockey_recent_win_rate",    # 騎手統計なし (新騎手 / jockey_id 欠)
+    "trainer_course_place_rate", # 調教師 × コース統計なし
+    "sire_progeny_win_rate",     # 血統不明
+    "horse_weight",              # 馬体重未発表
+]
+
+# B2 ペース想定特徴 (KEIBA_PACE_FEATURES=1)。脚質 (recent_early_position_ratio) を
+# フィールド内で集約した projected_pace (先行馬比率) と、自馬脚質 × ペースの交互作用
+# pace_fit。compute_within_race_features が算出し _build_race_rows がマージする。
+PACE_FEATURE_COLS: list[str] = [
+    "projected_pace",
+    "pace_fit",
+]
+
 
 def _exclude_odds_flag_set() -> bool:
     """KEIBA_EXCLUDE_ODDS_FEATURES が truthy か。
@@ -179,18 +202,58 @@ def _exclude_odds_flag_set() -> bool:
     return raw in {"1", "true", "yes"}
 
 
+def _missing_indicator_flag_set() -> bool:
+    """KEIBA_MISSING_INDICATORS が truthy か (大小文字無視)。"""
+    raw = os.environ.get("KEIBA_MISSING_INDICATORS", "").strip().lower()
+    return raw in {"1", "true", "yes"}
+
+
+def _pace_features_flag_set() -> bool:
+    """KEIBA_PACE_FEATURES が truthy か (大小文字無視, B2)。"""
+    raw = os.environ.get("KEIBA_PACE_FEATURES", "").strip().lower()
+    return raw in {"1", "true", "yes"}
+
+
+def missing_indicator_cols() -> list[str]:
+    """欠損インジケータの列名 ({source}_is_missing)。"""
+    return [f"{c}_is_missing" for c in MISSING_INDICATOR_SOURCE_COLS]
+
+
+def _attach_missing_indicators(df: pd.DataFrame) -> None:
+    """KEIBA_MISSING_INDICATORS=1 のとき {col}_is_missing 列をその場で追加。
+
+    builder は NaN を NaN のまま残す (補完は preprocess) ので、ここで isna() を
+    取れば「補完前の欠損」を正しく捉えられる。源列が無い場合は全行欠損扱い (1.0)。
+    """
+    if not _missing_indicator_flag_set():
+        return
+    for col in MISSING_INDICATOR_SOURCE_COLS:
+        flag = f"{col}_is_missing"
+        if col in df.columns:
+            df[flag] = df[col].isna().astype("float64")
+        else:
+            df[flag] = 1.0
+
+
 def get_active_features() -> list[str]:
     """学習・推論で実際に使う特徴量列を返す。
 
     KEIBA_EXCLUDE_ODDS_FEATURES=1 のとき ODDS_FEATURE_COLUMNS を除外した
-    FEATURE_COLUMNS を返す。それ以外は FEATURE_COLUMNS のコピーをそのまま返す。
+    FEATURE_COLUMNS を返す。KEIBA_MISSING_INDICATORS=1 のとき末尾に
+    missing_indicator_cols() を追加する (両フラグは併用可)。
 
     呼び出しごとに環境変数を読むため、テストや CLI 一回限りの上書きが効く。
     """
     if _exclude_odds_flag_set():
         excluded = set(ODDS_FEATURE_COLUMNS)
-        return [c for c in FEATURE_COLUMNS if c not in excluded]
-    return list(FEATURE_COLUMNS)
+        cols = [c for c in FEATURE_COLUMNS if c not in excluded]
+    else:
+        cols = list(FEATURE_COLUMNS)
+    if _missing_indicator_flag_set():
+        cols = cols + missing_indicator_cols()
+    if _pace_features_flag_set():
+        cols = cols + list(PACE_FEATURE_COLS)
+    return cols
 
 
 def _build_entry_row(
@@ -362,11 +425,19 @@ def _build_race_rows(
     horse_course_place_rates = {
         row["horse_id"]: row.get("horse_course_place_rate", nan) for row in rows
     }
+    # B2: 脚質 (recent_early_position_ratio) をフラグ時のみ渡し projected_pace /
+    # pace_fit を算出させる。未設定なら None で従来の relative 特徴のみ。
+    early_position_ratios = (
+        {row["horse_id"]: row.get("recent_early_position_ratio", nan) for row in rows}
+        if _pace_features_flag_set()
+        else None
+    )
 
     relative_dict = compute_within_race_features(
         entries,
         jockey_recent_win_rates=jockey_recent_win_rates,
         horse_course_place_rates=horse_course_place_rates,
+        early_position_ratios=early_position_ratios,
     )
     for row in rows:
         row.update(relative_dict.get(row["horse_id"], {}))
@@ -494,6 +565,12 @@ def build_training_frame(
             cache_active = False
         else:
             signature = _frame_content_signature(session)
+            # 欠損インジケータ / ペース特徴の有無で frame の列構成が変わるため cache
+            # key を分離する (同一 signature でフラグだけ切り替えても stale を返さない)。
+            if _missing_indicator_flag_set():
+                signature += "|mi"
+            if _pace_features_flag_set():
+                signature += "|pace"
             cache_key = _frame_cache_key(db_path_str, signature, train_start, train_end)
             cached = _frame_cache_load(cache_key)
             if cached is not None:
@@ -576,6 +653,10 @@ def build_training_frame(
         )
         df = df.drop(columns=_id_cols_in_df)
 
+    # 欠損インジケータ (A1) は補完前の NaN から作るので、ここ (NaN がまだ生きている
+    # 段階) で付与する。フラグ未設定なら no-op。
+    _attach_missing_indicators(df)
+
     if cache_active and cache_key is not None:
         _frame_cache_save(cache_key, df)
 
@@ -612,6 +693,8 @@ def build_inference_frame(session: Session, race_id: str) -> pd.DataFrame:
             _id_cols_in_df,
         )
         df = df.drop(columns=_id_cols_in_df)
+
+    _attach_missing_indicators(df)
 
     return df
 

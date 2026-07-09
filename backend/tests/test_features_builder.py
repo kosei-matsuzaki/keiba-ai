@@ -426,3 +426,46 @@ def test_get_active_features_falsy_values_keep_odds(monkeypatch, flag_value):
     active = get_active_features()
     for odds_col in ODDS_FEATURE_COLUMNS:
         assert odds_col in active
+
+
+def test_missing_indicators_off_by_default(syn_engine, monkeypatch):
+    """KEIBA_MISSING_INDICATORS 未設定なら *_is_missing 列は出ない。"""
+    monkeypatch.delenv("KEIBA_MISSING_INDICATORS", raising=False)
+    base = get_active_features()
+    assert not any(c.endswith("_is_missing") for c in base)
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session, use_cache=False)
+    assert not any(c.endswith("_is_missing") for c in df.columns)
+
+
+def test_missing_indicators_added_when_flag_set(syn_engine, monkeypatch):
+    """KEIBA_MISSING_INDICATORS=1 で get_active_features と frame に欠損フラグが増える。"""
+    from features.builder import MISSING_INDICATOR_SOURCE_COLS, missing_indicator_cols
+
+    monkeypatch.setenv("KEIBA_MISSING_INDICATORS", "1")
+    feats = get_active_features()
+    for c in missing_indicator_cols():
+        assert c in feats
+
+    with session_scope(syn_engine) as session:
+        df = build_training_frame(session, use_cache=False)
+    for src in MISSING_INDICATOR_SOURCE_COLS:
+        flag = f"{src}_is_missing"
+        assert flag in df.columns
+        # フラグは 0/1 のみ、かつ源列の NaN と一致する
+        assert set(df[flag].unique()).issubset({0.0, 1.0})
+        assert (df[flag] == df[src].isna().astype("float64")).all()
+
+
+def test_missing_indicators_in_inference_frame(syn_engine, monkeypatch):
+    monkeypatch.setenv("KEIBA_MISSING_INDICATORS", "1")
+    from sqlalchemy import select
+
+    from db.models.race import Race
+    from features.builder import missing_indicator_cols
+
+    with session_scope(syn_engine) as session:
+        race_id = session.scalars(select(Race.race_id)).first()
+        df = build_inference_frame(session, race_id)
+    for c in missing_indicator_cols():
+        assert c in df.columns
