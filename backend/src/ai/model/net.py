@@ -245,8 +245,12 @@ class RaceTransformerModel(nn.Module):
             activation="gelu",
             norm_first=True,
         )
+        # norm_first=True のため nested tensor 高速パスは使えない。
+        # enable_nested_tensor を明示的に False にして無害な UserWarning を抑止。
         self.transformer = nn.TransformerEncoder(
-            encoder_layer, num_layers=n_transformer_layers
+            encoder_layer,
+            num_layers=n_transformer_layers,
+            enable_nested_tensor=False,
         )
 
         # スコアリング head: ability(transformer 出力) を LayerNorm したものに
