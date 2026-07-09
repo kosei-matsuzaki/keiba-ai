@@ -84,13 +84,67 @@ def _format_combo(numbers: list[int], bet_type: str) -> str:
     return "-".join(str(n) for n in sorted(numbers))
 
 
+def parse_live_win_odds(
+    payload: dict,
+) -> dict[int, tuple[float | None, int | None]]:
+    """Per-馬番 単勝オッズ + 人気 を type=1 odds payload から取り出す。
+
+    :func:`parse_odds_payload` は確定オッズ専用 (``status=="result"``) で combo
+    文字列を odds.db 用に整形するが、こちらは **ライブ (発走前) スナップショット**
+    (``status=="middle"``) も受理し、出馬表 ingest が ``entries.odds_win`` /
+    ``popularity`` を埋めるための per-horse マップを返す。出馬表ページの静的 HTML は
+    オッズ/人気を JS で後挿入するため placeholder ("---.-"/"**") しか持たない。
+
+    Returns:
+        ``{馬番: (単勝オッズ or None, 人気 or None)}``。status が result/middle
+        でない、または単勝グループが空なら空 dict。
+    """
+    if not isinstance(payload, dict) or payload.get("status") not in ("result", "middle"):
+        return {}
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {}
+
+    win_group = (data.get("odds") or {}).get("1")
+    if not isinstance(win_group, dict):
+        return {}
+
+    out: dict[int, tuple[float | None, int | None]] = {}
+    for raw_key, raw_val in win_group.items():
+        try:
+            umaban = int(str(raw_key))
+        except ValueError:
+            continue
+        if umaban <= 0 or not isinstance(raw_val, (list, tuple)) or not raw_val:
+            continue
+
+        win_odds = _to_float(str(raw_val[0]))
+        pop: int | None = None
+        if len(raw_val) > 2:
+            try:
+                pop = int(str(raw_val[2]).replace(",", ""))
+            except ValueError:
+                pop = None
+            if pop is not None and pop <= 0:
+                pop = None
+        out[umaban] = (win_odds, pop)
+
+    return out
+
+
 def parse_odds_payload(
     payload: dict,
+    *,
+    accept_live: bool = False,
 ) -> tuple[str | None, dict[str, dict[str, list[float | int]]]]:
     """netkeiba odds JSON (1 リクエスト分) を正規化する。
 
     Args:
         payload: ``json.loads`` 済みのレスポンス dict。
+        accept_live: True のとき発走前のライブ snapshot (``status=="middle"``) も
+            受理する。確定 backfill は False（確定値のみ odds.db に入れる）、当日の
+            ライブ取り込みは True（市場の現在オッズを取る）。
 
     Returns:
         ``(official_datetime, odds)``:
@@ -98,9 +152,10 @@ def parse_odds_payload(
             確定スナップショットか判定するのに使う。
           - odds: ``{bet_type: {combo: [v1, v2, popularity]}}``。
             v1/v2 は float（range 券種は min/max、それ以外は v2=0.0）、
-            popularity は int。status が "result" でない / odds が空なら ``{}``。
+            popularity は int。status が許容外 / odds が空なら ``{}``。
     """
-    if not isinstance(payload, dict) or payload.get("status") != "result":
+    _accepted = {"result", "middle"} if accept_live else {"result"}
+    if not isinstance(payload, dict) or payload.get("status") not in _accepted:
         return None, {}
 
     data = payload.get("data") or {}

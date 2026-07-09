@@ -49,7 +49,7 @@ from db.odds_db import (
 )
 from db.session import make_engine, session_scope
 from scraper.netkeiba import NetkeibaClient
-from scraper.parsers.odds import parse_odds_payload
+from scraper.parsers.odds import parse_live_win_odds, parse_odds_payload
 from scraper.rate_limiter import AsyncRateLimiter
 from scraper.robots import RobotsCache
 from scraper.stop_flag import ScraperStopped
@@ -116,7 +116,9 @@ async def _ingest_race(
     Raises ScraperStopped to abort the whole run.
     """
     with odds_session_scope(odds_engine) as s:
-        have = fetched_bet_types(s, race_id)
+        # confirmed_only: 発走前ライブ行 (is_confirmed=0) は resume skip せず、確定値で
+        # 上書きするため "未取得" 扱いにする。
+        have = fetched_bet_types(s, race_id, confirmed_only=True)
 
     if _SENTINEL in have or have >= _ALL_BET_TYPES:
         return "resumed_skip"
@@ -153,6 +155,61 @@ async def _ingest_race(
         stored_any = True
 
     return "done" if stored_any else "partial"
+
+
+async def ingest_live_odds_for_race(
+    client: NetkeibaClient,
+    odds_engine,
+    race_id: str,
+) -> dict[int, tuple[float | None, int | None]]:
+    """Fetch **live** (発走前) odds for ALL bet types and store them in odds.db.
+
+    run_backfill の確定オッズ版に対する「当日ライブ版」。違いは:
+      - ``parse_odds_payload(accept_live=True)`` で status="middle" も受理する。
+      - resume-skip しない（オッズは変動するので毎回上書きして最新化する）。
+      - ``__none__`` sentinel は書かない（未公開のレースは後で再取得すれば埋まる）。
+
+    出馬表 ingest から呼ぶことで、entries.odds_win/popularity（type=1 由来）と
+    odds.db の全 combo 実オッズを 1 経路で取得する。ネットワーク/JSON 失敗は
+    per-type で握りつぶし best-effort（ScraperStopped のみ伝播）。
+
+    Returns:
+        ``{馬番: (単勝オッズ or None, 人気 or None)}``（type=1 由来、entries 補完用）。
+    """
+    win_map: dict[int, tuple[float | None, int | None]] = {}
+    for type_code, _bet_types in _FETCH_UNITS:
+        try:
+            raw = await client.fetch(
+                _odds_url(race_id, type_code), use_cache=False, write_to_cache=False
+            )
+        except ScraperStopped:
+            raise
+        except Exception as exc:  # noqa: BLE001 — best-effort、他の type は続行
+            logger.warning("Live odds fetch failed for %s type=%d: %s", race_id, type_code, exc)
+            continue
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Non-JSON live odds for %s type=%d", race_id, type_code)
+            continue
+
+        if type_code == 1:
+            win_map = parse_live_win_odds(payload)
+
+        # status="result"（発走後に再取得した場合）は確定として保存し、確定バックフィルが
+        # 後で再取得しないようにする。発走前ライブ ("middle") は is_confirmed=0。
+        is_confirmed = isinstance(payload, dict) and payload.get("status") == "result"
+        official_dt, parsed = parse_odds_payload(payload, accept_live=True)
+        if not parsed:
+            continue
+        with odds_session_scope(odds_engine) as s:
+            for bet_type, combos in parsed.items():
+                upsert_race_odds(
+                    s, race_id, bet_type, official_dt, combos, is_confirmed=is_confirmed
+                )
+
+    return win_map
 
 
 async def run_backfill(

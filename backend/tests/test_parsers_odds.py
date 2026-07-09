@@ -1,8 +1,8 @@
-"""Tests for scraper.parsers.odds.parse_odds_payload."""
+"""Tests for scraper.parsers.odds.parse_odds_payload / parse_live_win_odds."""
 
 from __future__ import annotations
 
-from scraper.parsers.odds import parse_odds_payload
+from scraper.parsers.odds import parse_live_win_odds, parse_odds_payload
 
 
 def _payload(odds: dict, *, status: str = "result", dt: str = "2025-12-14 11:23:52") -> dict:
@@ -81,3 +81,34 @@ def test_invalid_combo_keys_skipped() -> None:
     )
     _, odds = parse_odds_payload(payload)
     assert odds["馬連"] == {"1-2": [4.0, 0.0, 2]}
+
+
+# ── parse_live_win_odds (live 単勝 + 人気) ─────────────────────────────────────
+
+
+def test_live_win_odds_middle_status_accepted() -> None:
+    # ライブ (発走前) スナップショットは status="middle"。馬番 -> (単勝, 人気)。
+    payload = {
+        "status": "middle",
+        "data": {"odds": {"1": {"01": ["7.6", "", "5"], "05": ["2.3", "", "1"]}}},
+    }
+    out = parse_live_win_odds(payload)
+    assert out[1] == (7.6, 5)
+    assert out[5] == (2.3, 1)
+
+
+def test_live_win_odds_result_status_accepted() -> None:
+    payload = {"status": "result", "data": {"odds": {"1": {"03": ["10.0", "", "4"]}}}}
+    assert parse_live_win_odds(payload)[3] == (10.0, 4)
+
+
+def test_live_win_odds_placeholder_is_none() -> None:
+    # 未公表セル ("---.-" / 人気 "**") はオッズ None、人気 None。
+    payload = {"status": "middle", "data": {"odds": {"1": {"02": ["---.-", "", "**"]}}}}
+    assert parse_live_win_odds(payload) == {2: (None, None)}
+
+
+def test_live_win_odds_empty_when_no_data() -> None:
+    assert parse_live_win_odds({"status": "middle", "data": ""}) == {}
+    assert parse_live_win_odds({"status": "before", "data": {"odds": {"1": {}}}}) == {}
+    assert parse_live_win_odds({}) == {}

@@ -29,7 +29,7 @@ from __future__ import annotations
 import gzip
 import json
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -42,6 +42,7 @@ from sqlalchemy import (
     event,
     select,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from core.paths import odds_db_path
@@ -64,6 +65,12 @@ class RaceOdds(OddsBase):
     n_combos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     fetched_at: Mapped[str] = mapped_column(String, nullable=False)
+    # 1 = 確定オッズ (status="result")、0 = 発走前ライブ (status="middle")。
+    # 確定バックフィル (jobs.ingest_odds) はライブ行 (0) を resume skip せず再取得し
+    # 確定値で上書きする。既存 DB の行はすべて確定 backfill 由来なので default 1。
+    is_confirmed: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
 
 def make_odds_engine(path: Path | None = None) -> Engine:
@@ -86,8 +93,21 @@ def make_odds_engine(path: Path | None = None) -> Engine:
 
 
 def init_odds_db(engine: Engine) -> None:
-    """Create the race_odds table if it does not exist."""
+    """Create the race_odds table if it does not exist.
+
+    Alembic は使わない (db/odds_db.py の方針) ため、後付けの ``is_confirmed`` 列は
+    ここで冪等に ADD COLUMN する。既存行は確定 backfill 由来なので DEFAULT 1。
+    """
     OddsBase.metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(race_odds)")}
+        if "is_confirmed" not in cols:
+            # 並行 init で別プロセスが先に追加した場合（duplicate column）は無視。
+            with suppress(OperationalError):
+                conn.exec_driver_sql(
+                    "ALTER TABLE race_odds ADD COLUMN is_confirmed INTEGER NOT NULL DEFAULT 1"
+                )
 
 
 @contextmanager
@@ -125,8 +145,13 @@ def upsert_race_odds(
     bet_type: str,
     official_datetime: str | None,
     combos: dict[str, list[float | int]],
+    is_confirmed: bool = True,
 ) -> None:
-    """Insert or replace the odds blob for one (race_id, bet_type)."""
+    """Insert or replace the odds blob for one (race_id, bet_type).
+
+    is_confirmed=False は発走前ライブ snapshot を表し、確定バックフィルが後で
+    上書きできるようにする（resume skip させない）。
+    """
     blob = compress_odds(combos)
     now = datetime.now(UTC).isoformat(timespec="seconds")
     row = session.get(RaceOdds, (race_id, bet_type))
@@ -139,6 +164,7 @@ def upsert_race_odds(
                 n_combos=len(combos),
                 data=blob,
                 fetched_at=now,
+                is_confirmed=1 if is_confirmed else 0,
             )
         )
     else:
@@ -146,13 +172,21 @@ def upsert_race_odds(
         row.n_combos = len(combos)
         row.data = blob
         row.fetched_at = now
+        row.is_confirmed = 1 if is_confirmed else 0
 
 
-def fetched_bet_types(session: Session, race_id: str) -> set[str]:
-    """bet_types already stored for a race (resume: skip these)."""
-    rows = session.execute(
-        select(RaceOdds.bet_type).where(RaceOdds.race_id == race_id)
-    ).all()
+def fetched_bet_types(
+    session: Session, race_id: str, *, confirmed_only: bool = False
+) -> set[str]:
+    """bet_types already stored for a race (resume: skip these).
+
+    confirmed_only=True なら確定行 (is_confirmed=1) のみ数える。確定バックフィルは
+    これを使い、発走前ライブ行 (0) を resume skip せず確定値で上書きする。
+    """
+    stmt = select(RaceOdds.bet_type).where(RaceOdds.race_id == race_id)
+    if confirmed_only:
+        stmt = stmt.where(RaceOdds.is_confirmed == 1)
+    rows = session.execute(stmt).all()
     return {r[0] for r in rows}
 
 
