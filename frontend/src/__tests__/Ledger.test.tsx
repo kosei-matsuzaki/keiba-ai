@@ -11,6 +11,14 @@ vi.mock('../lib/api', () => ({
   fetchBetBreakdown: vi.fn(),
   fetchBetList: vi.fn(),
   buildBetExportUrl: vi.fn().mockResolvedValue('http://localhost:8765/api/bets/export.csv'),
+  // AddBetDialog / DetailTable が間接的に使う API（手動購入記録・削除・レース選択）
+  fetchRacesByDate: vi.fn(),
+  fetchRaceDetail: vi.fn(),
+  createBet: vi.fn(),
+  createBetsBulk: vi.fn(),
+  deleteBet: vi.fn(),
+  deleteBets: vi.fn(),
+  formatErrorMessage: vi.fn().mockResolvedValue('エラー'),
 }));
 
 import {
@@ -19,6 +27,7 @@ import {
   fetchBetBreakdown,
   fetchBetList,
   buildBetExportUrl,
+  fetchRacesByDate,
 } from '../lib/api';
 
 const mockSummary: BetSummary = {
@@ -103,6 +112,7 @@ beforeEach(() => {
   vi.mocked(fetchBetTimeseries).mockResolvedValue(mockTimeseries);
   vi.mocked(fetchBetBreakdown).mockResolvedValue(mockBreakdown);
   vi.mocked(fetchBetList).mockResolvedValue(mockBetList);
+  vi.mocked(fetchRacesByDate).mockResolvedValue({ races: [] });
 });
 
 describe('Ledger', () => {
@@ -132,18 +142,21 @@ describe('Ledger', () => {
     expect(screen.getByText('複勝')).toBeInTheDocument();
   });
 
-  it('shows detail table when expanded', async () => {
+  it('shows the 購入明細 detail table by default', async () => {
     renderLedger();
-    const detailButton = await screen.findByRole('button', { name: /明細一覧/i });
-    fireEvent.click(detailButton);
+    // 購入明細はデフォルトで展開表示される
+    expect(await screen.findByRole('button', { name: /購入明細/i })).toBeInTheDocument();
     expect(await screen.findByText('202406010101')).toBeInTheDocument();
   });
 
   it('shows "未確定" for pending bets in detail table', async () => {
     renderLedger();
-    const detailButton = await screen.findByRole('button', { name: /明細一覧/i });
-    fireEvent.click(detailButton);
     expect(await screen.findByText('未確定')).toBeInTheDocument();
+  });
+
+  it('has a 購入を記録 button to manually add a bet', async () => {
+    renderLedger();
+    expect(await screen.findByRole('button', { name: /購入を記録/i })).toBeInTheDocument();
   });
 
   it('CSV download button calls buildBetExportUrl and triggers download', async () => {

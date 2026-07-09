@@ -13,13 +13,15 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from api.deps import get_or_404, get_session
 from api.schemas import (
     BetBreakdown,
     BetBreakdownRow,
+    BetBulkDeleteIn,
+    BetRecordBulkIn,
     BetRecordIn,
     BetRecordList,
     BetRecordOut,
@@ -258,6 +260,58 @@ def create_bet(
     return _to_out(record)
 
 
+@router.post("/bets/bulk", response_model=BetRecordList, status_code=201)
+def create_bets_bulk(
+    body: BetRecordBulkIn,
+    session: Annotated[Session, Depends(get_session)],
+) -> BetRecordList:
+    """買い方（流し / ボックス / フォーメーション）を展開した複数点をまとめて登録する。
+
+    各点 (combo, stake) を独立した bet_record として保存し、それぞれ即時突合せを試みる。
+    1 トランザクションで処理するので、途中失敗時は全件ロールバックされる。
+    races テーブルに該当 race_id が無ければ 404。
+    """
+    get_or_404(session, Race, body.race_id, label="Race")
+
+    now = _now_iso()
+    records = [
+        BetRecord(
+            created_at=now,
+            race_id=body.race_id,
+            bet_type=body.bet_type,
+            combo=item.combo,
+            stake=item.stake,
+            source=body.source,
+            notes=body.notes,
+        )
+        for item in body.combos
+    ]
+    session.add_all(records)
+    session.flush()  # id を確定させてから突合せ
+
+    for record in records:
+        settle_bet(session, record)
+    session.commit()
+
+    for record in records:
+        session.refresh(record)
+    return BetRecordList(total=len(records), items=[_to_out(r) for r in records])
+
+
+@router.post("/bets/bulk_delete")
+def bulk_delete_bets(
+    body: BetBulkDeleteIn,
+    session: Annotated[Session, Depends(get_session)],
+) -> dict[str, int]:
+    """指定した id 群の bet_record をまとめて削除する（買い方単位の削除に使う）。
+
+    個人台帳なので確定済みも削除可。存在しない id は無視する。
+    """
+    res = session.execute(delete(BetRecord).where(BetRecord.id.in_(body.ids)))
+    session.commit()
+    return {"deleted": int(res.rowcount or 0)}
+
+
 @router.get("/bets", response_model=BetRecordList)
 def list_bets(
     session: Annotated[Session, Depends(get_session)],
@@ -321,12 +375,12 @@ def delete_bet(
     bet_id: int,
     session: Annotated[Session, Depends(get_session)],
 ) -> None:
-    """bet_record を削除する。settled な bet は 409 を返す。"""
+    """bet_record を削除する。
+
+    個人の購入台帳なので、誤登録の訂正のため確定済み (settled) の記録も削除できる。
+    手動登録は過去レースだと登録と同時に自動確定するため、確定済みを消せないと
+    訂正手段が無くなる。
+    """
     record = get_or_404(session, BetRecord, bet_id, label="BetRecord")
-    if record.settled_at is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"BetRecord {bet_id} is already settled and cannot be deleted",
-        )
     session.delete(record)
     session.commit()

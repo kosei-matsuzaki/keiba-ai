@@ -13,6 +13,7 @@ import ky from 'ky';
 import { getApiBaseUrl } from './api-base';
 import type {
   BetBreakdown,
+  BetRecordBulkIn,
   BetRecordIn,
   BetRecordList,
   BetRecordOut,
@@ -302,6 +303,20 @@ export function fetchRecommendations(
 
 export function createBet(body: BetRecordIn): Promise<BetRecordOut> {
   return getClient().then((c) => c.post('bets', { json: body }).json<BetRecordOut>());
+}
+
+export async function deleteBet(id: number): Promise<void> {
+  const c = await getClient();
+  await c.delete(`bets/${id}`);
+}
+
+export async function deleteBets(ids: number[]): Promise<void> {
+  const c = await getClient();
+  await c.post('bets/bulk_delete', { json: { ids } });
+}
+
+export function createBetsBulk(body: BetRecordBulkIn): Promise<BetRecordList> {
+  return getClient().then((c) => c.post('bets/bulk', { json: body }).json<BetRecordList>());
 }
 
 // ── Simulation ────────────────────────────────────────────────────────────────

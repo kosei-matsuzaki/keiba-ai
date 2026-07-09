@@ -152,6 +152,76 @@ class TestCreateBet:
         assert resp.status_code == 422
 
 
+# ── POST /api/bets/bulk ───────────────────────────────────────────────────────
+
+class TestCreateBetsBulk:
+    def test_bulk_creates_all_combos(self, app_with_temp_db: FastAPI) -> None:
+        """買い方を展開した複数点をまとめて登録できる（馬連ボックス 3 頭 = 3 点）。"""
+        engine = _get_engine_and_session(app_with_temp_db)
+        from db.session import session_scope
+        with session_scope(engine) as session:
+            _insert_race(session)
+
+        with TestClient(app_with_temp_db) as client:
+            resp = client.post("/api/bets/bulk", json={
+                "race_id": "202406010101",
+                "bet_type": "馬連",
+                "source": "manual",
+                "notes": "馬連BOX",
+                "combos": [
+                    {"combo": "1-2", "stake": 100},
+                    {"combo": "1-3", "stake": 100},
+                    {"combo": "2-3", "stake": 100},
+                ],
+            })
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["total"] == 3
+        assert {it["combo"] for it in data["items"]} == {"1-2", "1-3", "2-3"}
+        assert all(it["notes"] == "馬連BOX" and it["source"] == "manual" for it in data["items"])
+
+    def test_bulk_empty_combos_422(self, app_with_temp_db: FastAPI) -> None:
+        engine = _get_engine_and_session(app_with_temp_db)
+        from db.session import session_scope
+        with session_scope(engine) as session:
+            _insert_race(session)
+        with TestClient(app_with_temp_db) as client:
+            resp = client.post("/api/bets/bulk", json={
+                "race_id": "202406010101", "bet_type": "馬連",
+                "source": "manual", "combos": [],
+            })
+        assert resp.status_code == 422
+
+    def test_bulk_race_not_found_404(self, app_with_temp_db: FastAPI) -> None:
+        with TestClient(app_with_temp_db) as client:
+            resp = client.post("/api/bets/bulk", json={
+                "race_id": "NONEXISTENT", "bet_type": "馬連",
+                "source": "manual", "combos": [{"combo": "1-2", "stake": 100}],
+            })
+        assert resp.status_code == 404
+
+    def test_bulk_delete_removes_group(self, app_with_temp_db: FastAPI) -> None:
+        """買い方単位（複数 id）をまとめて削除できる。"""
+        engine = _get_engine_and_session(app_with_temp_db)
+        from db.session import session_scope
+        with session_scope(engine) as session:
+            _insert_race(session)
+
+        with TestClient(app_with_temp_db) as client:
+            created = client.post("/api/bets/bulk", json={
+                "race_id": "202406010101", "bet_type": "馬連", "source": "manual",
+                "combos": [{"combo": "1-2", "stake": 100}, {"combo": "1-3", "stake": 100}],
+            }).json()
+            ids = [it["id"] for it in created["items"]]
+
+            resp = client.post("/api/bets/bulk_delete", json={"ids": ids})
+            assert resp.status_code == 200
+            assert resp.json()["deleted"] == 2
+
+            remaining = client.get("/api/bets").json()
+        assert remaining["total"] == 0
+
+
 # ── GET /api/bets ─────────────────────────────────────────────────────────────
 
 class TestListBets:
@@ -363,8 +433,8 @@ class TestDeleteBet:
             resp = client.get(f"/api/bets/{bet_id}")
         assert resp.status_code == 404
 
-    def test_delete_settled_409(self, app_with_temp_db: FastAPI) -> None:
-        """settled な bet の削除は 409。"""
+    def test_delete_settled_allowed(self, app_with_temp_db: FastAPI) -> None:
+        """個人台帳の訂正用に、settled な bet も削除できる (204)。"""
         engine = _get_engine_and_session(app_with_temp_db)
         from db.session import session_scope
         with session_scope(engine) as session:
@@ -374,7 +444,11 @@ class TestDeleteBet:
 
         with TestClient(app_with_temp_db) as client:
             resp = client.delete(f"/api/bets/{bet_id}")
-        assert resp.status_code == 409
+        assert resp.status_code == 204
+
+        with TestClient(app_with_temp_db) as client:
+            resp = client.get(f"/api/bets/{bet_id}")
+        assert resp.status_code == 404
 
     def test_delete_not_found(self, app_with_temp_db: FastAPI) -> None:
         with TestClient(app_with_temp_db) as client:

@@ -313,6 +313,21 @@ export interface BetRecordIn {
   notes?: string;
 }
 
+/** 一括登録の 1 点（買い目）。 */
+export interface BetComboIn {
+  combo: string;
+  stake: number;
+}
+
+/** POST /api/bets/bulk — 流し/ボックス/フォーメーションを展開した複数点をまとめて登録。 */
+export interface BetRecordBulkIn {
+  race_id: string;
+  bet_type: BetType;
+  source: 'recommendation' | 'manual';
+  notes?: string;
+  combos: BetComboIn[];
+}
+
 export interface BetRecordOut {
   id: number;
   created_at: string;

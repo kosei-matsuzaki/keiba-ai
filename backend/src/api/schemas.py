@@ -346,6 +346,31 @@ class BetRecordIn(BaseModel):
     notes: str | None = None
 
 
+class BetComboIn(BaseModel):
+    """一括登録の 1 点（買い目）。"""
+    combo: str
+    stake: int = Field(ge=1)
+
+
+class BetRecordBulkIn(BaseModel):
+    """POST /api/bets/bulk リクエストボディ。
+
+    流し / ボックス / フォーメーション など 1 つの買い方を、展開後の各点
+    (combo, stake) のリストとして受け取り、1 トランザクションでまとめて登録する。
+    各点は独立した bet_record として保存し、それぞれ即時突合せを試みる。
+    """
+    race_id: str
+    bet_type: BetType
+    source: Literal["recommendation", "manual"]
+    notes: str | None = None
+    combos: list[BetComboIn] = Field(min_length=1, max_length=1000)
+
+
+class BetBulkDeleteIn(BaseModel):
+    """POST /api/bets/bulk_delete — 買い方単位などで複数 bet_record をまとめて削除。"""
+    ids: list[int] = Field(min_length=1, max_length=2000)
+
+
 class BetRecordUpdate(BaseModel):
     """PUT /api/bets/{id} リクエストボディ — notes のみ更新可。"""
     notes: str | None = None

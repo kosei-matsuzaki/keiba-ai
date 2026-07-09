@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Wallet, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { useState, useMemo, Fragment } from 'react';
+import { Wallet, ChevronDown, ChevronUp, Download, Trash2 } from 'lucide-react';
 import {
   AreaChart,
   Area,
@@ -15,8 +15,10 @@ import { useBetSummary } from '@/hooks/useBetSummary';
 import { useBetTimeseries } from '@/hooks/useBetTimeseries';
 import { useBetBreakdown } from '@/hooks/useBetBreakdown';
 import { useBetList } from '@/hooks/useBetList';
+import { useDeleteBets } from '@/hooks/useDeleteBets';
 import { buildBetExportUrl, type BetFilterParams } from '@/lib/api';
 import { formatYen, formatPercent, formatDateTime } from '@/lib/formatters';
+import { AddBetDialog } from '@/components/AddBetDialog';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { MetricCard } from '@/components/MetricCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -39,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { BetBreakdownRow } from '@/types/api';
+import type { BetBreakdownRow, BetRecordOut } from '@/types/api';
 
 // ── Period presets ────────────────────────────────────────────────────────────
 
@@ -139,22 +141,119 @@ function BreakdownTable({ rows }: { rows: BetBreakdownRow[] }) {
   );
 }
 
-// ── Detail table with pagination ──────────────────────────────────────────────
+// ── Detail table grouped by 買い方 ─────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
 
+/** 1 つの買い方（同一バッチ）= 一括登録時に共有する created_at でまとめた点群。 */
+interface BetGroup {
+  key: string;
+  ids: number[];
+  createdAt: string;
+  raceId: string;
+  betType: string;
+  source: string;
+  notes: string | null;
+  count: number;
+  stakeSum: number;
+  settledCount: number;
+  pendingCount: number;
+  payoutSum: number; // 確定分のみ
+  profitSum: number; // 確定分のみ
+  items: BetRecordOut[];
+}
+
+/**
+ * bet_records を買い方単位でまとめる。一括登録した点はバッチで同一の created_at を
+ * 共有するため、(created_at, race_id, bet_type, source, notes) をキーにグループ化する。
+ * 単発登録はそれぞれ別グループ（1 点）になる。API 返却は created_at 降順なので順序維持。
+ */
+function groupBets(items: BetRecordOut[]): BetGroup[] {
+  const map = new Map<string, BetGroup>();
+  for (const b of items) {
+    const key = `${b.created_at}|${b.race_id}|${b.bet_type}|${b.source}|${b.notes ?? ''}`;
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        key,
+        ids: [],
+        createdAt: b.created_at,
+        raceId: b.race_id,
+        betType: b.bet_type,
+        source: b.source,
+        notes: b.notes,
+        count: 0,
+        stakeSum: 0,
+        settledCount: 0,
+        pendingCount: 0,
+        payoutSum: 0,
+        profitSum: 0,
+        items: [],
+      };
+      map.set(key, g);
+    }
+    g.ids.push(b.id);
+    g.items.push(b);
+    g.count += 1;
+    g.stakeSum += b.stake;
+    if (b.settled_at !== null) {
+      g.settledCount += 1;
+      g.payoutSum += b.payout ?? 0;
+      g.profitSum += b.profit ?? 0;
+    } else {
+      g.pendingCount += 1;
+    }
+  }
+  return [...map.values()];
+}
+
+function ProfitCell({ group }: { group: BetGroup }) {
+  if (group.settledCount === 0) {
+    return <span className="text-muted-foreground">未確定</span>;
+  }
+  const cls = group.profitSum >= 0 ? 'text-green-600' : 'text-red-500';
+  return (
+    <span className={cls}>
+      {group.profitSum >= 0 ? '+' : ''}
+      {formatYen(group.profitSum)}
+      {group.pendingCount > 0 && (
+        <span className="ml-1 text-[10px] text-muted-foreground">未確定{group.pendingCount}</span>
+      )}
+    </span>
+  );
+}
+
 function DetailTable({ params }: { params: BetFilterParams }) {
   const [page, setPage] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const { data, isPending, isError } = useBetList(params);
+  const deleteBets = useDeleteBets();
 
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
-  const pageItems = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const totalPages = Math.ceil(items.length / PAGE_SIZE);
+  function handleDeleteGroup(g: BetGroup) {
+    const msg =
+      g.count > 1 ? `この買い方（${g.count}点）を削除しますか？` : 'この購入記録を削除しますか？';
+    if (window.confirm(msg)) {
+      deleteBets.mutate(g.ids);
+    }
+  }
+
+  function toggleExpand(key: string) {
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      if (s.has(key)) s.delete(key);
+      else s.add(key);
+      return s;
+    });
+  }
+
+  const items = useMemo(() => data?.items ?? [], [data]);
+  const groups = useMemo(() => groupBets(items), [items]);
+  const pageGroups = groups.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.ceil(groups.length / PAGE_SIZE);
 
   if (isPending) return <Skeleton className="h-48 w-full" />;
   if (isError) return <EmptyState message="明細取得に失敗しました" />;
-  if (items.length === 0) return <EmptyState message="ベット記録がありません" />;
+  if (items.length === 0) return <EmptyState message="購入記録がありません" />;
 
   return (
     <div className="space-y-3">
@@ -164,49 +263,111 @@ function DetailTable({ params }: { params: BetFilterParams }) {
             <TableHead>日時</TableHead>
             <TableHead>レース ID</TableHead>
             <TableHead>券種</TableHead>
-            <TableHead>組合せ</TableHead>
+            <TableHead>買い目 / 点数</TableHead>
             <TableHead>投資</TableHead>
             <TableHead>払戻</TableHead>
             <TableHead>損益</TableHead>
-            <TableHead>ソース</TableHead>
+            <TableHead>メモ</TableHead>
+            <TableHead className="text-xs text-muted-foreground">区分</TableHead>
+            <TableHead className="text-right">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {pageItems.map((bet) => (
-            <TableRow key={bet.id}>
-              <TableCell className="text-xs">{formatDateTime(bet.created_at)}</TableCell>
-              <TableCell className="text-xs font-mono">{bet.race_id}</TableCell>
-              <TableCell>{bet.bet_type}</TableCell>
-              <TableCell className="font-mono">{bet.combo}</TableCell>
-              <TableCell>{formatYen(bet.stake)}</TableCell>
-              <TableCell>
-                {bet.payout !== null ? formatYen(bet.payout) : '—'}
-              </TableCell>
-              <TableCell
-                className={
-                  bet.profit === null
-                    ? 'text-muted-foreground'
-                    : bet.profit >= 0
-                    ? 'text-green-600'
-                    : 'text-red-500'
-                }
-              >
-                {bet.profit !== null
-                  ? `${bet.profit >= 0 ? '+' : ''}${formatYen(bet.profit)}`
-                  : '未確定'}
-              </TableCell>
-              <TableCell className="text-xs">
-                {bet.source === 'recommendation' ? '推奨' : '手動'}
-              </TableCell>
-            </TableRow>
-          ))}
+          {pageGroups.map((g) => {
+            const isOpen = expanded.has(g.key);
+            return (
+              <Fragment key={g.key}>
+                <TableRow>
+                  <TableCell className="text-xs">{formatDateTime(g.createdAt)}</TableCell>
+                  <TableCell className="text-xs font-mono">{g.raceId}</TableCell>
+                  <TableCell>{g.betType}</TableCell>
+                  <TableCell>
+                    {g.count === 1 ? (
+                      <span className="font-mono">{g.items[0].combo}</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-sm hover:text-foreground"
+                        onClick={() => toggleExpand(g.key)}
+                      >
+                        <span className="font-medium">{g.count}点</span>
+                        {isOpen ? (
+                          <ChevronUp className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        )}
+                      </button>
+                    )}
+                  </TableCell>
+                  <TableCell>{formatYen(g.stakeSum)}</TableCell>
+                  <TableCell>{g.settledCount === 0 ? '—' : formatYen(g.payoutSum)}</TableCell>
+                  <TableCell>
+                    <ProfitCell group={g} />
+                  </TableCell>
+                  <TableCell
+                    className="max-w-[12rem] truncate text-xs text-muted-foreground"
+                    title={g.notes ?? ''}
+                  >
+                    {g.notes ?? ''}
+                  </TableCell>
+                  <TableCell className="text-[11px] text-muted-foreground">
+                    {g.source === 'recommendation' ? 'AI推奨' : '手動'}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      disabled={deleteBets.isPending}
+                      onClick={() => handleDeleteGroup(g)}
+                      aria-label="削除"
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+                {isOpen && (
+                  <TableRow>
+                    <TableCell colSpan={10} className="bg-muted/30">
+                      <div className="flex flex-col gap-1 py-1 pl-4">
+                        {g.items.map((it) => (
+                          <div key={it.id} className="flex items-center gap-4 text-xs">
+                            <span className="w-28 font-mono">{it.combo}</span>
+                            <span className="w-20 text-muted-foreground">
+                              {formatYen(it.stake)}
+                            </span>
+                            <span className="w-20">
+                              {it.payout !== null ? formatYen(it.payout) : '—'}
+                            </span>
+                            <span
+                              className={
+                                it.profit === null
+                                  ? 'text-muted-foreground'
+                                  : it.profit >= 0
+                                    ? 'text-green-600'
+                                    : 'text-red-500'
+                              }
+                            >
+                              {it.profit !== null
+                                ? `${it.profit >= 0 ? '+' : ''}${formatYen(it.profit)}`
+                                : '未確定'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} / {total} 件
-          </span>
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <span>
+          {groups.length} 件（買い方） / {items.length} 点
+        </span>
+        {totalPages > 1 && (
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -225,8 +386,8 @@ function DetailTable({ params }: { params: BetFilterParams }) {
               次へ
             </Button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -308,7 +469,7 @@ export function Ledger() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [source, setSource] = useState<string>('all');
-  const [showDetail, setShowDetail] = useState(false);
+  const [showDetail, setShowDetail] = useState(true);
   const [bucket, setBucket] = useState<'day' | 'week' | 'month'>('day');
 
   const { from, to } = getDateRange(period, customFrom, customTo);
@@ -337,9 +498,11 @@ export function Ledger() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         icon={Wallet}
-        title="Ledger"
-        description="ベット記録の集計・損益推移"
-      />
+        title="収支台帳"
+        description="自分の購入履歴と成績管理（回収率・的中率・損益推移）"
+      >
+        <AddBetDialog />
+      </PageHeader>
 
       {/* Period & source filters + CSV (一行で揃える) */}
       <div className="flex flex-wrap items-center gap-3">
@@ -489,7 +652,7 @@ export function Ledger() {
             className="flex w-full items-center justify-between"
             onClick={() => setShowDetail((v) => !v)}
           >
-            <CardTitle className="text-base">明細一覧</CardTitle>
+            <CardTitle className="text-base">購入明細</CardTitle>
             {showDetail ? (
               <ChevronUp className="h-4 w-4 text-muted-foreground" />
             ) : (
