@@ -32,6 +32,7 @@ import type {
   RecommendationsResponse,
   ScraperRecentActivity,
   ScraperRunRequest,
+  ScraperRunResultsRequest,
   ScraperRunShutubaRequest,
   ScraperStatus,
   SettingsResponse,
@@ -170,6 +171,10 @@ export function runScraper(body: ScraperRunRequest): Promise<JobAccepted> {
 
 export function runShutubaScraper(body: ScraperRunShutubaRequest): Promise<JobAccepted> {
   return getClient().then((c) => c.post('scraper/run_shutuba', { json: body }).json<JobAccepted>());
+}
+
+export function runResultsScraper(body: ScraperRunResultsRequest = {}): Promise<JobAccepted> {
+  return getClient().then((c) => c.post('scraper/run_results', { json: body }).json<JobAccepted>());
 }
 
 export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceIdsResponse> {

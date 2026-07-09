@@ -179,10 +179,13 @@ def _parse_header(soup: BeautifulSoup, result: ParsedRaceResult, race_id: str) -
                 break
 
 
-def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ParsedEntry]:
+def _parse_entries(soup: BeautifulSoup, race_id: str, *, quiet: bool = False) -> list[ParsedEntry]:
     table = soup.find("table", class_=re.compile(r"race_table_01|RaceTable"))
     if table is None:
-        logger.error("Race result table not found — netkeiba page structure may have changed")
+        # quiet=True は「結果ページ未掲載（db.netkeiba 未アーカイブ等）の想定内ケース」用。
+        # 直近レースの結果は archive 反映が遅れるため、毎回 ERROR を出さない。
+        if not quiet:
+            logger.error("Race result table not found — netkeiba page structure may have changed")
         raise ParseError("Race result table not found")
 
     # ヘッダ行を取得（<thead> が無く最初の <tr> の <th> が列名というケースが多い）
@@ -309,8 +312,12 @@ def _parse_entry_row(
     return entry
 
 
-def parse_race_result(html: str, race_id: str) -> ParsedRaceResult:
+def parse_race_result(html: str, race_id: str, *, quiet: bool = False) -> ParsedRaceResult:
     """Parse a race result page into ParsedRaceResult.
+
+    Args:
+        quiet: True にすると結果テーブル欠落時に ERROR ログを出さない（未掲載が想定内
+            のケース用。例外 ParseError は引き続き送出する）。
 
     Raises:
         ParseError: If the results table is missing entirely.
@@ -319,7 +326,7 @@ def parse_race_result(html: str, race_id: str) -> ParsedRaceResult:
     result = ParsedRaceResult(race_id=race_id)
 
     _parse_header(soup, result, race_id)
-    result.entries = _parse_entries(soup, race_id)
+    result.entries = _parse_entries(soup, race_id, quiet=quiet)
     result.n_runners = len(result.entries)
 
     payout_win, payout_place = parse_payout(html)

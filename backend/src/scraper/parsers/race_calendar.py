@@ -49,7 +49,9 @@ def _is_central_race(race_id: str) -> bool:
     return len(race_id) >= 6 and race_id[4:6] in _CENTRAL_TRACK_CODES
 
 
-def parse_race_ids_from_calendar(html: str, *, include_nar: bool = False) -> list[str]:
+def parse_race_ids_from_calendar(
+    html: str, *, include_nar: bool = False, raise_if_empty: bool = True
+) -> list[str]:
     """Extract race IDs from a kaisai_date calendar page.
 
     Searches all <a> tags whose href contains a 12-digit race_id in either of:
@@ -82,6 +84,10 @@ def parse_race_ids_from_calendar(html: str, *, include_nar: bool = False) -> lis
         race_ids.append(race_id)
 
     if not race_ids:
+        # raise_if_empty=False は「開催の無い日 / 直近で db.netkeiba 未アーカイブの日」を
+        # 範囲スキャンする想定内ケース用。空でも静かに [] を返す（ERROR を出さない）。
+        if not raise_if_empty:
+            return []
         logger.error(
             "No central race IDs found in calendar HTML — netkeiba page structure may have changed "
             "(skipped %d NAR ids)",

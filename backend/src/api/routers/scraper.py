@@ -20,6 +20,7 @@ from api.schemas import (
     JobAccepted,
     ScraperRecentActivity,
     ScraperRunRequest,
+    ScraperRunResultsRequest,
     ScraperRunShutubaRequest,
     ScraperStatus,
 )
@@ -29,6 +30,7 @@ from db.models.scrape_log import ScrapeLog
 from db.odds_db import init_odds_db, make_odds_engine
 from db.session import make_engine, session_scope
 from jobs.ingest import run_ingest
+from jobs.ingest_results import run_ingest_recent_results
 from jobs.ingest_shutuba import run_ingest_shutuba
 from scraper import discovery, stop_flag
 from scraper.discovery import DiscoveryError
@@ -173,6 +175,48 @@ async def run_scraper(
             client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
             with session_scope(engine) as s:
                 await run_ingest(date_str, client, s, limit=limit)
+
+    info = registry.start("ingest", _coro)
+    return JobAccepted(
+        job_id=info.job_id,
+        status=info.status,
+        started_at=info.started_at,
+    )
+
+
+@router.post("/scraper/run_results", response_model=JobAccepted, status_code=202)
+async def run_results_scraper(
+    body: ScraperRunResultsRequest,
+    session: Annotated[Session, Depends(get_session)],  # noqa: ARG001
+    registry: Annotated[JobRegistry, Depends(get_job_registry)],
+) -> JobAccepted:
+    """確定したレースの結果＋確定オッズを期間指定で未取得分だけ取り込む。
+
+    from/to 指定でその範囲、未指定なら直近 days 日（昨日まで）。取込済みはスキップ、
+    今日は未確定のため自動除外。202 を即返し、実処理はバックグラウンドジョブで動く。
+    """
+    # 期間を解決（today は JST）。今日除外・span 上限は run_ingest_recent_results が再クランプ。
+    base_day = datetime.now(_JST).date()
+    if body.from_ and body.to:
+        start, end = body.from_, body.to
+    else:
+        yesterday = base_day - timedelta(days=1)
+        start = (yesterday - timedelta(days=body.days - 1)).isoformat()
+        end = yesterday.isoformat()
+
+    async def _coro() -> None:
+        settings = load_settings()
+        rate_limiter = AsyncRateLimiter(settings)
+        robots_cache = RobotsCache(settings.user_agent)
+        engine = make_engine(db_path())
+        odds_engine = make_odds_engine()
+        init_odds_db(odds_engine)
+
+        async with httpx.AsyncClient() as http_client:
+            client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
+            with session_scope(engine) as s:
+                await run_ingest_recent_results(client, s, odds_engine, start=start, end=end)
+        odds_engine.dispose()
 
     info = registry.start("ingest", _coro)
     return JobAccepted(

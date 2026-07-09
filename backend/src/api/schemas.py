@@ -282,6 +282,21 @@ class ScraperRunShutubaRequest(BaseModel):
         return self
 
 
+class ScraperRunResultsRequest(BaseModel):
+    """POST /api/scraper/run_results リクエストボディ。
+
+    期間内の確定レース（結果＋確定オッズ）を未取得分だけ取り込む。from/to を指定すれば
+    その範囲、未指定なら直近 days 日（昨日まで）。今日は未確定のため自動除外される。
+    """
+    from_: str | None = Field(
+        default=None, alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$", description="開始日 YYYY-MM-DD"
+    )
+    to: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="終了日 YYYY-MM-DD"
+    )
+    days: int = Field(default=14, ge=1, le=90, description="from/to 未指定時の直近日数")
+
+
 # ── Discover today race IDs schema ───────────────────────────────────────────
 
 class DiscoverTodayRaceIdsResponse(BaseModel):

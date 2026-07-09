@@ -209,6 +209,16 @@ export interface ScraperRunShutubaRequest {
   limit?: number;
 }
 
+/** POST /api/scraper/run_results — 期間内の確定レース（結果＋確定オッズ）を未取得分だけ取込。 */
+export interface ScraperRunResultsRequest {
+  /** 開始日 YYYY-MM-DD（to とセットで指定）。 */
+  from?: string;
+  /** 終了日 YYYY-MM-DD。 */
+  to?: string;
+  /** from/to 未指定時の直近日数（既定 14、最大 90）。 */
+  days?: number;
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {

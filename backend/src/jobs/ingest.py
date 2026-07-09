@@ -34,7 +34,13 @@ from scraper.parsers.horse_detail import parse_horse_detail
 from scraper.parsers.horse_pedigree import parse_horse_pedigree
 from scraper.parsers.payout import parse_payouts
 from scraper.parsers.race_calendar import parse_race_ids_from_calendar
-from scraper.parsers.race_result import ParsedRaceResult, parse_race_result
+from scraper.parsers.race_result import (
+    ParsedRaceResult,
+    parse_race_result,
+)
+from scraper.parsers.race_result import (
+    ParseError as ResultParseError,
+)
 from scraper.rate_limiter import AsyncRateLimiter
 from scraper.robots import RobotsCache
 from scraper.stop_flag import ScraperStopped
@@ -192,6 +198,76 @@ def _upsert_payouts(session: Session, race_id: str, html: str) -> int:
     return len(payout_rows)
 
 
+async def ingest_one_race_result(
+    client: NetkeibaClient,
+    session: Session,
+    race_id: str,
+    date_str: str | None = None,
+    *,
+    skip_if_scraped: bool = True,
+) -> str:
+    """Fetch + ingest one race RESULT page (db.netkeiba).
+
+    Returns one of:
+      - "skipped"     既に結果取込済み (scrape_log ok)
+      - "no_results"  結果未掲載（発走前 / 確定前）。**ok は記録せず**後で再取得可能
+      - "fetched"     結果を取込み・bet 突合せ済み
+      - "error"       取得/解析失敗
+
+    結果未確定のレースに ok を付けて二度と取り直せなくなる事故を防ぐため、
+    finish_position が 1 つも無いページは "no_results" として確定扱いしない。
+    """
+    result_url = _RESULT_URL.format(race_id=race_id)
+
+    if skip_if_scraped and already_scraped(session, result_url):
+        return "skipped"
+
+    try:
+        html = await client.fetch(result_url, cache_max_age_hours=24 * 30)
+        try:
+            # quiet=True: 直近レースは db.netkeiba アーカイブ反映が遅れ結果テーブルが
+            # まだ無いことがある。想定内なので ERROR を出さず no_results 扱いにする。
+            parsed = parse_race_result(html, race_id, quiet=True)
+        except ResultParseError:
+            return "no_results"
+        if date_str:
+            parsed.date = date_str
+
+        has_results = any(e.finish_position is not None for e in parsed.entries)
+        if not has_results:
+            # まだ確定していない → ok を記録せず、確定後の再取得に委ねる。
+            return "no_results"
+
+        _upsert_race(session, parsed)
+        await _ensure_masters(session, parsed, client=client)
+        _insert_entries(session, parsed)
+        n_payouts = _upsert_payouts(session, race_id, html)
+        record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
+
+        n_settled = settle_bets_for_race(session, race_id)
+        if n_settled:
+            logger.info("Settled %d bet(s) for race %s", n_settled, race_id)
+
+        session.commit()
+        logger.info(
+            "Ingested race %s (%d entries, %d payouts)",
+            race_id, len(parsed.entries), n_payouts,
+        )
+        return "fetched"
+
+    except ScraperStopped:
+        raise
+    except Exception as exc:
+        logger.error("Error ingesting race %s: %s", race_id, exc)
+        session.rollback()
+        try:
+            record_scrape_log(session, result_url, "error")
+            session.commit()
+        except Exception:
+            session.rollback()
+        return "error"
+
+
 async def run_ingest(
     date_str: str,
     client: NetkeibaClient,
@@ -219,51 +295,13 @@ async def run_ingest(
         if stop_flag.is_stopped():
             raise ScraperStopped("stop flag set during race loop")
 
-        result_url = _RESULT_URL.format(race_id=race_id)
-
-        if already_scraped(session, result_url):
-            logger.debug("Skipping already-scraped race: %s", race_id)
-            counters["skipped"] += 1
-            continue
-
-        try:
-            html = await client.fetch(result_url, cache_max_age_hours=24 * 30)
-            parsed = parse_race_result(html, race_id)
-            parsed.date = date_str
-
-            _upsert_race(session, parsed)
-            await _ensure_masters(session, parsed, client=client)
-            _insert_entries(session, parsed)
-            n_payouts = _upsert_payouts(session, race_id, html)
-            record_scrape_log(session, result_url, "ok", cache_module.content_hash(html))
-
-            # 結果 ingest (finish_position あり) のみ bet 突合せを実行する。
-            # shutuba ingest は finish_position が無いためここには到達しない。
-            has_results = any(e.finish_position is not None for e in parsed.entries)
-            if has_results:
-                n_settled = settle_bets_for_race(session, race_id)
-                if n_settled:
-                    logger.info("Settled %d bet(s) for race %s", n_settled, race_id)
-
-            session.commit()
-
+        status = await ingest_one_race_result(client, session, race_id, date_str)
+        if status == "fetched":
             counters["fetched"] += 1
-            logger.info(
-                "Ingested race %s (%d entries, %d payouts)",
-                race_id, len(parsed.entries), n_payouts,
-            )
-
-        except ScraperStopped:
-            raise
-        except Exception as exc:
-            logger.error("Error ingesting race %s: %s", race_id, exc)
-            session.rollback()
-            try:
-                record_scrape_log(session, result_url, "error")
-                session.commit()
-            except Exception:
-                session.rollback()
+        elif status == "error":
             counters["errors"] += 1
+        else:  # "skipped" / "no_results"
+            counters["skipped"] += 1
 
     return counters
 
