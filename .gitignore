@@ -39,6 +39,7 @@ data-snapshot/
 
 # ── Local agent state (Claude Code) ───────────────────────────────────────────
 .claude/
+CLAUDE.local.md
 
 # ── OS / editor noise ─────────────────────────────────────────────────────────
 .DS_Store

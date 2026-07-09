@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-netkeiba スクレイピング + NN (Set Transformer ランキング) による競馬予想ツール (個人研究用)。FastAPI バックエンド + React 管理画面の単一リポジトリで、`scripts/dev.sh` が両方を一発起動する。直近コミット `62d59c2` で monorepo (`games/keiba-ai/...`) から単独リポジトリ構成へ再編成されているため、古いパスを参照するコードや設定が散見されたら更新候補と疑うこと。
+netkeiba スクレイピング + NN (Set Transformer ランキング) による競馬予想ツール (個人研究用)。FastAPI バックエンド + React 管理画面の単一リポジトリで、`scripts/dev.sh` が両方を一発起動する。
 
-詳しい仕様は `docs/` 配下 (`spec.md` / `design.md` / `ai-model.md` / `data-pipeline.md` / `operations.md`) を参照。本ファイルは「コード全体を読まないと掴めない big picture」のみを要約する。
+詳しい仕様は `docs/` 配下 (`spec.md` / `design.md` / `ai-model.md` / `data-pipeline.md` / `operations.md`) を参照。本ファイルは「コード全体を読まないと掴めない big picture」のみを要約する。環境固有の運用メモは `CLAUDE.local.md` (gitignored) に分離している。
 
 ## 日常コマンド
 
@@ -40,31 +40,6 @@ uv run keiba-backup                                                # keiba.db + 
 uv run alembic upgrade head
 ```
 
-### WSL から動かす場合
-リポジトリは `/mnt/c/...` 上にあるため、`backend/.venv/` は **Windows 側 uv** が使う想定。WSL から `uv sync` / `uv run` を叩くときは Windows の `.venv/` を上書きしないよう、`UV_PROJECT_ENVIRONMENT` で WSL 専用 venv を `/tmp/` (ext4) に切る:
-
-```bash
-# 依存同期（WSL 用 venv を /tmp に作成）
-UV_PROJECT_ENVIRONMENT=/tmp/keiba-linux-venv uv sync --extra nn
-
-# テスト実行（PYTHONPATH=src は src/ レイアウト用）
-UV_PROJECT_ENVIRONMENT=/tmp/keiba-linux-venv PYTHONPATH=src \
-    uv run pytest -q
-
-# 単体テスト
-UV_PROJECT_ENVIRONMENT=/tmp/keiba-linux-venv PYTHONPATH=src \
-    uv run pytest tests/test_foo.py::test_bar
-```
-
-ブランチ切替時の汚染回避用に `/tmp/keiba-linux-venv-main` のような別 venv を併存させる運用もある (`.claude/settings.local.json` 参照)。`/tmp/` 上に置く理由は (1) `/mnt/c/` の Linux I/O が遅い、(2) Windows 側の `.venv/` と上書きが起こると両方壊れる、の 2 点。逆に Windows 側から起動する uvicorn / pytest は素の `uv sync` / `uv run` で OK (環境変数なし)。
-
-### 正本は `/mnt/c` (Windows) — single source of truth
-2026-06-09 に ext4 (`~/keiba-ai`) へ移行を試みたが定着せず、2026-06-11 に **`/mnt/c/.../keiba-ai` (Windows) を正本に再統合**した。`~/keiba-ai` (ext4) が残っていても **stale なフォールバック**であり使わない (古い DB を掴むので app/training/ingest を誤起動しないこと。落ち着いたら削除/リネーム推奨)。
-
-- **2 つのクローンは自動同期されない**。`data/*.db` は両方で gitignore のため **DB は git で運ばれない** (各コピーの `keiba.db` / `odds.db` は別ファイル、揃えるのは手動 `cp` のみ)。コードは push→GitHub→pull でしか揃わない。`core/paths.py` の `data_dir()` は **実行したコードの `.git` ルート**基準 (cwd ではない) なので、`/mnt/c` から起動すれば /mnt/c の DB、ext4 から起動すれば ext4 の DB を見る (`KEIBA_DATA_DIR` / `KEIBA_ODDS_DB` で上書き可)。
-- **複数 Claude セッションが /mnt/c で同時稼働しうる**。git の checkout/commit/reset/stash は明示合意なしにやらない。
-- **corruption 回避** (ext4 移行の元理由): WSL から /mnt/c の SQLite を WAL モードで触ると壊れる (`database disk image is malformed` の実績あり)。安全運用は (1) **odds.db は `journal_mode=TRUNCATE`** なので WSL から /mnt/c へ書いて OK (odds backfill はこの安全パス)、(2) **web/uvicorn は Windows から起動** (C: ネイティブは DrvFs 問題なし)、(3) WAL の SQLite を WSL から /mnt/c へ書かない、(4) 素のファイル `cp`/`mv` は常に安全。
-
 ## アーキテクチャ要点
 
 ### 依存方向 (厳守)
@@ -78,7 +53,7 @@ core / settings は横断
 
 ### 推論パスは bundle 経由 (NN 専用)
 - `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceTransformerModel、`nn_preprocessor` / `temperature_scaler` は optional
-- **アーキは単一 (target)**: ability エンコーダ = 集約特徴 + per-race 履歴 GRU (odds は含めない)、value = スコア head で標準化済み odds を concat (ability→value 分離)。`history_feat_dim`/`odds_feat_dim` は *次元* で、0 ならその入力なし (`odds_feat_dim=0` は `KEIBA_EXCLUDE_ODDS_FEATURES`)。旧 v1/v2 や gated フラグ (`use_history`/`use_odds_head`/`arch_version`) は全廃 (2026-06-13)
+- **アーキは単一 (target)**: ability エンコーダ = 集約特徴 + per-race 履歴 GRU (odds は含めない)、value = スコア head で標準化済み odds を concat (ability→value 分離)。`history_feat_dim`/`odds_feat_dim` は *次元* で、0 ならその入力なし (`odds_feat_dim=0` は `KEIBA_EXCLUDE_ODDS_FEATURES`)。旧 v1/v2 や gated フラグ (`use_history`/`use_odds_head`/`arch_version`) は全廃済み
 - 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/inference/predict.py`)
 - combo 確率は NN スコア → 解析的 Plackett-Luce で導出する。外部 isotonic 校正 (`combo_calibrators` / win / place) は全廃済み。連系の校正は `combo_nll` / `multi` 損失で **NN 内部に学習**させる (下記「連系の校正を NN 内部へ」)。combo 確率は解析的 PL の出力をそのまま使う (外部後処理なし)
 - SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (ルーター互換のための残置スタブ)
@@ -87,11 +62,11 @@ core / settings は横断
 `torch` / `lightning` は `pyproject.toml` の `[project.optional-dependencies].nn`。未インストール環境では `load_model_full` / 予測系が `ModuleNotFoundError`。導入は `uv pip install -e ".[nn]"`。scraper/ingest だけなら torch 不要。
 
 ### モデル保存レイアウト
-- NN: `data/models/<YYYYMMDDTHHMMSS>-nn/` に `model.pt` + `meta.json` (`model_type="nn"`) + optional `preprocessor.pkl` / `temperature_scaler.pkl`
-- active は `model_runs.is_active` で管理。`registry._resolve_model_path` が **basename 比較** で WSL/Windows パス差を吸収する (`/mnt/c/...` と `C:\...` のどちらでも当たる)
+- NN: `data/models/<YYYYMMDDTHHMMSS>-nn/` に `model.pt` + `meta.json` (`model_type="nn"`) + optional `preprocessor.pkl` / `temperature_scaler.pkl` / `history_norm.pkl` / `speed_figure.pkl`
+- active は `model_runs.is_active` で管理。`registry._resolve_model_path` が **basename 比較** でパス表記差 (WSL/Windows) を吸収する
 
 ### 特徴量とリーク防止
-- `features/builder.py` の `FEATURE_COLUMNS` (51 列) が単一の真実
+- `features/builder.py` の `FEATURE_COLUMNS` (46 列) が単一の真実
 - ID 系 (`horse_id` / `jockey_id` / `trainer_id`) は **絶対に FEATURE_COLUMNS に入れない**
 - `build_training_frame` / `build_inference_frame` ともに **race_date より厳密に過去** の情報しか参照しない (`_build_entry_row` 内で SQL 条件)。新規特徴量を足すときも同じ制約を維持すること
 - `KEIBA_EXCLUDE_ODDS_FEATURES=1` で `ODDS_FEATURE_COLUMNS` を除外した特徴量リストになる (オッズ未確定時の検証用)
@@ -99,7 +74,7 @@ core / settings は横断
 
 ### DB スキーマの方針
 - `race_id` / `horse_id` / `jockey_id` / `trainer_id` は **TEXT**。netkeiba ID は構造化文字列 (年+回+場+日+R) で算術対象ではない
-- Alembic は `migrations/versions/0001` ~ `0010` (最新: `0010_drop_live_odds`)
+- Alembic は `migrations/versions/0001` ~ `0012` (最新: `0012_add_horses_sire_dam_index`)
 - FK CASCADE: `entries.race_id` / `payouts.race_id` は CASCADE、`horse_id` は RESTRICT、`jockey_id` / `trainer_id` は SET NULL
 
 ### ジョブはインメモリ
@@ -108,7 +83,7 @@ core / settings は横断
 - `/api/scraper/run` と `/api/models/train` は 202 Accepted を即時返却
 
 ### スクレイパー停止
-`scraper/stop_flag.py` が「環境変数 `KEIBA_SCRAPER_STOP=1` か、プロセス内フラグ」をループのたびに見る。UI / API / 環境変数の 3 経路で止められる。新しいループを書くときも `is_stopped()` を呼ぶこと。
+`scraper/stop_flag.py` が「環境変数 `KEIBA_SCRAPER_STOP=1` か、プロセス内フラグ」をループのたびに見る。UI / API / 環境変数の 3 経路で止められる。新しいループを書くときも `is_stopped()` を呼ぶこと。robots.txt は fail-closed (取得失敗 = 拒否、10 分後に再試行)。
 
 ### バインドと CORS
 - uvicorn は `127.0.0.1` のみにバインド (外部不可)
@@ -124,7 +99,6 @@ core / settings は横断
 
 - 環境変数 `KEIBA_DATA_DIR` で `data/` の場所を切り替え可能。テストでは `tmp_path` ベースで上書きする (`conftest.py` 参照)
 - `core/paths.py` の `data_dir()` を経由してパスを組み立てる。`data/` 配下の直書きは避ける
-- WSL から Windows venv の Python を呼ばない (パス・改行・ロックの問題が出る)。Windows uvicorn が動いているときに WSL で `uv sync` する場合は別 `UV_PROJECT_ENVIRONMENT` を渡す
 - NN の損失は本番 **`multi` (default)** / `log_growth` / `combo_nll` / `plackett_luce` の **4 種**を `--loss` で選択し `meta.json.loss_type` に記録 (旧 `log_growth_place` / `log_growth_combo` / `listmle` / `time_margin` は廃止・存在しない)。加えて実験用 `kelly_deploy` (デプロイ整合 Kelly: EV>0のみ・棄権・edge比例ステークを微分可能化) が `--loss` に在るが、A/B で本番 tansho ROI は log_growth 未満 (−0.06) と判明・本番非採用 (着順精度は高い。詳細 `docs/ai-model.md`「実験ノブと A/B 知見」)。既定は ROI 志向 (decision-focused): `log_growth` は実オッズの単勝回収率を fractional-Kelly log-growth で直接最適化し、モデル選択は `--monitor valid_tansho_roi`。**複勝専用の賭けリターン損失は無い** (複勝は `--monitor valid_fukusho_roi` のチェックポイント選択のみ)。最良構成は **二段階** (`plackett_luce` 事前学習 → `--init-from <model_dir>` で `multi` に fine-tune)。OOS で単複ROIは順位損失・市場の人気1番を有意に上回るが依然 <1.0 (詳細 `docs/ai-model.md`)
 - **連系の校正を NN 内部へ**: `combo_nll`=連系 combo確率の **NLL (proper scoring rule)** で **外部 isotonic 校正を不要にする** (旧 `combo_calibrators` の代替, `--combo-bet-type` で対象連系・`all` で全連系), `multi`=`log_growth`+`combo_weight`·`combo_nll` の **全馬券対応の本番目的** (`--combo-weight` 既定0.01)。解析ヘルパ `_pl_exacta`/`_pl_trifecta`/`_winning_combo_prob` (`ai/model/loss.py`)。注: 連系は控除率25%で校正しても黒字化はしない
 - ROI系損失・監視・温度スケーラは **標準化前の生オッズ**を使う必要があるため `odds_win_raw`(単勝)/`place_ret_raw`(複勝)/`combo_payoff_raw`(連系) を非特徴列として dataset/collate に通す (`odds_win` は特徴量で標準化される)。win_prob は softmax(score / T_win)、place_prob は PL Monte Carlo。combo確率は素の PL Monte Carlo (外部 isotonic 校正は全廃済み。`combo_nll`/`multi` 学習で NN 内部に校正が入る)。新しい損失を足すときも `predict_race` の確率変換は共通なので学習側だけ拡張すれば足りる

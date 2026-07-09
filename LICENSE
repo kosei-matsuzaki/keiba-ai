@@ -1,0 +1,30 @@
+Copyright (c) 2026 Kosei Matsuzaki. All rights reserved.
+
+本リポジトリ (KEIBA AI) は、作者の技術ポートフォリオとして閲覧・評価目的で
+のみ公開されています。
+
+以下の行為を許可します:
+- 採用選考・技術評価を目的とした、ソースコードおよびドキュメントの閲覧
+- 上記目的の範囲での、ローカル環境における起動・動作確認
+
+以下の行為を禁止します:
+- 本リポジトリの全部または一部の再配布・再利用・改変物の公開
+- 商用利用
+- 本ソフトウェアを用いた第三者サイトへの負荷を顧みないアクセス
+
+第三者コンポーネントについて:
+- frontend/src/components/ui/ 配下のコンポーネントは shadcn/ui (MIT License)
+  を基に改変したものです。
+- 依存ライブラリはそれぞれのライセンス (MIT / BSD / Apache-2.0 等) に従います。
+
+本ソフトウェアは現状有姿で提供され、動作・正確性についていかなる保証も
+行いません。馬券の購入判断への利用は自己責任であり、作者は一切の責任を
+負いません。
+
+---
+
+This repository is published for portfolio viewing and evaluation purposes
+only. Redistribution, reuse, modification for publication, and commercial
+use are not permitted. Components under frontend/src/components/ui/ are
+adapted from shadcn/ui (MIT License). Third-party dependencies remain under
+their respective licenses. Provided "as is", without warranty of any kind.
