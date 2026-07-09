@@ -211,3 +211,53 @@ def test_empty_odds_cols_equals_current_behavior():
     pd.testing.assert_frame_equal(pp_a.transform(train), pp_b.transform(train))
 
 
+def test_log_features_flag_off_by_default(monkeypatch):
+    """KEIBA_LOG_FEATURES 未設定なら log 変換は無効 (log_transform_cols 空)。"""
+    monkeypatch.delenv("KEIBA_LOG_FEATURES", raising=False)
+    train = _make_odds_train_df()
+    pp = NNPreprocessor.fit(train, ["distance", "odds_win"], [])
+    assert pp.log_transform_cols == []
+
+
+def test_log_features_flag_applies_log1p(monkeypatch):
+    """KEIBA_LOG_FEATURES=1 で odds_win に log1p→標準化が適用される。"""
+    monkeypatch.setenv("KEIBA_LOG_FEATURES", "1")
+    train = _make_odds_train_df()
+    pp = NNPreprocessor.fit(train, ["distance", "odds_win"], [])
+    assert "odds_win" in pp.log_transform_cols
+    # mean/std は log1p 後の分布から取られている
+    expected_mean = float(np.log1p(train["odds_win"]).mean())
+    assert abs(pp.numeric_means["odds_win"] - expected_mean) < 1e-6
+    # transform も log1p→標準化: 値は (log1p(x)-mean)/std と一致
+    out = pp.transform(train)
+    std = pp.numeric_stds["odds_win"]
+    expected = (np.log1p(train["odds_win"]) - expected_mean) / std
+    np.testing.assert_allclose(out["odds_win"].to_numpy(), expected.to_numpy(), atol=1e-6)
+
+
+def test_log_features_compresses_outlier_scale(monkeypatch):
+    """log 変換で人気薄外れ値のスケール支配が緩み、人気馬間の分解能が上がる。"""
+    train = pd.DataFrame({"odds_win": [1.5, 3.0, 10.0, 200.0] * 10})
+    monkeypatch.setenv("KEIBA_LOG_FEATURES", "1")
+    pp_log = NNPreprocessor.fit(train, ["odds_win"], [])
+    monkeypatch.setenv("KEIBA_LOG_FEATURES", "0")
+    pp_raw = NNPreprocessor.fit(train, ["odds_win"], [])
+    head = pd.DataFrame({"odds_win": [1.5, 3.0, 10.0]})
+    log_out = pp_log.transform(head)["odds_win"].to_numpy()
+    raw_out = pp_raw.transform(head)["odds_win"].to_numpy()
+    # 人気馬3頭の標準化値の広がりは log の方が大きい (分解能が高い)
+    assert np.ptp(log_out) > np.ptp(raw_out)
+
+
+def test_log_transform_backward_compat_without_attribute():
+    """log_transform_cols 属性を持たない旧 pickle 由来インスタンスでも transform 可。"""
+    pp = NNPreprocessor.__new__(NNPreprocessor)
+    pp.horse_feature_cols = ["odds_win"]
+    pp.race_feature_cols = []
+    pp.categorical_maps = {}
+    pp.numeric_means = {"odds_win": 3.0}
+    pp.numeric_stds = {"odds_win": 2.0}
+    pp.odds_feature_cols = []
+    # log_transform_cols 属性は意図的に未設定
+    out = pp.transform(pd.DataFrame({"odds_win": [5.0]}))
+    assert out["odds_win"].iloc[0] == (5.0 - 3.0) / 2.0
