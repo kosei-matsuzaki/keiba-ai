@@ -140,6 +140,93 @@ def log_growth_loss(
     return (total_loss / n_valid).squeeze()
 
 
+def kelly_deploy_loss(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    odds_win: torch.Tensor,
+    mask: torch.Tensor,
+    kelly_fraction: float = 0.25,
+    max_total_stake: float = 0.95,
+) -> torch.Tensor:
+    """Deployment-matched fractional-Kelly 単勝 portfolio log-growth (L1).
+
+    Unlike :func:`log_growth_loss` — which spreads softmax mass over *every*
+    horse with a fixed cash term and lets only the winner's odds enter the
+    gradient — this mirrors the **live betting decision** in
+    ``ai.betting.strategy``: bet selectively, abstain on −EV, stake proportional
+    to edge.  Training therefore optimises the decision that is actually
+    deployed rather than a bet-on-everything proxy.
+
+    Per race, with ``p_i = softmax(scores)_i`` (win prob) and raw odds ``o_i``::
+
+        edge_i = p_i * o_i - 1                       # EV per unit on horse i
+        f_i    = kelly_fraction * relu(edge_i)/(o_i-1)   # stake; 0 if -EV (abstain)
+        (stakes scaled down so sum_i f_i <= max_total_stake)
+        W      = (1 - sum_i f_i) + f_winner * o_winner   # realised wealth multiple
+
+    and the loss is ``-mean(log W)``.  The ``relu`` is the abstention: −EV horses
+    get zero stake and only push probability mass (via the shared softmax).
+    Horses with unknown odds are never staked.  ``max_total_stake < 1`` keeps a
+    cash floor so ``W`` stays positive (matches never risking the whole bankroll).
+
+    Args:
+        scores:           [B, N]
+        finish_positions: [B, N]  NaN = exclude; winner is position == 1
+        odds_win:         [B, N]  **raw** 単勝 odds (NaN = unknown → no stake)
+        mask:             [B, N]  bool
+        kelly_fraction:   Kelly multiplier on edge (same as strategy.py).
+        max_total_stake:  cap on per-race staked fraction (cash floor = 1 - cap).
+
+    Returns:
+        Scalar loss (mean over races with a clean, odds-carrying winner).
+    """
+    device = scores.device
+    kf = float(kelly_fraction)
+    cap = float(max_total_stake)
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(finish_positions[b])
+        if valid.sum() < 2:
+            continue
+
+        s = scores[b][valid]                 # [K]
+        pos = finish_positions[b][valid]     # [K]
+        o = odds_win[b][valid]               # [K]
+
+        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
+        if winner_idx.numel() == 0:
+            continue
+        w = winner_idx[0]
+        o_w = o[w]
+        if torch.isnan(o_w) or o_w <= 0:
+            continue
+
+        p = torch.softmax(s, dim=0)          # [K] win probabilities
+
+        # Per-horse edge & stake; unknown / non-positive odds → no stake.
+        o_ok = torch.nan_to_num(o, nan=0.0)
+        bettable = o_ok > 1.0
+        edge = p * o_ok - 1.0
+        stake = kf * torch.relu(edge) / torch.clamp(o_ok - 1.0, min=1e-6)
+        stake = torch.where(bettable, stake, torch.zeros_like(stake))
+
+        total_stake = stake.sum()
+        # Scale down if over-leveraged so the cash floor (and W) stays positive.
+        scale = torch.clamp(cap / torch.clamp(total_stake, min=1e-6), max=1.0)
+        stake = stake * scale
+        total_stake = stake.sum()
+
+        wealth = (1.0 - total_stake) + stake[w] * o_w
+        total_loss = total_loss - torch.log(wealth)
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
 _COMBO_BET_TYPES = frozenset(["馬連", "馬単", "三連複", "三連単"])
 
 

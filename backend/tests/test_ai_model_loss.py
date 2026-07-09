@@ -126,3 +126,70 @@ def test_multi_objective_is_weighted_sum():
     assert abs(m.item() - (lg.item() + 0.01 * cn.item())) < 1e-5
     m.backward()
     assert s.grad.norm().item() > 0
+
+
+# ---------------------------------------------------------------------------
+# kelly_deploy_loss (L1: deployment-matched selective Kelly portfolio)
+# ---------------------------------------------------------------------------
+
+
+def test_kelly_deploy_matches_manual_and_differentiable():
+    """W = (1 - sum f_i) + f_winner * o_winner with f_i = kf*relu(p_i*o_i-1)/(o_i-1)."""
+    from ai.model.loss import kelly_deploy_loss
+
+    s = torch.tensor([[2.0, 1.0, 0.5, 0.0]], requires_grad=True)
+    pos = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    odds = torch.tensor([[4.0, 6.0, 10.0, 20.0]])
+    mask = torch.tensor([[True, True, True, True]])
+    kf = 0.25
+    loss = kelly_deploy_loss(s, pos, odds, mask, kelly_fraction=kf)
+
+    import math as _m
+    es = [_m.exp(x) for x in (2.0, 1.0, 0.5, 0.0)]
+    z = sum(es)
+    p = [e / z for e in es]
+    o = [4.0, 6.0, 10.0, 20.0]
+    f = [kf * max(p[i] * o[i] - 1.0, 0.0) / (o[i] - 1.0) for i in range(4)]
+    total = sum(f)
+    scale = min(0.95 / total, 1.0) if total > 0 else 1.0
+    f = [x * scale for x in f]
+    W = (1.0 - sum(f)) + f[0] * o[0]  # winner = idx 0
+    expected = -_m.log(W)
+    assert abs(loss.item() - expected) < 1e-5
+    loss.backward()
+    assert s.grad.norm().item() > 0
+
+
+def test_kelly_deploy_abstains_on_negative_edge():
+    """A horse whose p*o <= 1 gets zero stake (relu abstention)."""
+    from ai.model.loss import kelly_deploy_loss
+
+    # Two horses, winner has odds so low that p*o < 1 → no +EV bet → W=1, loss=0.
+    s = torch.tensor([[0.0, 0.0]])  # p = 0.5 each
+    pos = torch.tensor([[1.0, 2.0]])
+    odds = torch.tensor([[1.5, 1.5]])  # p*o = 0.75 < 1 for both → abstain
+    mask = torch.tensor([[True, True]])
+    loss = kelly_deploy_loss(s, pos, odds, mask)
+    assert abs(loss.item()) < 1e-6  # log(1) = 0
+
+
+def test_kelly_deploy_positive_edge_winner_gives_gain():
+    """A clearly +EV winner yields W>1 → negative loss (gain)."""
+    from ai.model.loss import kelly_deploy_loss
+
+    s = torch.tensor([[3.0, 0.0, 0.0]])  # winner heavily favoured by model
+    pos = torch.tensor([[1.0, 2.0, 3.0]])
+    odds = torch.tensor([[2.0, 5.0, 5.0]])  # winner p*o >> 1
+    mask = torch.tensor([[True, True, True]])
+    loss = kelly_deploy_loss(s, pos, odds, mask)
+    assert loss.item() < 0  # W > 1
+
+
+def test_kelly_deploy_nan_winner_odds_skips():
+    from ai.model.loss import kelly_deploy_loss
+
+    loss = kelly_deploy_loss(
+        torch.tensor([[1.0, 0.0]]), torch.tensor([[1.0, 2.0]]),
+        torch.tensor([[float("nan"), 2.0]]), torch.tensor([[True, True]]),
+    )
+    assert math.isnan(loss.item())

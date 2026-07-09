@@ -42,6 +42,7 @@ from ai.core.temperature import TemperatureScaler
 from ai.model.dataset import RaceDataset, collate_fn
 from ai.model.loss import (
     combo_nll_loss,
+    kelly_deploy_loss,
     log_growth_loss,
     multi_objective_loss,
     plackett_luce_loss,
@@ -472,12 +473,10 @@ def _compute_loss_on_dataset(
                 **_batch_history_kw(batch, device), **_batch_odds_kw(batch, device),
             )
 
-            if loss_fn_name == "log_growth":
+            if loss_fn_name in ("log_growth", "multi", "kelly_deploy"):
                 loss = loss_fn(scores, fp, batch["odds_win"].to(device), mask)
             elif loss_fn_name == "combo_nll":
                 loss = loss_fn(scores, fp, mask)
-            elif loss_fn_name == "multi":
-                loss = loss_fn(scores, fp, batch["odds_win"].to(device), mask)
             else:
                 loss = loss_fn(scores, fp, mask)
 
@@ -505,6 +504,8 @@ def _build_loss_fn(
         return plackett_luce_loss
     if loss_name == "log_growth":
         return functools.partial(log_growth_loss, kelly_fraction=kelly_fraction)
+    if loss_name == "kelly_deploy":
+        return functools.partial(kelly_deploy_loss, kelly_fraction=kelly_fraction)
     if loss_name == "combo_nll":
         return functools.partial(combo_nll_loss, bet_type=combo_bet_type)
     if loss_name == "multi":
@@ -516,7 +517,7 @@ def _build_loss_fn(
         )
     raise ValueError(
         f"Unknown loss: {loss_name!r}. "
-        "Choose from multi, log_growth, combo_nll, plackett_luce"
+        "Choose from multi, log_growth, kelly_deploy, combo_nll, plackett_luce"
     )
 
 
@@ -562,7 +563,7 @@ class RaceLitModule(pl.LightningModule):
             history_lengths=batch.get("history_lengths"),
             odds_features=batch.get("odds_features"),
         )
-        if self.loss_fn_name in ("log_growth", "multi"):
+        if self.loss_fn_name in ("log_growth", "multi", "kelly_deploy"):
             loss = self.loss_fn(
                 scores,
                 batch["finish_positions"],
@@ -1248,7 +1249,7 @@ def _cli() -> None:
     parser.add_argument("--test-months", type=int, default=6, help="Test window (months)")
     parser.add_argument(
         "--loss",
-        choices=["multi", "log_growth", "combo_nll", "plackett_luce"],
+        choices=["multi", "log_growth", "kelly_deploy", "combo_nll", "plackett_luce"],
         default="multi",
         help=(
             "Loss function (default: multi = production all-markets objective: "
