@@ -88,7 +88,14 @@ export function fetchRaceDetail(raceId: string): Promise<RaceDetail> {
 }
 
 export function fetchPredictions(raceId: string): Promise<PredictionResponse> {
-  return getClient().then((c) => c.get(`predictions/${raceId}`).json<PredictionResponse>());
+  // RaceDetail は per-horse 予測 (score/win_prob/place_prob) のみ使い、連系確率は
+  // 推奨買目 (/recommendations) 側で取得する。combinations を計算させると PL モンテ
+  // カルロ (n=10000) が走り遅くなるため include_combinations=false で省く。
+  return getClient().then((c) =>
+    c
+      .get(`predictions/${raceId}`, { searchParams: { include_combinations: false } })
+      .json<PredictionResponse>()
+  );
 }
 
 export function fetchBulkPredictions(

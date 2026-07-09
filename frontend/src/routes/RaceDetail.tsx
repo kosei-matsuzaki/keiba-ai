@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown, Sparkles, Download } from 'lucide-react';
+import { Trophy, ChevronLeft, ChevronUp, ChevronDown, ChevronsUpDown, Sparkles, Download, RefreshCw } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
@@ -22,7 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
-import { formatOdds, formatPercent, formatScore, formatYen } from '@/lib/formatters';
+import { formatOdds, formatPercent, formatRatio, formatScore, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
 import type { EntrySummary, HorsePrediction } from '@/types/api';
 
@@ -36,10 +36,26 @@ function RaceDetailSkeleton() {
   );
 }
 
-/** Indicates BUY when single-win expected value > 1.1 */
+/**
+ * 単勝期待値 (EV) = 単勝確率 × 単勝オッズ。
+ * 現行モデルは decision-focused（ROI 直接最適化）なので、score より EV が
+ * 「買うべきか」の主指標。オッズ未確定 (odds_win=null) のときは null。
+ */
+function winEv(pred: HorsePrediction | null, entry: EntrySummary | undefined): number | null {
+  if (!pred || entry?.odds_win == null) return null;
+  return pred.win_prob * entry.odds_win;
+}
+
+/** Indicates BUY when single-win expected value > 1.1 (推奨ベットルール 単勝) */
 function isBuy(pred: HorsePrediction, entry: EntrySummary | undefined): boolean {
-  if (!entry?.odds_win) return false;
-  return pred.win_prob * entry.odds_win > 1.1;
+  const ev = winEv(pred, entry);
+  return ev !== null && ev > 1.1;
+}
+
+/** 単勝 EV の色分け: 1.1 超 (BUY 条件) を強調、それ以外は控えめ。 */
+function winEvClass(ev: number | null): string {
+  if (ev === null) return 'text-muted-foreground';
+  return ev > 1.1 ? 'font-semibold text-green-600' : 'text-muted-foreground';
 }
 
 interface EntryRow {
@@ -55,7 +71,8 @@ type SortKey =
   | 'finish_position'
   | 'score'
   | 'win_prob'
-  | 'place_prob';
+  | 'place_prob'
+  | 'win_ev';
 
 type SortDir = 'asc' | 'desc';
 
@@ -95,6 +112,7 @@ function numericValue(row: EntryRow, key: SortKey): number | undefined {
     case 'score':         v = row.pred?.score; break;
     case 'win_prob':      v = row.pred?.win_prob; break;
     case 'place_prob':    v = row.pred?.place_prob; break;
+    case 'win_ev':        v = winEv(row.pred, row.entry); break;
     default: return undefined;
   }
   if (v == null || isNaN(v as number)) return undefined;
@@ -159,7 +177,8 @@ function SortableHeader({ label, sortKey, sort, onSort, className }: SortableHea
 }
 
 const BUY_TOOLTIP =
-  '単勝 EV > 1.1（過去バックテストでは payback_win=0.688、baseline 0.868 比 −18pt で赤字傾向。参考値）';
+  '単勝 EV（単勝確率 × オッズ）> 1.1 の馬。本番モデルの OOS 単勝回収率は 0.856 ' +
+  '（人気1番 0.789 を上回るが依然 1.0 未満＝平均では負け越し）。参考値。';
 
 interface EntryPredictionTableProps {
   entries: EntrySummary[];
@@ -215,12 +234,12 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             実績データ
           </TableHead>
           <TableHead
-            colSpan={3}
+            colSpan={4}
             className="border-r border-border/50 bg-muted/40 text-center text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400"
           >
             AI 予想
           </TableHead>
-          <TableHead colSpan={2} className="bg-muted/40" />
+          <TableHead colSpan={1} className="bg-muted/40" />
         </TableRow>
         <TableRow>
           <SortableHeader label="馬番" sortKey="post_position" className="w-12" {...headerProps} />
@@ -233,9 +252,9 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
           <SortableHeader label="着順" sortKey="finish_position" className="border-r border-border/50 text-center" {...headerProps} />
           <SortableHeader label="スコア" sortKey="score" className="text-right" {...headerProps} />
           <SortableHeader label="単勝確率" sortKey="win_prob" className="text-right" {...headerProps} />
-          <SortableHeader label="複勝確率" sortKey="place_prob" className="border-r border-border/50 text-right" {...headerProps} />
+          <SortableHeader label="複勝確率" sortKey="place_prob" className="text-right" {...headerProps} />
+          <SortableHeader label="単勝EV" sortKey="win_ev" className="border-r border-border/50 text-right" {...headerProps} />
           <TableHead className="text-center">推奨</TableHead>
-          <TableHead>SHAP</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -283,16 +302,19 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             <TableCell className="text-right">
               {pred != null ? formatPercent(pred.win_prob) : '—'}
             </TableCell>
-            <TableCell className="border-r border-border/50 text-right">
+            <TableCell className="text-right">
               {pred != null ? formatPercent(pred.place_prob) : '—'}
+            </TableCell>
+            <TableCell
+              className={`border-r border-border/50 text-right ${winEvClass(winEv(pred, entry))}`}
+              title={BUY_TOOLTIP}
+            >
+              {pred != null ? formatRatio(winEv(pred, entry)) : '—'}
             </TableCell>
             <TableCell className="text-center">
               {pred != null && isBuy(pred, entry) && (
                 <Badge variant="success" title={BUY_TOOLTIP}>BUY</Badge>
               )}
-            </TableCell>
-            <TableCell className="text-xs text-muted-foreground italic">
-              {pred != null ? 'SHAP 寄与は M9 以降' : '—'}
             </TableCell>
           </TableRow>
         ))}
@@ -304,8 +326,9 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
 function BuyBadgeNote() {
   return (
     <p className="mt-3 text-xs text-muted-foreground">
-      BUY バッジは単勝 EV&gt;1.1 の馬を示しますが、過去のバックテストでは
-      payback_win=0.688（baseline 0.868 比 −18pt）で赤字傾向です。実買いは慎重に。
+      BUY バッジは単勝 EV&gt;1.1 の馬を示しますが、本番モデルの OOS 単勝回収率は
+      0.856（人気1番 0.789 を上回るものの 1.0 未満）です。回収率 1.0 超は未達なので
+      実買いは慎重に。スコアはオッズ込み（value head）の総合評価、EV は単勝確率 × オッズ。
     </p>
   );
 }
@@ -348,7 +371,11 @@ export function RaceDetail() {
   // NOTE: 出馬表取込・AI 予想はいずれも画面表示時に自動実行しない。
   // すべて下部の各ボタン (出馬表を取得 / AI 予想を実行) で明示的に開始する。
 
-  const backLink = dateParam ? `/past?date=${dateParam}` : '/past';
+  // Race ページの Past タブへ戻る (?tab=past)。date を引き継いで一覧の選択日を復元。
+  // 旧 `/past` は /races へ redirect され query を落とすため直接 /races を指す。
+  const backLink = dateParam
+    ? `/races?tab=past&date=${dateParam}`
+    : '/races?tab=past';
 
   if (raceQuery.isPending) {
     return (
@@ -442,6 +469,18 @@ export function RaceDetail() {
           >
             <Download className="mr-1.5 h-4 w-4" />
             {isScrapingShutuba ? '出馬表取得中...' : '出馬表を取得'}
+          </Button>
+        )}
+        {hasEntries && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isScrapingShutuba}
+            onClick={handleRunShutuba}
+            title="出馬表を再取得して単勝オッズ・人気・馬場状態を最新化します（発走が近いほど確定値に近づく）"
+          >
+            <RefreshCw className="mr-1.5 h-4 w-4" />
+            {isScrapingShutuba ? 'オッズ更新中...' : 'オッズ更新'}
           </Button>
         )}
         {hasEntries && (
