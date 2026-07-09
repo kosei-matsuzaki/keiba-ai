@@ -142,7 +142,11 @@ def _build_inference_history_tensors(bundle, frame, session, torch):
     horse_ids = [str(h) for h in frame["horse_id"].tolist()]
     before = _date.fromisoformat(str(frame["date"].iloc[0]))
     max_len = bundle.nn_history_max_len or 15
-    seqs = build_inference_history(session, horse_ids, before, max_len)
+    # B1: speed_fig を含むモデルは train-fit par テーブルを渡してトークンを再構築。
+    seqs = build_inference_history(
+        session, horse_ids, before, max_len,
+        speed_model=bundle.nn_speed_model,
+    )
 
     hdim = bundle.nn_history_feat_dim
     mean, std = bundle.nn_history_norm if bundle.nn_history_norm else (None, None)

@@ -99,6 +99,14 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         nn_history_norm = (hn["mean"], hn["std"])
     history_meta: dict = meta.get("history_meta", {}) or {}
 
+    # B1: 履歴トークンの speed_fig を推論で再構築するための train-fit par テーブル。
+    # meta の has_speed_figure が真かつ artifact が在るときのみロード。
+    nn_speed_model = None
+    speed_path = path / "speed_figure.pkl"
+    if meta.get("has_speed_figure") and speed_path.exists():
+        with speed_path.open("rb") as f:
+            nn_speed_model = _pickle_load(f)
+
     return {
         "nn_model": race_model,
         "nn_horse_feature_cols": horse_feature_cols,
@@ -109,4 +117,5 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         "nn_history_norm": nn_history_norm,
         "nn_history_max_len": int(history_meta.get("max_len", 0)),
         "nn_history_feat_dim": history_feat_dim,
+        "nn_speed_model": nn_speed_model,
     }

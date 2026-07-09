@@ -823,14 +823,31 @@ def train_nn(
         build_history_sequences,
         fit_history_normalizer,
     )
+    train_race_ids = set(train_df["race_id"].unique())
+
+    # B1: speed figure (par-time + track-variant 補正済みの絶対速度品質)。par は
+    # train split のみで fit し、speed_figure.pkl として保存して推論で再ロードする
+    # (KEIBA_SPEED_FIGURE=1 のとき)。未設定なら speed_model=None で従来の 16 次元。
+    from features.history_sequence import speed_figure_enabled
+    speed_model = None
+    if speed_figure_enabled():
+        from features.speed_figure import build_speed_figure_model
+        with session_scope(engine) as _session:
+            speed_model = build_speed_figure_model(_session, train_race_ids)
+        log.info(
+            "SpeedFigureModel built on train (par combos=%d, day-variants=%d)",
+            len(speed_model.par), len(speed_model.variants),
+        )
+
     if prebuilt_history is not None:
         history_cache = prebuilt_history
     else:
         log.info("Building per-(race,horse) history sequences…")
         with session_scope(engine) as _session:
-            history_cache = build_history_sequences(_session, max_len=history_seq_len)
+            history_cache = build_history_sequences(
+                _session, max_len=history_seq_len, speed_model=speed_model
+            )
     history_feat_dim = history_cache.n_features
-    train_race_ids = set(train_df["race_id"].unique())
     history_norm = fit_history_normalizer(history_cache, train_race_ids)
     log.info(
         "History encoder — %d (race,horse) seqs, %d token features",
@@ -1133,6 +1150,13 @@ def train_nn(
     with (model_dir / "history_norm.pkl").open("wb") as f:
         pickle.dump({"mean": mean, "std": std}, f)
     log.info("history_norm.pkl saved to %s", model_dir)
+
+    # B1: train-fit SpeedFigureModel を保存 (推論で履歴トークンの speed_fig を再構築)。
+    has_speed_figure = speed_model is not None
+    if has_speed_figure:
+        with (model_dir / "speed_figure.pkl").open("wb") as f:
+            pickle.dump(speed_model, f)
+        log.info("speed_figure.pkl saved to %s", model_dir)
     history_max_len = history_seq_len
 
     meta_dict = {
@@ -1179,6 +1203,8 @@ def train_nn(
             "max_len": history_max_len,
             "token_spec_version": TOKEN_SPEC_VERSION,
         },
+        # B1: 履歴トークンに speed_fig を含むか (含む場合 speed_figure.pkl が要る)。
+        "has_speed_figure": has_speed_figure,
         "train_range": train_range,
         "valid_range": valid_range,
         "test_range": test_range,

@@ -147,6 +147,9 @@ class ModelBundle:
     nn_history_norm: tuple | None = None  # (mean, std) ndarray
     nn_history_max_len: int = 0
     nn_history_feat_dim: int = 0
+    # B1: 履歴トークンの speed_fig を推論で再構築する train-fit par テーブル。
+    # None なら speed_fig なし (デフォルト 16 次元トークン)。
+    nn_speed_model: object | None = None
 
 
 def load_model_full(path: Path) -> ModelBundle:
@@ -179,6 +182,7 @@ def load_model_full(path: Path) -> ModelBundle:
         nn_history_norm=nn_artifacts.get("nn_history_norm"),
         nn_history_max_len=nn_artifacts.get("nn_history_max_len", 0),
         nn_history_feat_dim=nn_artifacts.get("nn_history_feat_dim", 0),
+        nn_speed_model=nn_artifacts.get("nn_speed_model"),
     )
 
 
