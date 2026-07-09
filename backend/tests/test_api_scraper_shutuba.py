@@ -57,7 +57,7 @@ def test_run_shutuba_race_ids_path(api_client: TestClient) -> None:
 
     called_with: dict = {}
 
-    async def _capture(date_str, client, session, *, limit=None, race_ids=None) -> dict:
+    async def _capture(date_str, client, session, *, limit=None, race_ids=None, odds_engine=None) -> dict:
         called_with["date_str"] = date_str
         called_with["race_ids"] = race_ids
         called_with["limit"] = limit
@@ -80,7 +80,7 @@ def test_run_shutuba_race_ids_and_date_race_ids_wins(api_client: TestClient) -> 
 
     called_with: dict = {}
 
-    async def _capture(date_str, client, session, *, limit=None, race_ids=None) -> dict:
+    async def _capture(date_str, client, session, *, limit=None, race_ids=None, odds_engine=None) -> dict:
         called_with["date_str"] = date_str
         called_with["race_ids"] = race_ids
         return {"fetched": 1, "skipped": 0, "errors": 0}
@@ -121,7 +121,7 @@ def test_run_shutuba_race_ids_without_date_passes_none_date_str(api_client: Test
     called_with: dict = {}
     done = threading.Event()
 
-    async def _capture(date_str, client, session, *, limit=None, race_ids=None) -> dict:
+    async def _capture(date_str, client, session, *, limit=None, race_ids=None, odds_engine=None) -> dict:
         called_with["date_str"] = date_str
         called_with["race_ids"] = race_ids
         done.set()

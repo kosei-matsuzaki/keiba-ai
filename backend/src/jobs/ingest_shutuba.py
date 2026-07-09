@@ -38,10 +38,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import json
 import os
 
 import httpx
 import sqlalchemy as sa
+from sqlalchemy import Engine
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -51,12 +53,15 @@ from core.paths import db_path
 from db.base import Base
 from db.models.entry import Entry
 from db.models.race import Race
+from db.odds_db import init_odds_db, make_odds_engine
 from db.session import make_engine, session_scope
+from jobs.ingest_odds import ingest_live_odds_for_race
 from jobs.scrape_log import record_scrape_log
 from jobs.upserts import upsert_horse, upsert_jockey, upsert_trainer
 from scraper import cache as cache_module
 from scraper import stop_flag
 from scraper.netkeiba import NetkeibaClient
+from scraper.parsers.odds import parse_live_win_odds
 from scraper.parsers.race_card_calendar import parse_race_ids_from_card_calendar
 from scraper.parsers.shutuba import ParsedShutuba, ShutubaEntry, parse_shutuba
 from scraper.rate_limiter import AsyncRateLimiter
@@ -67,14 +72,69 @@ logger = get_logger(__name__)
 
 _CARD_CALENDAR_URL = "https://race.netkeiba.com/top/race_list.html?kaisai_date={date}"
 _SHUTUBA_URL = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+# 単勝オッズ + 人気のライブ JSON。出馬表 HTML は JS でオッズを後挿入するため
+# 静的取得では placeholder しか得られない。type=1 が 単勝/複勝、action=update で
+# 発走前のライブ値も返る。
+_ODDS_API_URL = (
+    "https://race.netkeiba.com/api/api_get_jra_odds.html"
+    "?pid=api_get_jra_odds&race_id={race_id}&type=1&action=update"
+)
+
+
+async def _fetch_live_win_odds(
+    client: NetkeibaClient, race_id: str
+) -> dict[int, tuple[float | None, int | None]]:
+    """Fetch live 単勝オッズ + 人気 (per 馬番) from netkeiba's odds JSON API.
+
+    取得/JSON parse に失敗しても ingest 本体は止めず ``{}`` を返す（オッズは
+    後続の再取り込み or 結果 ingest で埋まるため致命的ではない）。常に最新が要るので
+    キャッシュは使わない。stop flag による中断は呼び出し側へ伝播させる。
+    """
+    url = _ODDS_API_URL.format(race_id=race_id)
+    try:
+        raw = await client.fetch(url, use_cache=False, write_to_cache=False)
+    except ScraperStopped:
+        raise
+    except Exception as exc:  # noqa: BLE001 — network 失敗は best-effort で握りつぶす
+        logger.warning("Live odds fetch failed for %s: %s", race_id, exc)
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Live odds response for %s was not valid JSON", race_id)
+        return {}
+    return parse_live_win_odds(payload)
+
+
+def _merge_live_odds(
+    parsed: ParsedShutuba, live_odds: dict[int, tuple[float | None, int | None]]
+) -> None:
+    """ライブ単勝オッズ/人気を出馬表 entry にマージする（馬番キー）。
+
+    HTML の placeholder (None) を API のライブ値で上書きする。API 側が None の
+    フィールドは HTML 値を維持する。"""
+    if not live_odds:
+        return
+    for e in parsed.entries:
+        if e.post_position is None:
+            continue
+        od = live_odds.get(e.post_position)
+        if od is None:
+            continue
+        win_odds, win_pop = od
+        if win_odds is not None:
+            e.odds_win = win_odds
+        if win_pop is not None:
+            e.popularity = win_pop
 
 
 def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
     """Upsert race row from shutuba data.
 
-    既存の race row がある場合は n_runners のみ更新する（除外馬対応）。
-    payout_win / payout_place / track_condition / race_class は
-    shutuba では取得できないため、既存値を保持する。
+    既存の race row がある場合は n_runners / 当日公表される weather・track_condition
+    などを更新する。weather / track_condition は **結果未確定 (payout_win IS NULL)**
+    のときだけ更新し、結果 ingest が書いた確定値を破壊しない。
+    payout / race_class などは shutuba では確定できないため既存値を保持する。
     race row が存在しない場合は新規 INSERT する。
     """
     stmt = sqlite_insert(Race).values(
@@ -87,13 +147,22 @@ def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
         surface=result.surface or "",
         distance=result.distance or 0,
         weather=result.weather,
-        track_condition=None,
+        track_condition=result.track_condition,
         race_class=result.race_class,
         name=result.name,
         n_runners=result.n_runners,
         payout_win=None,
         payout_place=None,
     )
+    # 結果確定前 (payout_win IS NULL) のみ、当日公表される weather / track_condition を
+    # 最新値で更新する。確定後は結果 ingest の値を尊重して据え置く。COALESCE で
+    # API 側が None（未公表）のときは既存値を維持する。
+    def _pre_result(new_val, existing_col):
+        return sa.case(
+            (Race.payout_win.is_(None), sa.func.coalesce(new_val, existing_col)),
+            else_=existing_col,
+        )
+
     stmt = stmt.on_conflict_do_update(
         index_elements=["race_id"],
         set_={
@@ -102,6 +171,9 @@ def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
             # name / race_class は COALESCE で既存値を保護
             "name": sa.func.coalesce(stmt.excluded.name, Race.name),
             "race_class": sa.func.coalesce(stmt.excluded.race_class, Race.race_class),
+            # 当日公表される天候・馬場状態は結果未確定なら最新化する
+            "weather": _pre_result(stmt.excluded.weather, Race.weather),
+            "track_condition": _pre_result(stmt.excluded.track_condition, Race.track_condition),
             # date は shutuba HTML から取得できたときだけ上書き。
             # PR #159 以前は date が "取込日" で誤登録される事故があったため、
             # 後続の shutuba ingest で正しい HTML 由来 date が手に入ったら必ず
@@ -111,7 +183,7 @@ def _upsert_race_from_shutuba(session: Session, result: ParsedShutuba) -> None:
                 (stmt.excluded.date != "", stmt.excluded.date),
                 else_=Race.date,
             ),
-            # 既存の確定済みデータ (payout / track_condition) は保持
+            # 既存の確定済みデータ (payout) は保持
             # course / surface / distance は初回登録値を尊重し上書きしない
         },
     )
@@ -206,11 +278,16 @@ async def _ingest_race_ids(
     client: NetkeibaClient,
     session: Session,
     limit: int | None = None,
+    odds_engine: Engine | None = None,
 ) -> dict[str, int]:
     """race_id リストを元に shutuba ingest を実行する。
 
     --race-ids と --date 両方の ingest フローから呼ばれる共通ロジック。
     date_str は HTML から日付が取得できない場合の fallback のみに使う。
+
+    odds_engine を渡すと、各レースについてライブの **全馬券** 実オッズを odds.db に
+    保存する（推奨買目で実オッズを使うため）。同時に type=1 由来の単勝オッズ・人気を
+    entries に反映する。None のときは entries 用の単勝オッズ・人気のみ取得する。
     """
     counters = {"fetched": 0, "skipped": 0, "errors": 0}
 
@@ -245,6 +322,16 @@ async def _ingest_race_ids(
                     counters["errors"] += 1
                     continue
 
+            # オッズ/人気は shutuba HTML では JS placeholder のため、ライブ odds
+            # API から補完する（取得失敗時は HTML 値のまま）。
+            # odds_engine があれば全馬券の実オッズを odds.db に保存しつつ、type=1
+            # 由来の単勝オッズ・人気を entries へ反映する（1 経路で両方取得）。
+            if odds_engine is not None:
+                live_odds = await ingest_live_odds_for_race(client, odds_engine, race_id)
+            else:
+                live_odds = await _fetch_live_win_odds(client, race_id)
+            _merge_live_odds(parsed, live_odds)
+
             _upsert_race_from_shutuba(session, parsed)
             _upsert_masters_from_shutuba(session, parsed)
 
@@ -278,6 +365,7 @@ async def run_ingest_shutuba(
     session: Session,
     limit: int | None = None,
     race_ids: list[str] | None = None,
+    odds_engine: Engine | None = None,
 ) -> dict[str, int]:
     """Core shutuba ingest logic; returns summary counters.
 
@@ -290,13 +378,17 @@ async def run_ingest_shutuba(
         limit: Max number of races to fetch (debug use).
         race_ids: If provided, skip calendar fetch and ingest only these race IDs.
             --race-ids CLI フラグと対応する。calendar 取得が壊れている場合の回避策として使う。
+        odds_engine: odds.db Engine。渡すと各レースのライブ全馬券実オッズを odds.db に
+            保存する。None なら entries 用の単勝オッズ・人気のみ取得する。
     """
     if race_ids is not None:
         # --race-ids 指定時: calendar fetch を skip して直接 ingest
         logger.info(
             "Ingesting %d race(s) from --race-ids (calendar fetch skipped)", len(race_ids)
         )
-        return await _ingest_race_ids(race_ids, date_str, client, session, limit=limit)
+        return await _ingest_race_ids(
+            race_ids, date_str, client, session, limit=limit, odds_engine=odds_engine
+        )
 
     # calendar 経由で race_id 一覧を取得（date_str が必須）
     if not date_str:
@@ -310,7 +402,9 @@ async def run_ingest_shutuba(
 
     logger.info("Found %d race IDs for shutuba ingest on %s", len(fetched_race_ids), date_str)
 
-    return await _ingest_race_ids(fetched_race_ids, date_str, client, session, limit=limit)
+    return await _ingest_race_ids(
+        fetched_race_ids, date_str, client, session, limit=limit, odds_engine=odds_engine
+    )
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -332,16 +426,25 @@ async def main(args: argparse.Namespace) -> int:
             logger.error("--race-ids is empty after splitting; aborting")
             return 1
 
+    odds_engine = make_odds_engine()
+    init_odds_db(odds_engine)
+
     async with httpx.AsyncClient() as http_client:
         client = NetkeibaClient(rate_limiter, robots_cache, http_client, load_settings())
         with session_scope(engine) as session:
             try:
                 counters = await run_ingest_shutuba(
-                    date_str, client, session, limit=args.limit, race_ids=race_ids
+                    date_str,
+                    client,
+                    session,
+                    limit=args.limit,
+                    race_ids=race_ids,
+                    odds_engine=odds_engine,
                 )
             except ScraperStopped:
                 logger.warning("Scraper stopped by stop flag")
                 return 1
+    odds_engine.dispose()
 
     logger.info(
         "Shutuba ingest complete — fetched=%d skipped=%d errors=%d",

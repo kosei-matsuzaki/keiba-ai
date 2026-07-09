@@ -66,6 +66,10 @@ class TestStandard16Runners:
     def test_weather(self, parsed_16):
         assert parsed_16.weather == "晴"
 
+    def test_track_condition(self, parsed_16):
+        # 当日に公表される馬場状態 (馬場:良) を RaceData01 から抽出する。
+        assert parsed_16.track_condition == "良"
+
     def test_n_runners(self, parsed_16):
         assert parsed_16.n_runners == 16
 
@@ -147,6 +151,10 @@ class TestNoWeather:
         """天候未公開のページでは weather が None になること。"""
         assert parsed_noweather.weather is None
 
+    def test_track_condition_is_none(self, parsed_noweather):
+        """馬場状態未公開のページでは track_condition が None になること。"""
+        assert parsed_noweather.track_condition is None
+
     def test_surface_still_parsed(self, parsed_noweather):
         assert parsed_noweather.surface == "ダ"
 
@@ -172,6 +180,10 @@ class TestMaidenRaceNoWeight:
 
     def test_weather_parsed(self, parsed_maiden):
         assert parsed_maiden.weather == "雨"
+
+    def test_track_condition_parsed(self, parsed_maiden):
+        # 馬場:重 — 稍重 より先に評価されるが「重」を正しく取れること。
+        assert parsed_maiden.track_condition == "重"
 
     def test_surface_parsed(self, parsed_maiden):
         assert parsed_maiden.surface == "芝"

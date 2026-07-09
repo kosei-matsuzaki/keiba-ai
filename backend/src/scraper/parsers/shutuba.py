@@ -72,6 +72,7 @@ from core.logging import get_logger
 from scraper.parsers.common import (
     COURSE_CODE_MAP,
     SURFACE_DIST_RE,
+    TRACK_CONDITION_RE,
     WEATHER_RE,
     WEIGHT_RE,
     extract_id_from_href,
@@ -139,6 +140,7 @@ class ParsedShutuba:
     distance: int | None = None
     n_runners: int | None = None
     weather: str | None = None  # 開催前は公表されていない場合 None
+    track_condition: str | None = None  # 馬場状態。開催当日に公表（開催前は None）
     race_class: str | None = None
     name: str | None = None
     entries: list[ShutubaEntry] = field(default_factory=list)
@@ -210,6 +212,11 @@ def _parse_header(soup: BeautifulSoup, result: ParsedShutuba, race_id: str) -> N
     weather_m = WEATHER_RE.search(search_area)
     if weather_m:
         result.weather = weather_m.group(1)
+
+    # 馬場状態（馬場:良 等）。開催当日に公表されるので開催前は None のまま。
+    tc_m = TRACK_CONDITION_RE.search(search_area)
+    if tc_m:
+        result.track_condition = tc_m.group(1)
 
     # --- レース名 ---
     for cls in ("RaceName", "RaceTitle", "race_name"):

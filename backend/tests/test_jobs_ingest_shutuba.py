@@ -38,10 +38,15 @@ def _build_fake_fetch(card_calendar_html: str, shutuba_html: str):
         url: str,
         *,
         use_cache: bool = True,
+        write_to_cache: bool = True,
         cache_max_age_hours: float = 24 * 30,
     ) -> str:
         if "race_list" in url:
             return card_calendar_html
+        # ライブオッズ API: 本テストでは odds 補完を無効化し、HTML フィクスチャ由来の
+        # odds_win/popularity を検証対象にするため空ステータスを返す。
+        if "api_get_jra_odds" in url:
+            return '{"status":"before","data":""}'
         return shutuba_html
     return fake_fetch
 
@@ -152,6 +157,66 @@ async def test_ingest_shutuba_saves_trainer_names(
     trainers = db_session.execute(select(Trainer)).scalars().all()
     names = {t.name for t in trainers}
     assert "友道康夫" in names
+
+
+@pytest.mark.asyncio
+async def test_ingest_shutuba_writes_track_condition(
+    db_session, mock_client, tmp_path, monkeypatch
+):
+    """当日公表される馬場状態が races.track_condition に保存されること。"""
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    await run_ingest_shutuba(DATE, mock_client, db_session, limit=1)
+
+    row = db_session.execute(select(Race)).scalars().first()
+    assert row.track_condition == "良"
+
+
+def _build_fake_fetch_with_live_odds(
+    card_calendar_html: str, shutuba_html: str, odds_json: str
+):
+    async def fake_fetch(
+        url: str,
+        *,
+        use_cache: bool = True,
+        write_to_cache: bool = True,
+        cache_max_age_hours: float = 24 * 30,
+    ) -> str:
+        if "race_list" in url:
+            return card_calendar_html
+        if "api_get_jra_odds" in url:
+            return odds_json
+        return shutuba_html
+    return fake_fetch
+
+
+@pytest.mark.asyncio
+async def test_ingest_shutuba_fills_live_odds(db_session, tmp_path, monkeypatch):
+    """shutuba HTML のオッズ/人気がライブ odds API の値で上書きされること。
+
+    実運用では shutuba HTML のオッズ/人気は JS placeholder のため、ライブ odds API
+    から取得した単勝オッズ・人気で entries を埋める。ここでは馬番1の HTML 値
+    (3.1 / 1番人気) が API のライブ値 (5.5 / 3番人気) で上書きされることを確認する。
+    """
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    import httpx
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    client = NetkeibaClient(
+        AsyncRateLimiter(settings), RobotsCache("TestAgent"), httpx.AsyncClient(), settings
+    )
+    odds_json = '{"status":"middle","data":{"odds":{"1":{"01":["5.5","","3"]}}}}'
+    client.fetch = _build_fake_fetch_with_live_odds(  # type: ignore[method-assign]
+        CARD_CALENDAR_HTML, SHUTUBA_HTML, odds_json
+    )
+
+    await run_ingest_shutuba(DATE, client, db_session, limit=1)
+
+    entry = db_session.execute(
+        select(Entry).where(Entry.post_position == 1)
+    ).scalars().first()
+    assert entry is not None
+    assert entry.odds_win == pytest.approx(5.5)
+    assert entry.popularity == 3
 
 
 # ── 冪等性テスト ──────────────────────────────────────────────────────────────

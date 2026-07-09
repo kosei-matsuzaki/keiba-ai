@@ -26,6 +26,7 @@ from api.schemas import (
 from core.config import load_settings
 from core.paths import db_path
 from db.models.scrape_log import ScrapeLog
+from db.odds_db import init_odds_db, make_odds_engine
 from db.session import make_engine, session_scope
 from jobs.ingest import run_ingest
 from jobs.ingest_shutuba import run_ingest_shutuba
@@ -207,11 +208,17 @@ async def run_shutuba_scraper(
         rate_limiter = AsyncRateLimiter(settings)
         robots_cache = RobotsCache(settings.user_agent)
         engine = make_engine(db_path())
+        # ライブの全馬券実オッズを odds.db に保存する（推奨買目で実オッズを使う）。
+        odds_engine = make_odds_engine()
+        init_odds_db(odds_engine)
 
         async with httpx.AsyncClient() as http_client:
             client = NetkeibaClient(rate_limiter, robots_cache, http_client, settings)
             with session_scope(engine) as s:
-                await run_ingest_shutuba(date_str, client, s, limit=limit, race_ids=race_ids)
+                await run_ingest_shutuba(
+                    date_str, client, s, limit=limit, race_ids=race_ids, odds_engine=odds_engine
+                )
+        odds_engine.dispose()
 
     info = registry.start("ingest_shutuba", _coro)
     return JobAccepted(
