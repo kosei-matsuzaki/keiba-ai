@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
 
@@ -189,7 +190,7 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
     },
   });
 
-  function handleDelete(e: React.MouseEvent, runId: number) {
+  function handleDelete(e: MouseEvent, runId: number) {
     e.stopPropagation();
     if (!window.confirm('この実行結果を削除しますか?')) return;
     deleteMutation.mutate(runId);

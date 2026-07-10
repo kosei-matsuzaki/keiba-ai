@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useScraperRecentActivity } from '@/hooks/useScraperRecentActivity';
@@ -89,7 +90,7 @@ export function ScraperStatusCard({ status }: ScraperStatusCardProps) {
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-muted-foreground w-36">{label}:</span>

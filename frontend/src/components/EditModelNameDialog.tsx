@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -35,7 +36,7 @@ export function EditModelNameDialog({
     if (open) setName(currentName ?? '');
   }, [open, currentName]);
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (modelId == null) return;
     const trimmed = name.trim();

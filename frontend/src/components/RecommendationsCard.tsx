@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ChangeEvent } from 'react';
 import { Wallet } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -93,7 +94,7 @@ function StakeInputAndBuy({ candidate, raceId }: StakeInputAndBuyProps) {
   const [stake, setStake] = useState<number>(candidate.stake);
   const { mutate, isPending } = useCreateBet();
 
-  function handleStakeChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleStakeChange(e: ChangeEvent<HTMLInputElement>) {
     const raw = Number(e.target.value);
     if (Number.isNaN(raw) || raw < 0) {
       setStake(0);
