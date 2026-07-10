@@ -25,6 +25,7 @@ import {
   fetchRecommendations,
   runShutubaScraper,
   fetchJob,
+  isNotFoundError,
 } from '../lib/api';
 
 const mockRace: RaceDetailType = {
@@ -145,11 +146,15 @@ function renderRaceDetail(raceId = '202406010101', search = '') {
 }
 
 beforeEach(() => {
+  // 呼び出し回数がテスト間でリークしないようにクリアする (実装は維持される)
+  vi.clearAllMocks();
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
   vi.mocked(runShutubaScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
+  // テスト個別で true にした値が後続テストへ漏れないよう毎回リセット
+  vi.mocked(isNotFoundError).mockReturnValue(false);
 });
 
 describe('RaceDetail', () => {
@@ -247,6 +252,8 @@ describe('RaceDetail', () => {
     vi.mocked(fetchRaceDetail).mockRejectedValue(
       Object.assign(new Error('404 Not Found'), { status: 404 })
     );
+    // isNotFoundError も mock なので 404 判定を明示的に返す
+    vi.mocked(isNotFoundError).mockReturnValue(true);
     renderRaceDetail('99999');
     await waitFor(() => {
       expect(screen.getByText('指定レース ID は見つかりません')).toBeInTheDocument();
@@ -292,14 +299,11 @@ describe('RaceDetail', () => {
 
     const oddsHeader = screen.getByRole('columnheader', { name: /単勝オッズ/ });
 
-    // First click: desc (default for odds column)
-    fireEvent.click(oddsHeader);
-    // After first click, ChevronDown icon should be present (desc active)
-    // We verify by clicking again and checking rows swap order
     // テスト馬A: odds_win=3.5, テスト馬B: odds_win=8.0
     // desc → B(8.0) first; asc → A(3.5) first
-    const rows = () => screen.getAllByRole('row').slice(1); // skip header
-    // default sort: score desc → A(2.5) first
+    // header は 2 行 (実績/AI 予想グループ行 + カラム行) あるため slice(2)
+    const rows = () => screen.getAllByRole('row').slice(2);
+    // AI 未実行時の default sort: post_position asc → A(馬番1) first
     expect(rows()[0]).toHaveTextContent('テスト馬A');
 
     // Click odds_win: first click → desc → B first
@@ -330,7 +334,8 @@ describe('RaceDetail', () => {
     // Second click → asc (1着 first, null last)
     fireEvent.click(finishHeader);
 
-    const rows = screen.getAllByRole('row').slice(1);
+    // header は 2 行 (実績/AI 予想グループ行 + カラム行) あるため slice(2)
+    const rows = screen.getAllByRole('row').slice(2);
     // テスト馬B has finish_position=1, should be first in asc
     expect(rows[0]).toHaveTextContent('テスト馬B');
     // テスト馬A has null finish_position, should be last
@@ -369,8 +374,9 @@ describe('RaceDetail', () => {
   it('shows race name in レース名 MetaItem', async () => {
     renderRaceDetail();
     await screen.findByText('レース概要');
-    expect(screen.getByText('レース名')).toBeInTheDocument();
-    expect(screen.getByText('日本ダービー')).toBeInTheDocument();
+    // レース名は PageHeader タイトルにも出るため、MetaItem の dt/dd で検証する
+    const dt = screen.getByText('レース名');
+    expect(dt.nextElementSibling).toHaveTextContent('日本ダービー');
   });
 
   it('falls back to "course race_class" in title when name is null', async () => {
@@ -387,8 +393,9 @@ describe('RaceDetail', () => {
 
     renderRaceDetail();
     await screen.findByText('レース概要');
-    // 取得ボタンは出るが、自動では走らない
-    await screen.findByRole('button', { name: '出馬表を取得' });
+    // 取得ボタン (ヘッダ + 空状態カードの 2 箇所) は出るが、自動では走らない
+    const buttons = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    expect(buttons.length).toBeGreaterThan(0);
     expect(vi.mocked(runShutubaScraper)).not.toHaveBeenCalled();
   });
 
@@ -398,7 +405,9 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
 
     renderRaceDetail();
-    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
+    // ボタンはヘッダと空状態カードの 2 箇所にあるので先頭をクリックする
+    const [btn] = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    await user.click(btn);
 
     await waitFor(() => {
       expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith(
@@ -414,7 +423,8 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
 
     renderRaceDetail();
-    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
+    const [btn] = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    await user.click(btn);
 
     await waitFor(() => {
       expect(screen.getByText(/出馬表を取得中/)).toBeInTheDocument();
@@ -427,7 +437,8 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
 
     renderRaceDetail();
-    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
+    const [btn] = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    await user.click(btn);
 
     // fetchRaceDetail should be called again after job completes
     await waitFor(() => {

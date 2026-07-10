@@ -13,9 +13,13 @@ import { Settings } from '../routes/Settings';
 
 // Mock entire API module so no real network calls are made
 vi.mock('../lib/api', () => ({
+  // App シェルがマウント時に warm-up で fetchHealth() を fire-and-forget する
+  fetchHealth: vi.fn().mockResolvedValue({ status: 'ok', version: 'test', db_path: '' }),
   fetchMetricsSummary: vi.fn().mockResolvedValue({}),
   fetchMetricsTimeseries: vi.fn().mockResolvedValue({ metric: 'ndcg3', points: [] }),
   fetchUpcomingRaces: vi.fn().mockResolvedValue({ races: [] }),
+  // UpcomingRaces (useThisWeekendRaces) が使う
+  fetchThisWeekendRaces: vi.fn().mockResolvedValue({ races: [] }),
   fetchRacesByDate: vi.fn().mockResolvedValue({ races: [] }),
   fetchRaceDetail: vi.fn().mockRejectedValue(new Error('404')),
   fetchPredictions: vi.fn().mockRejectedValue(new Error('503')),
@@ -88,7 +92,9 @@ describe('Routing', () => {
 
   it('renders UpcomingRaces at /upcoming', async () => {
     renderAt('/upcoming');
-    expect(await screen.findByRole('heading', { name: 'Upcoming Races' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: '今週末のレース（JRA）' })
+    ).toBeInTheDocument();
   });
 
   it('renders RaceDetail at /races/:id', async () => {
@@ -116,13 +122,13 @@ describe('Routing', () => {
     expect(await screen.findByRole('heading', { name: 'Past Races' })).toBeInTheDocument();
   });
 
-  it('sidebar contains all navigation links', async () => {
+  it('topbar contains all navigation links', async () => {
     renderAt('/');
+    // Topbar の 5 タブ: Dashboard / Race / Ledger / Models / Settings
     expect(await screen.findByRole('link', { name: /Dashboard/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Upcoming Races/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Past Races/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /^Race$/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Ledger/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Models/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Ingest/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Settings/i })).toBeInTheDocument();
   });
 });

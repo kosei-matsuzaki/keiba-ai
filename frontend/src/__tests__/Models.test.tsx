@@ -61,7 +61,8 @@ beforeEach(() => {
 describe('Models', () => {
   it('renders model list after API response', async () => {
     renderModels();
-    expect(await screen.findByText('2022-01-01/2025-01-01')).toBeInTheDocument();
+    // active モデルの期間はサマリカードとテーブル行の両方に出る
+    expect((await screen.findAllByText('2022-01-01/2025-01-01')).length).toBeGreaterThan(0);
     expect(screen.getByText('2022-01-01/2025-07-01')).toBeInTheDocument();
   });
 

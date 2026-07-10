@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Ledger } from '../routes/Ledger';
@@ -126,8 +127,9 @@ describe('Ledger', () => {
     expect(await screen.findByText('累計投資')).toBeInTheDocument();
     expect(screen.getByText('累計払戻')).toBeInTheDocument();
     expect(screen.getByText('純利益')).toBeInTheDocument();
-    expect(screen.getByText('回収率')).toBeInTheDocument();
-    expect(screen.getByText('的中率')).toBeInTheDocument();
+    // 回収率 / 的中率 はブレイクダウン表のヘッダにも出るため複数一致を許容
+    expect(screen.getAllByText('回収率').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('的中率').length).toBeGreaterThan(0);
   });
 
   it('renders cumulative profit chart section', async () => {
@@ -138,8 +140,12 @@ describe('Ledger', () => {
   it('renders breakdown table with correct rows', async () => {
     renderLedger();
     expect(await screen.findByText('券種別ブレイクダウン')).toBeInTheDocument();
-    expect(await screen.findByText('単勝')).toBeInTheDocument();
-    expect(screen.getByText('複勝')).toBeInTheDocument();
+    // 券種は購入明細 (デフォルト展開) の行にも出るため複数一致を許容
+    expect((await screen.findAllByText('単勝')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('複勝').length).toBeGreaterThan(0);
+    // ブレイクダウン固有の値 (回収率 1.08 / 0.84) が行として描画されている
+    expect(screen.getByText('108.0%')).toBeInTheDocument();
+    expect(screen.getByText('84.0%')).toBeInTheDocument();
   });
 
   it('shows the 購入明細 detail table by default', async () => {
@@ -160,13 +166,21 @@ describe('Ledger', () => {
   });
 
   it('CSV download button calls buildBetExportUrl and triggers download', async () => {
-    // Spy on document.createElement to intercept anchor click
-    const clickMock = vi.fn();
-    const anchorMock = { href: '', download: '', click: clickMock } as unknown as HTMLAnchorElement;
-    vi.spyOn(document, 'createElement').mockReturnValueOnce(anchorMock);
-
     renderLedger();
     const csvButton = await screen.findByRole('button', { name: /CSV/i });
+
+    // render 後に createElement を spy し、<a> 生成時のみ click を差し替える
+    // (jsdom はアンカー click でのナビゲーションを実装していないため)
+    const clickMock = vi.fn();
+    const origCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
+      const el = origCreateElement(tagName, options);
+      if (tagName === 'a') {
+        (el as HTMLAnchorElement).click = clickMock;
+      }
+      return el;
+    });
+
     fireEvent.click(csvButton);
 
     await waitFor(() => {
@@ -194,15 +208,15 @@ describe('Ledger', () => {
   });
 
   it('changes source filter to recommendation-only', async () => {
+    const user = userEvent.setup();
     renderLedger();
     await screen.findByText('累計投資');
 
-    // Simulate source filter change via the select component
-    // findByText for SelectValue placeholder
+    // Radix Select は pointer イベント主導なので userEvent で操作する
     const selectTrigger = await screen.findByRole('combobox');
-    fireEvent.click(selectTrigger);
-    const option = await screen.findByText('推奨のみ');
-    fireEvent.click(option);
+    await user.click(selectTrigger);
+    const option = await screen.findByRole('option', { name: '推奨のみ' });
+    await user.click(option);
 
     await waitFor(() => {
       expect(fetchBetSummary).toHaveBeenCalledWith(

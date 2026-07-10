@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import type { ReactElement } from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RecommendationsCard } from '../components/RecommendationsCard';
-import type { RecommendationsResponse } from '../types/api';
+import type { BetRecordOut, RecommendationsResponse } from '../types/api';
 
 // Prevent actual API calls from useCreateBet
 vi.mock('../lib/api', () => ({
@@ -13,6 +14,15 @@ vi.mock('../lib/api', () => ({
   isNotFoundError: vi.fn().mockReturnValue(false),
   isServiceUnavailableError: vi.fn().mockReturnValue(false),
 }));
+
+import { createBet, isNotFoundError, isServiceUnavailableError } from '../lib/api';
+
+beforeEach(() => {
+  // 呼び出し回数と、テスト個別で true にした判定がリークしないようリセット
+  vi.clearAllMocks();
+  vi.mocked(isNotFoundError).mockReturnValue(false);
+  vi.mocked(isServiceUnavailableError).mockReturnValue(false);
+});
 
 const mockData: RecommendationsResponse = {
   race_id: '202406010101',
@@ -98,7 +108,7 @@ const mockDataWithNullOdds: RecommendationsResponse = {
   ],
 };
 
-function wrap(ui: React.ReactElement) {
+function wrap(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
@@ -154,11 +164,7 @@ describe('RecommendationsCard', () => {
   });
 
   it('shows 503 error message', () => {
-    const { isServiceUnavailableError } = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../lib/api')
-    );
-    isServiceUnavailableError.mockReturnValue(true);
+    vi.mocked(isServiceUnavailableError).mockReturnValue(true);
 
     wrap(
       <RecommendationsCard
@@ -176,11 +182,7 @@ describe('RecommendationsCard', () => {
   });
 
   it('shows 404 error message', () => {
-    const { isNotFoundError } = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../lib/api')
-    );
-    isNotFoundError.mockReturnValue(true);
+    vi.mocked(isNotFoundError).mockReturnValue(true);
 
     wrap(
       <RecommendationsCard
@@ -227,11 +229,7 @@ describe('RecommendationsCard', () => {
   });
 
   it('calls createBet when buy button is clicked (uses recommended stake by default)', async () => {
-    const { createBet } = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../lib/api')
-    );
-    createBet.mockResolvedValue({ id: 1 });
+    vi.mocked(createBet).mockResolvedValue({ id: 1 } as BetRecordOut);
 
     wrap(
       <RecommendationsCard
@@ -258,11 +256,7 @@ describe('RecommendationsCard', () => {
   });
 
   it('uses manually-entered stake instead of recommended when buy clicked', async () => {
-    const { createBet } = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../lib/api')
-    );
-    createBet.mockResolvedValue({ id: 2 });
+    vi.mocked(createBet).mockResolvedValue({ id: 2 } as BetRecordOut);
 
     wrap(
       <RecommendationsCard
@@ -293,11 +287,7 @@ describe('RecommendationsCard', () => {
   });
 
   it('snaps non-100-unit input down to nearest 100 multiple', async () => {
-    const { createBet } = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../lib/api')
-    );
-    createBet.mockResolvedValue({ id: 3 });
+    vi.mocked(createBet).mockResolvedValue({ id: 3 } as BetRecordOut);
 
     wrap(
       <RecommendationsCard
@@ -343,11 +333,7 @@ describe('RecommendationsCard', () => {
   });
 
   it('zero-stake recommendation row still allows manual stake entry', async () => {
-    const { createBet } = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../lib/api')
-    );
-    createBet.mockResolvedValue({ id: 4 });
+    vi.mocked(createBet).mockResolvedValue({ id: 4 } as BetRecordOut);
 
     wrap(
       <RecommendationsCard
@@ -572,7 +558,8 @@ describe('RecommendationsCard', () => {
         },
       ],
     };
-    render(
+    // StakeInputAndBuy が useCreateBet (QueryClient) を要求するため wrap する
+    wrap(
       <RecommendationsCard
         raceId="202406010101"
         data={data}
@@ -603,7 +590,8 @@ describe('RecommendationsCard', () => {
         },
       ],
     };
-    render(
+    // StakeInputAndBuy が useCreateBet (QueryClient) を要求するため wrap する
+    wrap(
       <RecommendationsCard
         raceId="202406010101"
         data={data}

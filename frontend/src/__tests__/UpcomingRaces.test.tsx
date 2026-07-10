@@ -129,6 +129,8 @@ function renderUpcoming(initialPath = '/upcoming') {
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  // 呼び出し回数がテスト間でリークしないようにクリアする (実装は維持される)
+  vi.clearAllMocks();
   vi.mocked(fetchThisWeekendRaces).mockResolvedValue(mockRaces);
   vi.mocked(fetchBulkPredictions).mockResolvedValue(mockBulkPredictions);
   vi.mocked(discoverThisWeekendRaceIds).mockResolvedValue(mockDiscoverResponse);
@@ -141,20 +143,29 @@ beforeEach(() => {
 describe('UpcomingRaces table layout', () => {
   it('renders the page title', async () => {
     renderUpcoming();
-    expect(await screen.findByRole('heading', { name: 'Upcoming Races' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: '今週末のレース（JRA）' })
+    ).toBeInTheDocument();
   });
 
-  it('groups races by course with section headings', async () => {
+  it('groups races by day tabs and course section headings', async () => {
+    const user = userEvent.setup();
     renderUpcoming();
+    // 初期タブ (6/1) は東京のみ。中山は 6/2 タブに表示される。
     await screen.findByText('東京');
-    expect(screen.getByText('中山')).toBeInTheDocument();
+    expect(screen.queryByText('中山')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /6\/2/ }));
+    expect(await screen.findByText('中山')).toBeInTheDocument();
   });
 
   it('renders race rows as table rows (not cards)', async () => {
+    const user = userEvent.setup();
     renderUpcoming();
     // Rows are rendered as role="button" table rows per the PastRaces pattern
     expect(await screen.findByRole('button', { name: '東京 01R' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '中山 01R' })).toBeInTheDocument();
+    // 中山 (6/2) の行は日付タブを切り替えてから確認する
+    await user.click(screen.getByRole('tab', { name: /6\/2/ }));
+    expect(await screen.findByRole('button', { name: '中山 01R' })).toBeInTheDocument();
   });
 
   it('shows race name column', async () => {
@@ -223,7 +234,8 @@ describe('UpcomingRaces empty/error states', () => {
   it('shows skeleton while loading', () => {
     vi.mocked(fetchThisWeekendRaces).mockReturnValue(new Promise(() => {}));
     renderUpcoming();
-    const skeletons = document.querySelectorAll('[data-slot="skeleton"]');
+    // Skeleton は animate-skeleton-shimmer クラスで描画される
+    const skeletons = document.querySelectorAll('.animate-skeleton-shimmer');
     expect(skeletons.length).toBeGreaterThan(0);
   });
 });

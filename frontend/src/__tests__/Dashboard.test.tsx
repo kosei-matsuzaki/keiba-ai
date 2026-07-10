@@ -9,9 +9,11 @@ import type { MetricsSummary, MetricsTimeseries } from '../types/api';
 vi.mock('../lib/api', () => ({
   fetchMetricsSummary: vi.fn(),
   fetchMetricsTimeseries: vi.fn(),
+  // ActiveModelCard 表示のため useModels が使う
+  fetchModels: vi.fn(),
 }));
 
-import { fetchMetricsSummary, fetchMetricsTimeseries } from '../lib/api';
+import { fetchMetricsSummary, fetchMetricsTimeseries, fetchModels } from '../lib/api';
 
 const mockSummary: MetricsSummary = {
   ndcg1: 0.72,
@@ -48,6 +50,7 @@ function renderDashboard() {
 beforeEach(() => {
   vi.mocked(fetchMetricsSummary).mockResolvedValue(mockSummary);
   vi.mocked(fetchMetricsTimeseries).mockResolvedValue(mockTimeseries);
+  vi.mocked(fetchModels).mockResolvedValue([]);
 });
 
 describe('Dashboard', () => {

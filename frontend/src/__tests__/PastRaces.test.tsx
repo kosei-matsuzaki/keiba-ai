@@ -73,21 +73,24 @@ describe('PastRaces', () => {
     expect(await screen.findByRole('heading', { name: 'Past Races' })).toBeInTheDocument();
   });
 
-  it('shows a single date input (no preset buttons)', async () => {
+  it('shows the 日付 YMD picker (no preset buttons)', async () => {
     renderPastRaces();
     await screen.findByRole('heading', { name: 'Past Races' });
-    const dateInput = screen.getByLabelText('日付');
-    expect(dateInput).toHaveAttribute('type', 'date');
+    // DateYMDPicker は 年 / 月 / 日 の 3 つの Select で構成される
+    expect(screen.getByRole('combobox', { name: '日付 年' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '日付 月' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '日付 日' })).toBeInTheDocument();
     // No preset day buttons should be present
     expect(screen.queryByRole('button', { name: '7 日' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '30 日' })).not.toBeInTheDocument();
   });
 
-  it('reflects ?date= query param as the initial input value', async () => {
+  it('reflects ?date= query param as the initial picker value', async () => {
     renderPastRaces('/past?date=2024-06-01');
     await screen.findByRole('heading', { name: 'Past Races' });
-    const dateInput = screen.getByLabelText('日付');
-    expect(dateInput).toHaveValue('2024-06-01');
+    expect(screen.getByRole('combobox', { name: '日付 年' })).toHaveTextContent('2024');
+    expect(screen.getByRole('combobox', { name: '日付 月' })).toHaveTextContent('6');
+    expect(screen.getByRole('combobox', { name: '日付 日' })).toHaveTextContent('1');
   });
 
   it('groups races by course with section headings', async () => {
@@ -134,7 +137,8 @@ describe('PastRaces', () => {
   it('shows skeleton while loading', () => {
     vi.mocked(fetchRacesByDate).mockReturnValue(new Promise(() => {}));
     renderPastRaces();
-    const skeletons = document.querySelectorAll('[data-slot="skeleton"]');
+    // Skeleton は animate-skeleton-shimmer クラスで描画される
+    const skeletons = document.querySelectorAll('.animate-skeleton-shimmer');
     expect(skeletons.length).toBeGreaterThan(0);
   });
 
@@ -153,7 +157,9 @@ describe('PastRaces', () => {
   it('shows dash for null race name', async () => {
     renderPastRaces();
     await screen.findByText('東京');
-    // The table should have レース名 column header
-    expect(screen.getByRole('columnheader', { name: 'レース名' })).toBeInTheDocument();
+    // コース別セクションごとにテーブルがあるため レース名 ヘッダは複数出る
+    expect(screen.getAllByRole('columnheader', { name: 'レース名' }).length).toBeGreaterThan(0);
+    // name=null の行はダッシュを表示する
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 });
