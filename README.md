@@ -8,9 +8,9 @@ JRA 中央競馬のレースデータを自前パイプラインで収集し、*
 
 ## スクリーンショット
 
-| 週末レース一覧 | レース詳細 (AI 予測 + 推奨買目) |
+| レース詳細（AI 予測・単勝EV・推奨買目） | 収支台帳 |
 |---|---|
-| ![週末レース一覧](docs/images/upcoming-races.png) | ![レース詳細](docs/images/race-detail.png) |
+| ![レース詳細](docs/images/race-detail.png) | ![収支台帳](docs/images/ledger.png) |
 
 その他の画面は [docs/PORTFOLIO.md](docs/PORTFOLIO.md) を参照。
 

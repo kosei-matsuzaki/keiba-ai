@@ -25,21 +25,19 @@
 
 ## 2. スクリーンショット
 
-<!-- TODO: 画像を docs/images/ に配置後、コメントを外す
-| ダッシュボード | 週末レース一覧 |
+| レース詳細（AI 予測・単勝EV・BUY 推奨） | 過去レース一覧 |
 |---|---|
-| ![dashboard](images/dashboard.png) | ![upcoming](images/upcoming-races.png) |
+| ![race-detail](images/race-detail.png) | ![race-list](images/race-list.png) |
 
-| レース詳細（AI 予測） | 推奨買目 |
-|---|---|
-| ![race-detail](images/race-detail.png) | ![recommendations](images/recommendations.png) |
-
-| 収支台帳 | モデル管理 |
+| 収支台帳（買い方単位の損益管理） | モデル管理（学習・切替・バックテスト） |
 |---|---|
 | ![ledger](images/ledger.png) | ![models](images/models.png) |
--->
 
-*(スクリーンショット準備中)*
+| ダッシュボード（モデル成績の概観） | |
+|---|---|
+| ![dashboard](images/dashboard.png) | |
+
+<!-- TODO: 週末レース一覧 (upcoming-races.png) は netkeiba のレース情報提供の復旧後に撮影して追加 -->
 
 ## 3. アーキテクチャ
 
