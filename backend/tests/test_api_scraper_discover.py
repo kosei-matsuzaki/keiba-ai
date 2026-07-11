@@ -31,6 +31,17 @@ def _make_empty_netkeiba_response() -> MagicMock:
     return mock_resp
 
 
+def _make_empty_body_response() -> MagicMock:
+    """Build a mock response that is HTTP 200 but has an empty body.
+
+    netkeiba はメンテナンス等で 200 + 空ボディを返すことがある (2026-07 実績)。
+    """
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.content = b""
+    return mock_resp
+
+
 class TestDiscoverTodayRaceIds:
     def test_returns_race_ids_on_success(self, api_client: TestClient) -> None:
         """正常系: race_ids が返ること。"""
@@ -89,6 +100,25 @@ class TestDiscoverTodayRaceIds:
 
         assert resp.status_code == 502
         assert "netkeiba" in resp.json()["detail"]
+
+    def test_returns_502_with_clear_message_on_empty_body(
+        self, api_client: TestClient
+    ) -> None:
+        """200 + 空ボディ (メンテナンス等) は明確な detail 付きの 502 を返すこと。"""
+        with (
+            patch(
+                "scraper.discovery.RobotsCache.is_allowed",
+                return_value=True,
+            ),
+            patch(
+                "httpx.AsyncClient.get",
+                new=AsyncMock(return_value=_make_empty_body_response()),
+            ),
+        ):
+            resp = api_client.get("/api/scraper/discover_today_race_ids")
+
+        assert resp.status_code == 502
+        assert "空のレスポンス" in resp.json()["detail"]
 
     def test_returns_502_on_bad_response_status(self, api_client: TestClient) -> None:
         """netkeiba が status=NG を返した場合は 502 を返すこと。"""
@@ -285,6 +315,29 @@ class TestDiscoverThisWeekendRaceIds:
             resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
 
         assert resp.status_code == 502
+
+    def test_returns_502_with_clear_message_on_empty_body(
+        self, api_client: TestClient
+    ) -> None:
+        """race_info_top が 200 + 空ボディを返した場合も明確な detail 付き 502。"""
+        sat = date(2026, 5, 9)
+        sun = date(2026, 5, 10)
+
+        with (
+            self._patch_this_weekend(sat, sun),
+            patch(
+                "scraper.discovery.RobotsCache.is_allowed",
+                return_value=True,
+            ),
+            patch(
+                "httpx.AsyncClient.get",
+                new=AsyncMock(return_value=_make_empty_body_response()),
+            ),
+        ):
+            resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
+
+        assert resp.status_code == 502
+        assert "空のレスポンス" in resp.json()["detail"]
 
     def test_decodes_eucjp_shutuba_pages(self, api_client: TestClient) -> None:
         """race.netkeiba.com は Content-Type charset 空で EUC-JP を返す。

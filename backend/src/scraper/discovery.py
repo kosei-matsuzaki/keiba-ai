@@ -50,6 +50,42 @@ class DiscoveryError(Exception):
     """netkeiba 通信失敗・robots 不許可・レスポンスパース失敗を表す。"""
 
 
+_EMPTY_BODY_MESSAGE = (
+    "netkeiba API が空のレスポンスを返しました。"
+    "深夜帯などにデータ提供が一時停止することがあります。時間をおいて再試行してください。"
+)
+
+
+async def _fetch_json(url: str, user_agent: str, timeout: float = 15.0) -> object:
+    """netkeiba JSON API を fetch してパース済み payload を返す。
+
+    通信失敗・HTTP エラー・空ボディ・JSON 不正は、原因が区別できる
+    メッセージ付きの DiscoveryError にして送出する (router が 502 detail に使う)。
+    """
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": user_agent},
+            timeout=timeout,
+            follow_redirects=True,
+        ) as http_client:
+            resp = await http_client.get(url)
+            resp.raise_for_status()
+    except Exception as exc:
+        raise DiscoveryError(f"netkeiba API へのアクセスに失敗しました: {exc}") from exc
+
+    # 200 でもメンテナンス等で本文が空になることがある (2026-07 に実績あり)。
+    # json() に任せると "Expecting value" という不親切な文言になるため先に判定する。
+    if not resp.content.strip():
+        raise DiscoveryError(_EMPTY_BODY_MESSAGE)
+
+    try:
+        return resp.json()
+    except Exception as exc:
+        raise DiscoveryError(
+            f"netkeiba API のレスポンスが JSON として解釈できませんでした: {exc}"
+        ) from exc
+
+
 @dataclass
 class WeekendDiscovery:
     race_ids: list[str]
@@ -72,17 +108,7 @@ async def discover_today_race_ids(kaisai_date: str) -> list[str]:
     if not robots_cache.is_allowed(url):
         raise DiscoveryError("robots.txt disallows this URL")
 
-    try:
-        async with httpx.AsyncClient(
-            headers={"User-Agent": settings.user_agent},
-            timeout=15.0,
-            follow_redirects=True,
-        ) as http_client:
-            resp = await http_client.get(url)
-            resp.raise_for_status()
-            payload = resp.json()
-    except Exception as exc:
-        raise DiscoveryError(f"netkeiba API へのアクセスに失敗しました: {exc}") from exc
+    payload = await _fetch_json(url, settings.user_agent)
 
     try:
         return parse_race_ids(payload)
@@ -134,17 +160,7 @@ async def discover_this_weekend_race_ids(refresh: bool = False) -> WeekendDiscov
     if not robots_cache.is_allowed(top_url):
         raise DiscoveryError("robots.txt disallows race_info_top URL")
 
-    try:
-        async with httpx.AsyncClient(
-            headers={"User-Agent": settings.user_agent},
-            timeout=15.0,
-            follow_redirects=True,
-        ) as http_client:
-            resp = await http_client.get(top_url)
-            resp.raise_for_status()
-            payload = resp.json()
-    except Exception as exc:
-        raise DiscoveryError(f"netkeiba race_info_top へのアクセスに失敗しました: {exc}") from exc
+    payload = await _fetch_json(top_url, settings.user_agent)
 
     try:
         _jra_race_ids, groups = extract_jra_race_ids_with_kaisai_groups(payload)
