@@ -1,7 +1,11 @@
 r"""Parse netkeiba race-list page → list of race IDs for shutuba ingest.
 
 Target URL:
-  https://race.netkeiba.com/top/race_list.html?kaisai_date=YYYYMMDD
+  https://race.netkeiba.com/top/race_list_sub.html?kaisai_date=YYYYMMDD
+
+race_list.html 本体は 2026 時点で Ajax 化されており静的 HTML に race_id を
+含まない。race_list_sub.html はその Ajax が読み込む HTML 断片で、構造は
+従来の race_list.html と同一 (RaceList_DataItem 内の <a href="...race_id=...">)。
 
 実 HTML 構造（2026 時点で確認済）:
   <dl class="RaceList_DataList">
@@ -44,6 +48,10 @@ logger = get_logger(__name__)
 # 将来的に別 URL 形式が必要になった場合は別途パターンを追加すること。
 _RACE_ID_QS_RE = re.compile(r"race_id=(\d{12})")
 
+# 開催なし日の race_list_sub.html にも存在する RaceList 系コンテナの class。
+# allow_empty=True 時に「開催なし」と「ページ構造変化」を区別するために使う。
+_RACELIST_CONTAINER_RE = re.compile(r"^RaceList_")
+
 # JRA 中央競馬場トラックコード (race_id の 5-6 桁目)
 _CENTRAL_TRACK_CODES = frozenset({"01", "02", "03", "04", "05", "06", "07", "08", "09", "10"})
 
@@ -57,8 +65,10 @@ def _is_central_race(race_id: str) -> bool:
     return len(race_id) >= 6 and race_id[4:6] in _CENTRAL_TRACK_CODES
 
 
-def parse_race_ids_from_card_calendar(html: str, *, include_nar: bool = False) -> list[str]:
-    """Extract race IDs from a race.netkeiba.com race_list page.
+def parse_race_ids_from_card_calendar(
+    html: str, *, include_nar: bool = False, allow_empty: bool = False
+) -> list[str]:
+    """Extract race IDs from a race.netkeiba.com race_list(_sub) page.
 
     Searches all <a> tags whose href contains a 12-digit race_id as a
     ?race_id=<id> query parameter.
@@ -66,8 +76,14 @@ def parse_race_ids_from_card_calendar(html: str, *, include_nar: bool = False) -
     By default, only JRA central races (track codes 01-10) are returned.
     Pass include_nar=True to keep NAR / 地方 races as well.
 
+    allow_empty=True の場合、race_id が 0 件でも RaceList 系コンテナが存在する
+    (= ページ構造は正常で単に開催がない) なら空リストを返す。開催なし日でも
+    race_list_sub.html は空の <div class="RaceList_Box"> を返すため、これで
+    「開催なし」と「構造変化」を区別する。
+
     Raises:
-        ParseError: If no race IDs could be found.
+        ParseError: If no race IDs could be found (and the page does not look
+            like a valid no-kaisai page when allow_empty=True).
     """
     soup = BeautifulSoup(html, "lxml")
     race_ids: list[str] = []
@@ -87,6 +103,16 @@ def parse_race_ids_from_card_calendar(html: str, *, include_nar: bool = False) -
             nar_skipped += 1
             continue
         race_ids.append(race_id)
+
+    # nar_skipped > 0 なら構造自体は読めている。0 件でも RaceList 系
+    # コンテナがあれば「開催なし」ページとみなす。
+    if (
+        not race_ids
+        and allow_empty
+        and (nar_skipped or soup.find(class_=_RACELIST_CONTAINER_RE) is not None)
+    ):
+        logger.info("No central race IDs in race-list HTML — no kaisai on this date")
+        return []
 
     if not race_ids:
         logger.error(

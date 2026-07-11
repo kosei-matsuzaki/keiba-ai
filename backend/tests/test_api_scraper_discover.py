@@ -1,33 +1,47 @@
 """Tests for GET /api/scraper/discover_today_race_ids and
-GET /api/scraper/discover_this_weekend_race_ids endpoints."""
+GET /api/scraper/discover_this_weekend_race_ids endpoints.
+
+データソースは race_list_sub.html (HTML 断片)。旧 JSON API
+(api_get_race_info_top.html) は 2026-07 に空レスポンスを返すようになったため廃止。
+"""
 
 from __future__ import annotations
 
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 from fastapi.testclient import TestClient
 
 
-def _make_netkeiba_response(race_ids: list[str]) -> MagicMock:
-    """Build a mock httpx.Response returning a valid netkeiba payload."""
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = {
-        "status": "OK",
-        "data": {
-            "info": [{"RaceId": rid} for rid in race_ids],
-        },
-    }
-    return mock_resp
+def _make_race_list_sub_html(race_ids: list[str]) -> str:
+    """Build a minimal race_list_sub.html fragment containing the given race_ids."""
+    items = "".join(
+        f'<li class="RaceList_DataItem">'
+        f'<a href="../race/shutuba.html?race_id={rid}&rf=race_list">{i + 1}R</a>'
+        f"</li>"
+        for i, rid in enumerate(race_ids)
+    )
+    return (
+        '<div class="RaceList_Body RaceList_Top" id="RaceTopRace">'
+        '<div class="RaceList_Box clearfix">'
+        f'<dl class="RaceList_DataList"><dd><ul>{items}</ul></dd></dl>'
+        "</div></div>"
+    )
 
 
-def _make_empty_netkeiba_response() -> MagicMock:
-    """Build a mock response with no races (valid OK, empty info)."""
+def _make_no_kaisai_html() -> str:
+    """開催なし日の race_list_sub.html (空の RaceList_Box) を模す。"""
+    return (
+        '<div class="RaceList_Body RaceList_Top" id="RaceTopRace">'
+        '<div class="RaceList_Box clearfix"></div></div>'
+    )
+
+
+def _make_html_response(html: str) -> MagicMock:
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = {"status": "OK", "data": {"info": []}}
+    mock_resp.content = html.encode("utf-8")
+    mock_resp.text = html
     return mock_resp
 
 
@@ -46,7 +60,7 @@ class TestDiscoverTodayRaceIds:
     def test_returns_race_ids_on_success(self, api_client: TestClient) -> None:
         """正常系: race_ids が返ること。"""
         expected_ids = ["202506050101", "202506050102", "202506050201"]
-        mock_resp = _make_netkeiba_response(expected_ids)
+        mock_resp = _make_html_response(_make_race_list_sub_html(expected_ids))
 
         with (
             patch(
@@ -66,8 +80,8 @@ class TestDiscoverTodayRaceIds:
         assert "discovered_at" in data
 
     def test_returns_empty_list_when_no_races(self, api_client: TestClient) -> None:
-        """空応答: race_ids=[] でも 200 を返すこと（404 ではない）。"""
-        mock_resp = _make_empty_netkeiba_response()
+        """開催なし: race_ids=[] でも 200 を返すこと（404 ではない）。"""
+        mock_resp = _make_html_response(_make_no_kaisai_html())
 
         with (
             patch(
@@ -120,11 +134,9 @@ class TestDiscoverTodayRaceIds:
         assert resp.status_code == 502
         assert "空のレスポンス" in resp.json()["detail"]
 
-    def test_returns_502_on_bad_response_status(self, api_client: TestClient) -> None:
-        """netkeiba が status=NG を返した場合は 502 を返すこと。"""
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {"status": "NG", "data": {"info": []}}
+    def test_returns_502_on_unrecognized_html(self, api_client: TestClient) -> None:
+        """race_id もRaceList 構造も無い HTML はパース失敗として 502 を返すこと。"""
+        mock_resp = _make_html_response("<html><body>maintenance</body></html>")
 
         with (
             patch(
@@ -139,10 +151,11 @@ class TestDiscoverTodayRaceIds:
             resp = api_client.get("/api/scraper/discover_today_race_ids")
 
         assert resp.status_code == 502
+        assert "パース" in resp.json()["detail"]
 
     def test_accepts_date_query_param(self, api_client: TestClient) -> None:
         """date クエリパラメータを指定できること。"""
-        mock_resp = _make_netkeiba_response(["202505050101"])
+        mock_resp = _make_html_response(_make_race_list_sub_html(["202505050101"]))
 
         with (
             patch(
@@ -176,29 +189,9 @@ class TestDiscoverTodayRaceIds:
 # ── /api/scraper/discover_this_weekend_race_ids ───────────────────────────────
 
 
-def _make_top_response(race_ids: list[str]) -> MagicMock:
-    """Build a mock race_info_top response containing the given race_ids."""
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = {
-        "status": "OK",
-        "data": {"info": [{"RaceId": rid} for rid in race_ids]},
-    }
-    return mock_resp
-
-
-def _make_shutuba_html(race_date: str) -> str:
-    """Minimal shutuba HTML containing the given date in the <title> tag."""
-    y, m, d = race_date.split("-")
-    return (
-        f"<html><head><title>テストレース 出馬表 | {int(y)}年{int(m)}月{int(d)}日</title></head>"
-        "<body><table class='Shutuba_Table'></table></body></html>"
-    )
-
-
 class TestDiscoverThisWeekendRaceIds:
     def _patch_this_weekend(self, sat: date, sun: date):
-        """Patch this_weekend_dates in the scraper router to return fixed dates."""
+        """Patch this_weekend_dates in the discovery module to return fixed dates."""
         return patch(
             "scraper.discovery.this_weekend_dates",
             return_value=(sat, sun),
@@ -212,43 +205,30 @@ class TestDiscoverThisWeekendRaceIds:
     def setup_method(self) -> None:  # pytest hook: called before each test
         self._clear_cache()
 
-    def test_returns_only_weekend_jra_ids(self, api_client: TestClient) -> None:
-        """JRA の土・日 race_id のみ返り、NAR や他週の race_id は除外される。"""
+    @staticmethod
+    def _dispatch_by_date(responses: dict[str, str]):
+        """kaisai_date=YYYYMMDD で応答 HTML を出し分ける AsyncClient.get の side_effect。"""
+
+        async def _async_get(url: str, *args, **kwargs) -> MagicMock:
+            for kaisai_date, html in responses.items():
+                if f"kaisai_date={kaisai_date}" in url:
+                    return _make_html_response(html)
+            return _make_html_response(_make_no_kaisai_html())
+
+        return _async_get
+
+    def test_returns_weekend_jra_ids_from_both_days(
+        self, api_client: TestClient
+    ) -> None:
+        """土・日それぞれの race_list_sub から JRA race_id を union して返す。"""
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
 
         # race_id 形式: YYYY + 場(2) + 回(2) + 日(2) + R(2)。場 01-10=JRA / 11+=NAR。
-        # kaisai_day_key = race_id[:10] (年+場+回+日)。実 date は shutuba 経由で取得。
-        race_ids_all = [
-            "202605090501",  # 今週土 / 東京(05) / JRA
-            "202605090502",  # 今週土 / 東京(05) / JRA
-            "202605100601",  # 今週日 / 中山(06) / JRA
-            "202605160501",  # 来週土 / JRA → 除外
-            "202611050901",  # 今週土 / NAR(11=大井) → 場フィルタで除外
-        ]
-
-        shutuba_html_sat = _make_shutuba_html("2026-05-09")
-        shutuba_html_sun = _make_shutuba_html("2026-05-10")
-        shutuba_html_next = _make_shutuba_html("2026-05-16")
-
-        mock_top = _make_top_response(race_ids_all)
-
-        async def _async_get(url: str, *args, **kwargs) -> MagicMock:
-            """並列 probe 環境では URL ベースで dispatch しないと順序が壊れる。"""
-            mock = MagicMock()
-            mock.raise_for_status = MagicMock()
-            if "api_get_race_info_top" in url:
-                # race_info_top JSON は元の mock_top をそのまま返す
-                return mock_top
-            if "race_id=202605090501" in url:
-                mock.text = shutuba_html_sat
-            elif "race_id=202605100601" in url:
-                mock.text = shutuba_html_sun
-            elif "race_id=202605160501" in url:
-                mock.text = shutuba_html_next
-            else:
-                mock.text = "<html></html>"
-            return mock
+        sat_html = _make_race_list_sub_html(
+            ["202605090501", "202605090502", "202611050901"]  # 3件目は NAR(11=大井)
+        )
+        sun_html = _make_race_list_sub_html(["202605100601"])
 
         with (
             self._patch_this_weekend(sat, sun),
@@ -258,25 +238,31 @@ class TestDiscoverThisWeekendRaceIds:
             ),
             patch(
                 "httpx.AsyncClient.get",
-                new=AsyncMock(side_effect=_async_get),
+                new=AsyncMock(
+                    side_effect=self._dispatch_by_date(
+                        {"20260509": sat_html, "20260510": sun_html}
+                    )
+                ),
             ),
         ):
             resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
 
         assert resp.status_code == 200
         data = resp.json()
-        assert set(data["race_ids"]) == {"202605090501", "202605090502", "202605100601"}
+        assert set(data["race_ids"]) == {
+            "202605090501",
+            "202605090502",
+            "202605100601",
+        }
         assert data["saturday_date"] == "2026-05-09"
         assert data["sunday_date"] == "2026-05-10"
-        # 3 つの unique 開催日キー（土x1, 日x1, 来週土x1）をプローブ
-        assert data["total_kaisai_days_probed"] == 3
+        # unique 開催日キー (race_id[:10]) は 土x1 + 日x1 = 2
+        assert data["total_kaisai_days_probed"] == 2
 
     def test_returns_empty_when_no_jra_races(self, api_client: TestClient) -> None:
-        """JRA レースが 0 件の場合は race_ids=[] で 200 を返す。"""
+        """土日とも開催なしの場合は race_ids=[] で 200 を返す。"""
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
-
-        mock_top = _make_top_response([])
 
         with (
             self._patch_this_weekend(sat, sun),
@@ -286,7 +272,9 @@ class TestDiscoverThisWeekendRaceIds:
             ),
             patch(
                 "httpx.AsyncClient.get",
-                new=AsyncMock(return_value=mock_top),
+                new=AsyncMock(
+                    return_value=_make_html_response(_make_no_kaisai_html())
+                ),
             ),
         ):
             resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
@@ -296,8 +284,33 @@ class TestDiscoverThisWeekendRaceIds:
         assert data["race_ids"] == []
         assert data["total_kaisai_days_probed"] == 0
 
+    def test_filters_nar_venues(self, api_client: TestClient) -> None:
+        """NAR 場コード (11〜) の race_id は除外される。"""
+        sat = date(2026, 5, 9)
+        sun = date(2026, 5, 10)
+
+        # NAR only — venue code は race_id[4:6] (年の直後 2 桁)。11=大井, 12=川崎。
+        nar_html = _make_race_list_sub_html(["202611050901", "202612050901"])
+
+        with (
+            self._patch_this_weekend(sat, sun),
+            patch(
+                "scraper.discovery.RobotsCache.is_allowed",
+                return_value=True,
+            ),
+            patch(
+                "httpx.AsyncClient.get",
+                new=AsyncMock(return_value=_make_html_response(nar_html)),
+            ),
+        ):
+            resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
+
+        assert resp.status_code == 200
+        assert resp.json()["race_ids"] == []
+        assert resp.json()["total_kaisai_days_probed"] == 0
+
     def test_returns_502_on_netkeiba_error(self, api_client: TestClient) -> None:
-        """race_info_top への通信エラーは 502 を返す。"""
+        """race_list_sub への通信エラーは 502 を返す。"""
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
 
@@ -319,7 +332,7 @@ class TestDiscoverThisWeekendRaceIds:
     def test_returns_502_with_clear_message_on_empty_body(
         self, api_client: TestClient
     ) -> None:
-        """race_info_top が 200 + 空ボディを返した場合も明確な detail 付き 502。"""
+        """race_list_sub が 200 + 空ボディを返した場合も明確な detail 付き 502。"""
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
 
@@ -339,103 +352,15 @@ class TestDiscoverThisWeekendRaceIds:
         assert resp.status_code == 502
         assert "空のレスポンス" in resp.json()["detail"]
 
-    def test_decodes_eucjp_shutuba_pages(self, api_client: TestClient) -> None:
-        """race.netkeiba.com は Content-Type charset 空で EUC-JP を返す。
-
-        httpx のデフォルト UTF-8 デコードのままでは title 内の "YYYY年..." が
-        mojibake 化して日付抽出に失敗するため、明示的に encoding="euc-jp" を
-        セットする必要がある。実体は httpx.Response (bytes ベース) で組み立てて、
-        encoding 切替に依存する挙動を再現する。
-        """
-        sat = date(2026, 5, 9)
-        sun = date(2026, 5, 10)
-        race_ids_all = ["202605090501"]
-
-        # 実 race.netkeiba.com 同様、EUC-JP のバイト列を charset なしで返す
-        shutuba_html_eucjp = _make_shutuba_html("2026-05-09").encode("euc-jp")
-        eucjp_response = httpx.Response(
-            200,
-            content=shutuba_html_eucjp,
-            headers={"Content-Type": "text/html"},  # charset を意図的に省略
-            # httpx 0.28+ では raise_for_status() が request 未バインドだと
-            # RuntimeError を投げるためダミーを渡しておく。
-            request=httpx.Request("GET", "https://race.netkeiba.com/race/shutuba.html"),
-        )
-
-        mock_top = _make_top_response(race_ids_all)
-
-        async def _async_get(url: str, *args, **kwargs):
-            if "api_get_race_info_top" in url:
-                return mock_top
-            return eucjp_response
-
-        with (
-            self._patch_this_weekend(sat, sun),
-            patch(
-                "scraper.discovery.RobotsCache.is_allowed",
-                return_value=True,
-            ),
-            patch(
-                "httpx.AsyncClient.get",
-                new=AsyncMock(side_effect=_async_get),
-            ),
-        ):
-            resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
-
-        assert resp.status_code == 200
-        # encoding="euc-jp" がセットされていれば日付が抽出され race_id が残る
-        assert resp.json()["race_ids"] == ["202605090501"]
-
-    def test_filters_nar_venues(self, api_client: TestClient) -> None:
-        """NAR 場コード (11〜) の race_id は shutuba fetch 前に除外される。"""
-        sat = date(2026, 5, 9)
-        sun = date(2026, 5, 10)
-
-        # NAR only — venue code は race_id[4:6] (年の直後 2 桁)。11=大井, 12=川崎。
-        nar_ids = ["202611050901", "202612050901"]
-        mock_top = _make_top_response(nar_ids)
-
-        with (
-            self._patch_this_weekend(sat, sun),
-            patch(
-                "scraper.discovery.RobotsCache.is_allowed",
-                return_value=True,
-            ),
-            patch(
-                "httpx.AsyncClient.get",
-                new=AsyncMock(return_value=mock_top),
-            ),
-        ):
-            resp = api_client.get("/api/scraper/discover_this_weekend_race_ids")
-
-        assert resp.status_code == 200
-        # NAR は groups に入らないので probed=0、race_ids=[]
-        assert resp.json()["race_ids"] == []
-        assert resp.json()["total_kaisai_days_probed"] == 0
-
     def test_caches_result_within_ttl(self, api_client: TestClient) -> None:
-        """初回 probe 後 TTL 内の 2 回目呼び出しは netkeiba を再 fetch しない。
-
-        race_info_top も含めて httpx.get が 0 回でないことだけを確認すると
-        厳密性を欠くので、初回コール直後の 2 回目で `httpx.get` 呼び出し数が
-        増えないことをアサートする。
-        """
+        """初回取得後 TTL 内の 2 回目呼び出しは netkeiba を再 fetch しない。"""
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
-        race_ids_all = ["202605090501"]
 
-        shutuba_html = _make_shutuba_html("2026-05-09")
-        mock_top = _make_top_response(race_ids_all)
-
-        async def _async_get(url: str, *args, **kwargs):
-            if "api_get_race_info_top" in url:
-                return mock_top
-            mock = MagicMock()
-            mock.raise_for_status = MagicMock()
-            mock.text = shutuba_html
-            return mock
-
-        get_mock = AsyncMock(side_effect=_async_get)
+        sat_html = _make_race_list_sub_html(["202605090501"])
+        get_mock = AsyncMock(
+            side_effect=self._dispatch_by_date({"20260509": sat_html})
+        )
 
         with (
             self._patch_this_weekend(sat, sun),
@@ -460,20 +385,11 @@ class TestDiscoverThisWeekendRaceIds:
         """?refresh=true は in-process キャッシュを無視して再 fetch する。"""
         sat = date(2026, 5, 9)
         sun = date(2026, 5, 10)
-        race_ids_all = ["202605090501"]
 
-        shutuba_html = _make_shutuba_html("2026-05-09")
-        mock_top = _make_top_response(race_ids_all)
-
-        async def _async_get(url: str, *args, **kwargs):
-            if "api_get_race_info_top" in url:
-                return mock_top
-            mock = MagicMock()
-            mock.raise_for_status = MagicMock()
-            mock.text = shutuba_html
-            return mock
-
-        get_mock = AsyncMock(side_effect=_async_get)
+        sat_html = _make_race_list_sub_html(["202605090501"])
+        get_mock = AsyncMock(
+            side_effect=self._dispatch_by_date({"20260509": sat_html})
+        )
 
         with (
             self._patch_this_weekend(sat, sun),

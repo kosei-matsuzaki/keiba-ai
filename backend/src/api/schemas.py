@@ -313,7 +313,7 @@ class DiscoverThisWeekendRaceIdsResponse(BaseModel):
     race_ids: list[str]
     saturday_date: str        # YYYY-MM-DD
     sunday_date: str          # YYYY-MM-DD
-    total_kaisai_days_probed: int  # shutuba pre-fetch を試みた unique 開催日キー数
+    total_kaisai_days_probed: int  # 発見した unique 開催日キー (race_id[:10]) 数
     discovered_at: str        # ISO 8601
 
 

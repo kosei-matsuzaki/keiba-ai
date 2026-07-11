@@ -73,6 +73,33 @@ def test_raises_parse_error_when_only_nar() -> None:
         parse_race_ids_from_card_calendar(html)
 
 
+def test_allow_empty_returns_empty_for_no_kaisai_page() -> None:
+    """開催なし日の race_list_sub.html (空の RaceList_Box) は allow_empty=True で []。"""
+    html = (
+        '<div class="RaceList_Body RaceList_Top" id="RaceTopRace">'
+        '<div class="RaceList_Box clearfix"></div></div>'
+    )
+    assert parse_race_ids_from_card_calendar(html, allow_empty=True) == []
+
+
+def test_allow_empty_returns_empty_when_only_nar() -> None:
+    """NAR のみの HTML も allow_empty=True なら [] (構造は正常と判断)。"""
+    html = """
+    <html><body>
+      <a href="/race/shutuba.html?race_id=202644010101">大井 1R</a>
+    </body></html>
+    """
+    assert parse_race_ids_from_card_calendar(html, allow_empty=True) == []
+
+
+def test_allow_empty_still_raises_on_unrecognized_html() -> None:
+    """race_id も RaceList 系コンテナも無い HTML は allow_empty=True でも ParseError。"""
+    with pytest.raises(ParseError):
+        parse_race_ids_from_card_calendar(
+            "<html><body><p>maintenance</p></body></html>", allow_empty=True
+        )
+
+
 def test_central_only_filter_inline() -> None:
     """インライン HTML で JRA 中央のみフィルタが効くこと。"""
     html = """

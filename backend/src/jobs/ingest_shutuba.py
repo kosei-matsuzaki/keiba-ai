@@ -8,7 +8,9 @@ Usage:
     python -m jobs.ingest_shutuba --date 2025-05-05
 
 フロー (--date のみ):
-  1. race.netkeiba.com/top/race_list.html?kaisai_date=YYYYMMDD から当日 race_id 一覧取得
+  1. race.netkeiba.com/top/race_list_sub.html?kaisai_date=YYYYMMDD から当日 race_id 一覧取得
+     (race_list.html 本体は AJAX 化されて race_id を含まないため、その AJAX が
+     読み込む HTML 断片 race_list_sub.html を直接 fetch する)
   2. 各 race_id について shutuba page を fetch してパース
   3. races / entries テーブルに upsert
 
@@ -16,12 +18,6 @@ Usage:
   calendar fetch を skip して与えられた race_id 群について直接 shutuba HTML を取得して ingest する。
   --date も指定できるが calendar fetch には使わず、DB に保存する date 値として使う。
   両方指定された場合は --race-ids 優先で calendar fetch は行わない。
-
-  ⚠ calendar 取得の現状:
-    race.netkeiba.com/top/race_list.html?kaisai_date=YYYYMMDD は AJAX で race_id を取得する
-    仕様のため、静的 HTML には race_id が含まれない。
-    サーバ側 API (/api/api_get_jra_digest2.html) が空レスポンスを返す場合があり、
-    calendar 経由の自動取得が不安定。--race-ids で直接指定することを推奨する。
 
 upsert ポリシー:
   - races: race row が存在しない場合のみ INSERT。
@@ -70,7 +66,7 @@ from scraper.stop_flag import ScraperStopped
 
 logger = get_logger(__name__)
 
-_CARD_CALENDAR_URL = "https://race.netkeiba.com/top/race_list.html?kaisai_date={date}"
+_CARD_CALENDAR_URL = "https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date}"
 _SHUTUBA_URL = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
 # 単勝オッズ + 人気のライブ JSON。出馬表 HTML は JS でオッズを後挿入するため
 # 静的取得では placeholder しか得られない。type=1 が 単勝/複勝、action=update で
@@ -474,8 +470,7 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Comma-separated list of race IDs to ingest directly, skipping calendar fetch. "
             "例: --race-ids 202506050911,202506050912 "
-            "race.netkeiba.com の race_list は AJAX 取得のため calendar 経由の自動取得が "
-            "不安定な場合にこのオプションで直接指定する。"
+            "calendar (race_list_sub) 経由の自動取得が使えない場合にこのオプションで直接指定する。"
         ),
     )
     parser.add_argument(
