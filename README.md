@@ -6,6 +6,12 @@ JRA 中央競馬のレースデータを自前パイプラインで収集し、*
 
 > 📘 作品説明資料 (概要・スクリーンショット・技術ハイライト・AI 活用): **[docs/PORTFOLIO.md](docs/PORTFOLIO.md)**
 
+## 🎥 モデルの計算を可視化した解説動画
+
+[![モデルの計算解説（クリックで再生）](docs/images/model-explainer-poster.png)](docs/model-explainer.mp4)
+
+Set Transformer + 履歴 GRU による能力推定、Q/K/V を用いた self-attention、ability→value 分離、確率導出から買目提案までの**計算過程を manim で可視化した解説動画**です（サムネイルをクリックで再生・ダウンロード）。アニメーションのソースは [docs/model-explainer.py](docs/model-explainer.py)。
+
 ## スクリーンショット
 
 | レース詳細（AI 予測・単勝EV・推奨買目） | 収支台帳 |

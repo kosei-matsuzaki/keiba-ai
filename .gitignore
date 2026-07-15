@@ -47,3 +47,14 @@ Thumbs.db
 *.swp
 *.swo
 .vscode/
+
+# ES/コンテスト提出用の個人情報入り資料（公開リポジトリに含めない）
+/作品資料_競馬AI.html
+/作品資料_競馬AI.pdf
+/紹介動画_台本.md
+
+# ルート直下の作業用コピー（正本は docs/model-explainer.* をコミット）
+/モデル計算解説_3B1Bスタイル.mp4
+/モデルアーキテクチャ解説.mp4
+/arch_math.py
+/arch_scene.py
