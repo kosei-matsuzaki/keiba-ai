@@ -18,8 +18,7 @@ from manim import *
 import numpy as np
 import os
 
-FONT_REG = "Latin Modern Roman"   # 本文: 数式(Computer Modern)と統一
-FONT_BOLD = "Segoe UI"             # タイトルのみ (現行維持)
+FONT = "Segoe UI"   # 全テキストをタイトルと同じ Segoe UI Bold で統一
 
 C_AGG     = "#34d399"   # aggregate features (emerald)
 C_PAST    = "#5eead4"   # past-race result vector x_t (aqua) -- distinct from hidden state
@@ -37,14 +36,13 @@ BG        = "#0c1420"
 POOL = [0.25, 0.82, 0.48, 0.35, 0.9, 0.6, 0.18, 0.72, 0.42, 0.55,
         0.86, 0.3, 0.66, 0.5, 0.22, 0.78, 0.4, 0.7]
 
-# Web スクリーンショット (act7) の場所。リポジトリルートから実行する想定。
+# act7 の Web スクリーンショットの場所 (リポジトリルートから実行する想定)
 IMG_DIR = os.environ.get("KEIBA_IMG_DIR", "docs/images")
 
 
-def jt(s, size=24, color=WHITE, weight=NORMAL):
-    """All-English text: single clean Latin font (no CJK mixing)."""
-    font = FONT_BOLD if weight == BOLD else FONT_REG
-    return Text(s, font=font, font_size=size, color=color, weight=weight)
+def jt(s, size=24, color=WHITE, weight=BOLD):
+    """All text in Segoe UI Bold (same look as the title)."""
+    return Text(s, font=FONT, font_size=size, color=color, weight=BOLD)
 
 
 def arr(start, end, color, sw=3.0, buff=0.1):
@@ -130,49 +128,56 @@ class ModelMath(Scene):
 
     # ============================================================
     def act1_vectors(self, cap):
-        cap("A race is a variable-size set of horses (4 here). Each horse is a feature vector.")
+        cap("A race is a variable-size set of horses (4 here). Each horse is described by feature vectors.")
         vecs = VGroup()
         for i in range(4):
-            v = vvec(vs(i + 1, 6), C_AGG, cell=0.34)
+            v = vvec(vs(i + 1, 8), C_AGG, cell=0.26)   # thin & dense (matches later acts)
             lab = jt(f"Horse {i+1}", 18, color=WHITE)
             grp = VGroup(v, lab)
-            lab.next_to(v, DOWN, buff=0.18)
+            lab.next_to(v, DOWN, buff=0.2)
             vecs.add(grp)
-        vecs.arrange(RIGHT, buff=1.2).move_to(UP*0.35)
+        vecs.arrange(RIGHT, buff=1.3).move_to(UP*0.3)
         self.play(LaggedStart(*[FadeIn(g, shift=UP*0.3) for g in vecs], lag_ratio=0.2), run_time=1.6)
         self.wait(1.0)
         brace = Brace(vecs, DOWN, buff=0.3, color=C_DIM)
-        btext = jt("N horses = variable length (N = 4 here)", 18, color=C_DIM).next_to(brace, DOWN, buff=0.14)
+        btext = jt("N horses = variable length (N = 4 here)", 18, color=C_DIM).next_to(brace, DOWN, buff=0.16)
         self.play(GrowFromCenter(brace), FadeIn(btext))
-        self.wait(1.4)
+        self.wait(1.6)
 
+        # pick out horse 1 (like the focus later on)
         keep = vecs[0]
         self.play(FadeOut(brace), FadeOut(btext),
                   FadeOut(vecs[1]), FadeOut(vecs[2]), FadeOut(vecs[3]),
-                  keep.animate.move_to([-4.5, 0.15, 0]).scale(1.1), run_time=1.2)
-        kv = keep[0]
-        feat_names = ["Jockey", "Pedigree", "Impost", "Body wt.", "Post", "Age / Sex"]
-        feat_lbls = VGroup()
-        arrs = VGroup()
-        for cell, name in zip(kv, feat_names):
-            fl = jt(name, 17, C_DIM)
-            fl.next_to(cell, RIGHT, buff=0.95)
-            a = arr(cell.get_right(), fl.get_left(), C_DIM, sw=1.6, buff=0.12)
-            feat_lbls.add(fl)
-            arrs.add(a)
-        head = jt("Aggregate features  (each cell = one feature; 46 in total)", 18,
-                  color=C_AGG).next_to(kv, UP, buff=0.45).shift(RIGHT*2.6)
-        self.play(FadeIn(head))
-        self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(f))
-                                for a, f in zip(arrs, feat_lbls)], lag_ratio=0.18), run_time=2.0)
-        self.wait(1.8)
-        self._act1_keep = keep
-        self._act1_extra = VGroup(head, feat_lbls, arrs)
+                  keep.animate.scale(1.15).move_to([-5.4, 0.4, 0]), run_time=1.2)
+        self.wait(0.6)
+
+        # reveal the three feature groups (with example fields)
+        cap("Its features come in three groups (examples shown): aggregate, past-race results, race", C_AGG)
+        groups = [
+            (C_AGG,  6, "Aggregate",             "Jockey · Pedigree\nImpost · Body wt.\nPost · Age / Sex", -3.6, 11),
+            (C_PAST, 4, "Result (per past race)", "Finish · Time\nMargin · Last 3F",                        0.4, 21),
+            (C_RACE, 3, "Race",                   "Distance · Going\nClass",                                4.3, 5),
+        ]
+        gvecs, gnames, gfields = VGroup(), VGroup(), VGroup()
+        for col, ncell, name, fields, x, seed in groups:
+            gv = vvec(vs(seed, ncell), col, 0.26).move_to([x, 0.55, 0])
+            gname = jt(name, 18, col).next_to(gv, UP, buff=0.3)
+            gfield = jt(fields, 15, C_DIM, ).next_to(gv, DOWN, buff=0.35)
+            gvecs.add(gv); gnames.add(gname); gfields.add(gfield)
+        # keep (horse 1) morphs into the aggregate group, others fade in
+        self.play(ReplacementTransform(keep, gvecs[0]),
+                  FadeIn(gnames[0]), FadeIn(gfields[0]), run_time=1.1)
+        self.play(LaggedStart(
+            AnimationGroup(FadeIn(gvecs[1], shift=UP*0.2), FadeIn(gnames[1]), FadeIn(gfields[1])),
+            AnimationGroup(FadeIn(gvecs[2], shift=UP*0.2), FadeIn(gnames[2]), FadeIn(gfields[2])),
+            lag_ratio=0.5), run_time=2.0)
+        self.wait(2.2)
+        self._act1_keep = None
+        self._act1_extra = VGroup(gvecs, gnames, gfields)
 
     # ============================================================
     def act2_gru(self, cap):
-        keep = self._act1_keep
-        cap("Each horse also has a sequence of past races — a GRU folds it into one vector", C_HIST)
+        cap("The past-race results are a sequence — a GRU folds them into one history vector", C_HIST)
 
         cell_x = [-4.5, -1.5, 1.5]
         hid_x = [-6.2, -3.0, 0.0, 3.0]
@@ -194,9 +199,9 @@ class ModelMath(Scene):
             xl = MathTex(f"x_{{t-{3-t}}}", color=C_PAST).scale(0.5).next_to(xv, DOWN, buff=0.1)
             x_mobs.append(VGroup(xv, xl))
 
-        self.play(FadeOut(self._act1_extra), FadeOut(keep),
+        self.play(FadeOut(self._act1_extra),
                   FadeIn(h_mobs[0]), FadeIn(h_lbls[0]), run_time=1.1)
-        h0_note = jt("h0 = initial hidden state", 17, color=C_HIST).next_to(h_mobs[0], DOWN, buff=0.35).shift(RIGHT*0.4)
+        h0_note = jt("initial hidden state", 17, color=C_HIST).next_to(h_mobs[0], DOWN, buff=0.35).shift(RIGHT*0.4)
         self.play(FadeIn(h0_note))
         self.wait(1.2)
 
@@ -273,88 +278,78 @@ class ModelMath(Scene):
     # ============================================================
     def act4_attention(self, cap):
         n = 4
-        xs = [-3.2, -1.05, 1.1, 3.25]
-        y_a, y_q, y_k, y_v = 2.45, 1.25, 0.15, -0.95
+        ys = [2.0, 0.7, -0.6, -1.9]
+        x_a, x_w, x_q, x_k, x_v = -6.3, -5.15, -3.85, -2.7, -1.55
+        weights = [0.62, 0.12, 0.18, 0.08]
         cap("Set Transformer: each horse looks at every other horse to update itself", C_ABILITY)
 
-        A = VGroup(*[vvec(vs(30 + i, 4), C_ABILITY, cell=0.15) for i in range(n)])
-        for i, a in enumerate(A):
-            a.move_to([xs[i], y_a, 0])
-        a_lbls = VGroup(*[MathTex(f"a_{i+1}", color=C_ABILITY).scale(0.5).next_to(A[i], UP, buff=0.08)
-                          for i in range(n)])
-        guides = VGroup(*[DashedLine([xs[i], y_a-0.35, 0], [xs[i], y_v-0.35, 0],
-                                     color=C_DIM, stroke_width=1.0, dash_length=0.08).set_stroke(opacity=0.22)
+        # ability vectors a_1..a_4 (one per row)
+        A = VGroup(*[vvec(vs(30 + i, 4), C_ABILITY, 0.12).move_to([x_a, ys[i], 0]) for i in range(n)])
+        a_lbls = VGroup(*[MathTex(f"a_{i+1}", color=C_ABILITY).scale(0.45).next_to(A[i], LEFT, buff=0.14)
                           for i in range(n)])
         self.play(LaggedStart(*[FadeIn(a) for a in A], lag_ratio=0.15), FadeIn(a_lbls), run_time=1.4)
-        self.play(Create(guides), run_time=0.8)
         self.wait(0.6)
 
-        # build Q,K,V down each column
-        cap("Multiply each ability by Wq, Wk, Wv → build Query, Key, Value down each column", C_K)
-
-        def make_row(seedbase, color, y):
-            row = VGroup(*[vvec(vs(seedbase + j, 4), color, 0.15) for j in range(n)])
-            for j in range(n):
-                row[j].move_to([xs[j], y, 0])
-            return row
-
-        Q = make_row(40, C_Q, y_q)
-        K = make_row(45, C_K, y_k)
-        V = make_row(50, C_V, y_v)
-        q_lbls = VGroup(*[MathTex(f"q_{j+1}", color=C_Q).scale(0.4).next_to(Q[j], RIGHT, buff=0.06) for j in range(n)])
-        k_lbls = VGroup(*[MathTex(f"k_{j+1}", color=C_K).scale(0.4).next_to(K[j], RIGHT, buff=0.06) for j in range(n)])
-        v_lbls = VGroup(*[MathTex(f"v_{j+1}", color=C_V).scale(0.4).next_to(V[j], RIGHT, buff=0.06) for j in range(n)])
-        wq = opbox(r"W_Q", C_Q, 0.55).move_to([-5.7, y_q, 0])
-        wk = opbox(r"W_K", C_K, 0.55).move_to([-5.7, y_k, 0])
-        wv = opbox(r"W_V", C_V, 0.55).move_to([-5.7, y_v, 0])
-        for W, row, lbls in [(wq, Q, q_lbls), (wk, K, k_lbls), (wv, V, v_lbls)]:
-            self.play(FadeIn(W, scale=1.1), run_time=0.6)
-            self.play(TransformFromCopy(A, row), FadeIn(lbls), run_time=1.1)
-            self.wait(0.5)
+        # per horse: a_i -> W box -> q_i, k_i, v_i (side by side)
+        cap("Each ability passes through its own W box → Query, Key, Value (side by side)", C_K)
+        Wb, Q, K, V, qkv_lbls, in_arrows = VGroup(), VGroup(), VGroup(), VGroup(), VGroup(), VGroup()
+        for i in range(n):
+            Wb.add(opbox(r"W", C_DIM, 0.5).move_to([x_w, ys[i], 0]))
+            Q.add(vvec(vs(40 + i, 4), C_Q, 0.12).move_to([x_q, ys[i], 0]))
+            K.add(vvec(vs(45 + i, 4), C_K, 0.12).move_to([x_k, ys[i], 0]))
+            V.add(vvec(vs(50 + i, 4), C_V, 0.12).move_to([x_v, ys[i], 0]))
+        for i in range(n):
+            for mob, col in [(Q, C_Q), (K, C_K), (V, C_V)]:
+                nm = {id(Q): "q", id(K): "k", id(V): "v"}[id(mob)]
+                qkv_lbls.add(MathTex(f"{nm}_{i+1}", color=col).scale(0.32).next_to(mob[i], UP, buff=0.03))
+        for i in range(n):
+            aw = arr(A[i].get_right(), Wb[i].get_left(), C_DIM, sw=1.5)
+            wt = arr(Wb[i].get_right(), Q[i].get_left(), C_DIM, sw=1.5)
+            in_arrows.add(aw, wt)
+            trip = VGroup(Q[i], K[i], V[i])
+            labs = VGroup(*qkv_lbls[i*3:i*3+3])
+            if i == 0:
+                self.play(GrowArrow(aw), FadeIn(Wb[i]), run_time=0.6)
+                self.play(GrowArrow(wt), TransformFromCopy(A[i], trip), FadeIn(labs), run_time=1.0)
+                self.wait(0.4)
+            else:
+                self.play(GrowArrow(aw), FadeIn(Wb[i]), GrowArrow(wt),
+                          TransformFromCopy(A[i], trip), FadeIn(labs), run_time=0.6)
         self.wait(0.8)
 
-        # horse-1 attention: q1 . kj -> raw scores -> softmax weights
-        cap("Horse 1's query q1 vs every key k1..k4 (dot product) → softmax = attention", C_K)
-        q1box = SurroundingRectangle(VGroup(Q[0], q_lbls[0]), color=C_Q, buff=0.05, corner_radius=0.05)
-        self.play(Create(q1box))
-        raw = [0.85, 0.35, 0.5, 0.28]
-        weights = [0.62, 0.12, 0.18, 0.08]
-        s_arrows = VGroup(*[arr(Q[0].get_bottom(), K[j].get_top(), C_Q, sw=1.3) for j in range(n)])
-        wcells = VGroup(*[Square(0.36, stroke_color=C_SCORE, stroke_width=1.2,
-                                 fill_color=C_SCORE, fill_opacity=0.12 + 0.85*raw[j]).move_to([xs[j], -2.05, 0])
-                          for j in range(n)])
-        self.play(LaggedStart(*[AnimationGroup(GrowArrow(s_arrows[j]), GrowFromCenter(wcells[j]))
-                                for j in range(n)], lag_ratio=0.18), run_time=1.8)
-        raw_lbl = jt("q1 · kj  (match)", 16, color=C_DIM).next_to(wcells, LEFT, buff=0.4)
-        self.play(FadeIn(raw_lbl))
-        self.wait(1.0)
-        # normalize via softmax
-        soft_lbl = jt("softmax → attention (sums to 1)", 17, color=C_SCORE).next_to(wcells, RIGHT, buff=0.4)
-        self.play(ReplacementTransform(raw_lbl, soft_lbl),
-                  *[wcells[j].animate.set_fill(C_SCORE, 0.12 + 0.85*weights[j]) for j in range(n)],
-                  run_time=1.2)
+        # pick out horse 1 (like the earlier focus)
+        cap("Pick out horse 1: match q1 to every key → softmax attention (thicker = higher)", C_Q)
+        self.play(FadeOut(A), FadeOut(a_lbls), FadeOut(Wb), FadeOut(in_arrows),
+                  *[Q[i].animate.set_opacity(0.2) for i in range(1, n)], run_time=1.0)
+        q1box = SurroundingRectangle(VGroup(Q[0], qkv_lbls[0]), color=C_Q, buff=0.05, corner_radius=0.05)
+        self.play(Create(q1box), Q[0].animate.scale(1.18), run_time=0.7)
+        s_arrows = VGroup()
+        for j in range(n):
+            a = arr(Q[0].get_right(), K[j].get_left(), C_SCORE, sw=1.2 + 3.6*weights[j], buff=0.06)
+            a.set_stroke(opacity=0.3 + 0.7*weights[j])
+            s_arrows.add(a)
+        self.play(LaggedStart(*[GrowArrow(a) for a in s_arrows], lag_ratio=0.18), run_time=1.8)
         self.wait(1.4)
 
         # weighted sum of values -> a1'
-        cap("Weighted-average the Values by attention → horse 1's new vector a1'", C_V)
-        a1p = vvec(vs(60, 4), C_ABILITY, 0.16).move_to([5.55, y_v, 0])
-        a1p_lbl = MathTex(r"a_1'", color=C_ABILITY).scale(0.5).next_to(a1p, UP, buff=0.08)
-        wsum = MathTex(r"a_1'=\sum_j A_{1j}\, v_j", color=WHITE).scale(0.58).move_to([5.2, 0.7, 0])
+        cap("Weighted-average the Values by that attention → horse 1's new vector a1'", C_V)
+        a1p = vvec(vs(60, 4), C_ABILITY, 0.14).move_to([3.0, 0.05, 0])
+        a1p_lbl = MathTex(r"a_1'", color=C_ABILITY).scale(0.5).next_to(a1p, UP, buff=0.1)
+        wsum = MathTex(r"a_1'=\sum_j A_{1j}\, v_j", color=WHITE).scale(0.58).next_to(a1p, RIGHT, buff=0.45)
         v_arrows = VGroup()
         for j in range(n):
-            a = arr(V[j].get_right(), a1p.get_left(), C_V, sw=1.2 + 3.2*weights[j])
+            a = arr(V[j].get_right(), a1p.get_left(), C_V, sw=1.2 + 3.4*weights[j], buff=0.06)
             a.set_stroke(opacity=0.28 + 0.72*weights[j])
             v_arrows.add(a)
+        self.play(LaggedStart(*[GrowArrow(a) for a in v_arrows], lag_ratio=0.15),
+                  FadeIn(a1p), FadeIn(a1p_lbl), run_time=1.8)
         self.play(Write(wsum), run_time=1.0)
-        self.play(FadeIn(a1p), FadeIn(a1p_lbl),
-                  LaggedStart(*[GrowArrow(a) for a in v_arrows], lag_ratio=0.15), run_time=1.8)
         self.wait(1.8)
 
         # generalize -> attention matrix -> formula
         cap("Do this for every horse → the attention matrix; repeat over layers", C_SCORE)
-        grid_all = VGroup(A, a_lbls, guides, Q, K, V, q_lbls, k_lbls, v_lbls,
-                          wq, wk, wv, q1box, wcells, soft_lbl, a1p, a1p_lbl, wsum)
-        self.play(FadeOut(grid_all), FadeOut(s_arrows), FadeOut(v_arrows),
+        allmobs = VGroup(Q, K, V, qkv_lbls, q1box, a1p, a1p_lbl, wsum)
+        self.play(FadeOut(allmobs), FadeOut(s_arrows), FadeOut(v_arrows),
                   *[FadeOut(m) for m in self.mobjects if isinstance(m, Arrow)], run_time=1.0)
         atts = [[0.62, 0.12, 0.18, 0.08],
                 [0.14, 0.60, 0.16, 0.10],
