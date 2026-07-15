@@ -10,15 +10,18 @@ Palette (consistent throughout):
   aggregate=emerald / past-race x_t=aqua / hidden h=blue / race=violet / odds=amber /
   ability(a_i)=fuchsia / Query=cyan / Key=yellow / Value=lime / score=rose
 
-Render:
-  manim -ql arch_math.py ModelMath                      # preview
-  manim -r 1920,1080 --fps 30 arch_math.py ModelMath    # 1080p30 final
+Render (run from the repository root so docs/images resolves for act7):
+  manim -ql docs/model-explainer.py ModelMath                      # preview
+  manim -r 1920,1080 --fps 30 docs/model-explainer.py ModelMath    # 1080p30 final
+
+Text uses manim's default Text (plain serif) so captions match the Computer Modern math.
+Requires the optional [nn] extra is NOT needed — only `manim` (and its deps).
 """
 from manim import *
 import numpy as np
 import os
 
-FONT = "Segoe UI"   # 全テキストをタイトルと同じ Segoe UI Bold で統一
+# テキストは manim デフォルトの Text (フォント指定なし = シンプル・セリフ体で 3B1B 風、数式とも調和)
 
 C_AGG     = "#34d399"   # aggregate features (emerald)
 C_PAST    = "#5eead4"   # past-race result vector x_t (aqua) -- distinct from hidden state
@@ -36,13 +39,14 @@ BG        = "#0c1420"
 POOL = [0.25, 0.82, 0.48, 0.35, 0.9, 0.6, 0.18, 0.72, 0.42, 0.55,
         0.86, 0.3, 0.66, 0.5, 0.22, 0.78, 0.4, 0.7]
 
-# act7 の Web スクリーンショットの場所 (リポジトリルートから実行する想定)
+# act7 の Web スクリーンショットの場所 (リポジトリルートから実行する想定。
+# 別ディレクトリから実行する場合は KEIBA_IMG_DIR で絶対パスを指定)
 IMG_DIR = os.environ.get("KEIBA_IMG_DIR", "docs/images")
 
 
-def jt(s, size=24, color=WHITE, weight=BOLD):
-    """All text in Segoe UI Bold (same look as the title)."""
-    return Text(s, font=FONT, font_size=size, color=color, weight=BOLD)
+def jt(s, size=24, color=WHITE, weight=NORMAL):
+    """Plain manim Text (default font) — simple, clean, 3B1B-adjacent serif."""
+    return Text(s, font_size=size, color=color, weight=weight)
 
 
 def arr(start, end, color, sw=3.0, buff=0.1):
@@ -131,7 +135,7 @@ class ModelMath(Scene):
         cap("A race is a variable-size set of horses (4 here). Each horse is described by feature vectors.")
         vecs = VGroup()
         for i in range(4):
-            v = vvec(vs(i + 1, 8), C_AGG, cell=0.26)   # thin & dense (matches later acts)
+            v = vvec(vs(i + 1, 6), C_AGG, cell=0.26)   # thin & dense (matches later acts)
             lab = jt(f"Horse {i+1}", 18, color=WHITE)
             grp = VGroup(v, lab)
             lab.next_to(v, DOWN, buff=0.2)
@@ -144,40 +148,30 @@ class ModelMath(Scene):
         self.play(GrowFromCenter(brace), FadeIn(btext))
         self.wait(1.6)
 
-        # pick out horse 1 (like the focus later on)
+        # pick out horse 1, then explain its features with arrow labels
         keep = vecs[0]
         self.play(FadeOut(brace), FadeOut(btext),
                   FadeOut(vecs[1]), FadeOut(vecs[2]), FadeOut(vecs[3]),
-                  keep.animate.scale(1.15).move_to([-5.4, 0.4, 0]), run_time=1.2)
-        self.wait(0.6)
-
-        # reveal the three feature groups (with example fields)
-        cap("Its features come in three groups (examples shown): aggregate, past-race results, race", C_AGG)
-        groups = [
-            (C_AGG,  6, "Aggregate",             "Jockey · Pedigree\nImpost · Body wt.\nPost · Age / Sex", -3.6, 11),
-            (C_PAST, 4, "Result (per past race)", "Finish · Time\nMargin · Last 3F",                        0.4, 21),
-            (C_RACE, 3, "Race",                   "Distance · Going\nClass",                                4.3, 5),
-        ]
-        gvecs, gnames, gfields = VGroup(), VGroup(), VGroup()
-        for col, ncell, name, fields, x, seed in groups:
-            gv = vvec(vs(seed, ncell), col, 0.26).move_to([x, 0.55, 0])
-            gname = jt(name, 18, col).next_to(gv, UP, buff=0.3)
-            gfield = jt(fields, 15, C_DIM, ).next_to(gv, DOWN, buff=0.35)
-            gvecs.add(gv); gnames.add(gname); gfields.add(gfield)
-        # keep (horse 1) morphs into the aggregate group, others fade in
-        self.play(ReplacementTransform(keep, gvecs[0]),
-                  FadeIn(gnames[0]), FadeIn(gfields[0]), run_time=1.1)
-        self.play(LaggedStart(
-            AnimationGroup(FadeIn(gvecs[1], shift=UP*0.2), FadeIn(gnames[1]), FadeIn(gfields[1])),
-            AnimationGroup(FadeIn(gvecs[2], shift=UP*0.2), FadeIn(gnames[2]), FadeIn(gfields[2])),
-            lag_ratio=0.5), run_time=2.0)
-        self.wait(2.2)
-        self._act1_keep = None
-        self._act1_extra = VGroup(gvecs, gnames, gfields)
+                  keep.animate.scale(1.15).move_to([-4.6, 0.15, 0]), run_time=1.2)
+        kv = keep[0]
+        feat_names = ["Jockey", "Pedigree", "Impost", "Body wt.", "Post", "Age / Sex"]
+        feat_lbls, arrs = VGroup(), VGroup()
+        for cell, name in zip(kv, feat_names):
+            fl = jt(name, 17, C_DIM).next_to(cell, RIGHT, buff=1.0)
+            feat_lbls.add(fl)
+            arrs.add(arr(cell.get_right(), fl.get_left(), C_DIM, sw=1.6, buff=0.12))
+        head = jt("Aggregate features  (each cell = one feature; 46 in total)", 18,
+                  color=C_AGG).next_to(kv, UP, buff=0.45).shift(RIGHT*2.6)
+        self.play(FadeIn(head))
+        self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(f))
+                                for a, f in zip(arrs, feat_lbls)], lag_ratio=0.18), run_time=2.2)
+        self.wait(2.0)
+        self._act1_keep = keep
+        self._act1_extra = VGroup(head, feat_lbls, arrs)
 
     # ============================================================
     def act2_gru(self, cap):
-        cap("The past-race results are a sequence — a GRU folds them into one history vector", C_HIST)
+        cap("Each horse also has a sequence of past races — a GRU folds it into one vector", C_HIST)
 
         cell_x = [-4.5, -1.5, 1.5]
         hid_x = [-6.2, -3.0, 0.0, 3.0]
@@ -199,7 +193,7 @@ class ModelMath(Scene):
             xl = MathTex(f"x_{{t-{3-t}}}", color=C_PAST).scale(0.5).next_to(xv, DOWN, buff=0.1)
             x_mobs.append(VGroup(xv, xl))
 
-        self.play(FadeOut(self._act1_extra),
+        self.play(FadeOut(self._act1_extra), FadeOut(self._act1_keep),
                   FadeIn(h_mobs[0]), FadeIn(h_lbls[0]), run_time=1.1)
         h0_note = jt("initial hidden state", 17, color=C_HIST).next_to(h_mobs[0], DOWN, buff=0.35).shift(RIGHT*0.4)
         self.play(FadeIn(h0_note))
@@ -319,7 +313,9 @@ class ModelMath(Scene):
 
         # pick out horse 1 (like the earlier focus)
         cap("Pick out horse 1: match q1 to every key → softmax attention (thicker = higher)", C_Q)
-        self.play(FadeOut(A), FadeOut(a_lbls), FadeOut(Wb), FadeOut(in_arrows),
+        # 左 (a_i 列・W ボックス・入力矢印) は消さず薄く残す
+        self.play(A.animate.set_opacity(0.32), a_lbls.animate.set_opacity(0.32),
+                  Wb.animate.set_opacity(0.32), in_arrows.animate.set_opacity(0.32),
                   *[Q[i].animate.set_opacity(0.2) for i in range(1, n)], run_time=1.0)
         q1box = SurroundingRectangle(VGroup(Q[0], qkv_lbls[0]), color=C_Q, buff=0.05, corner_radius=0.05)
         self.play(Create(q1box), Q[0].animate.scale(1.18), run_time=0.7)
@@ -348,7 +344,7 @@ class ModelMath(Scene):
 
         # generalize -> attention matrix -> formula
         cap("Do this for every horse → the attention matrix; repeat over layers", C_SCORE)
-        allmobs = VGroup(Q, K, V, qkv_lbls, q1box, a1p, a1p_lbl, wsum)
+        allmobs = VGroup(A, a_lbls, Wb, Q, K, V, qkv_lbls, q1box, a1p, a1p_lbl, wsum)
         self.play(FadeOut(allmobs), FadeOut(s_arrows), FadeOut(v_arrows),
                   *[FadeOut(m) for m in self.mobjects if isinstance(m, Arrow)], run_time=1.0)
         atts = [[0.62, 0.12, 0.18, 0.08],
