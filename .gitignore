@@ -59,3 +59,6 @@ Thumbs.db
 /arch_math.py
 /arch_scene.py
 /S28001120_松崎光成.pdf
+
+# Python bytecode (any dir)
+__pycache__/
