@@ -152,7 +152,7 @@ class ModelMath(Scene):
         keep = vecs[0]
         self.play(FadeOut(brace), FadeOut(btext),
                   FadeOut(vecs[1]), FadeOut(vecs[2]), FadeOut(vecs[3]),
-                  keep.animate.scale(1.15).move_to([-4.6, 0.15, 0]), run_time=1.2)
+                  keep.animate.scale(1.15).move_to([-1.2, 0.15, 0]), run_time=1.2)
         kv = keep[0]
         feat_names = ["Jockey", "Pedigree", "Impost", "Body wt.", "Post", "Age / Sex"]
         feat_lbls, arrs = VGroup(), VGroup()
@@ -161,7 +161,7 @@ class ModelMath(Scene):
             feat_lbls.add(fl)
             arrs.add(arr(cell.get_right(), fl.get_left(), C_DIM, sw=1.6, buff=0.12))
         head = jt("Aggregate features  (each cell = one feature; 46 in total)", 18,
-                  color=C_AGG).next_to(kv, UP, buff=0.45).shift(RIGHT*2.6)
+                  color=C_AGG).next_to(VGroup(kv, feat_lbls), UP, buff=0.5)
         self.play(FadeIn(head))
         self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(f))
                                 for a, f in zip(arrs, feat_lbls)], lag_ratio=0.18), run_time=2.2)
@@ -171,10 +171,31 @@ class ModelMath(Scene):
 
     # ============================================================
     def act2_gru(self, cap):
-        cap("Each horse also has a sequence of past races — a GRU folds it into one vector", C_HIST)
+        cap("Each horse also has a sequence of past races", C_PAST)
+        self.play(FadeOut(self._act1_extra), FadeOut(self._act1_keep), run_time=0.9)
 
-        cell_x = [-4.5, -1.5, 1.5]
-        hid_x = [-6.2, -3.0, 0.0, 3.0]
+        # explain what a single past-race result vector holds (mirrors the aggregate breakdown, centered)
+        pr_names = ["Finish pos", "Margin", "Time index", "Last 3F", "Popularity"]
+        pr_vec = vvec(vs(20, 5), C_PAST, cell=0.34).move_to([-1.2, 0.15, 0])
+        pr_lbls, pr_arrs = VGroup(), VGroup()
+        for cell, name in zip(pr_vec, pr_names):
+            fl = jt(name, 17, C_DIM).next_to(cell, RIGHT, buff=1.0)
+            pr_lbls.add(fl)
+            pr_arrs.add(arr(cell.get_right(), fl.get_left(), C_DIM, sw=1.6, buff=0.12))
+        pr_head = jt("One past race = a result vector (finish, margin, time, ...)", 18,
+                     color=C_PAST).next_to(VGroup(pr_vec, pr_lbls), UP, buff=0.5)
+        self.play(FadeIn(pr_vec, shift=UP*0.3), FadeIn(pr_head))
+        self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(f))
+                                for a, f in zip(pr_arrs, pr_lbls)], lag_ratio=0.18), run_time=2.0)
+        self.wait(1.8)
+        # keep pr_vec — it will travel into the first past-race slot below
+        self.play(FadeOut(pr_head), FadeOut(pr_lbls), FadeOut(pr_arrs), run_time=0.8)
+
+        cap("A GRU folds that sequence into one history vector", C_HIST)
+
+        GX = 1.0  # shift the whole GRU right so it reads centered (was left-heavy)
+        cell_x = [-4.5 + GX, -1.5 + GX, 1.5 + GX]
+        hid_x = [-6.2 + GX, -3.0 + GX, 0.0 + GX, 3.0 + GX]
         hvals = [[0.05]*5, vs(10, 5), vs(13, 5), vs(16, 5)]
         h_mobs = [vvec(hvals[j], C_HIST, cell=0.24).move_to([hid_x[j], 0.55, 0]) for j in range(4)]
         h_lbls = [MathTex(f"h_{j}", color=C_HIST).scale(0.62).next_to(h_mobs[j], UP, buff=0.14) for j in range(4)]
@@ -193,20 +214,25 @@ class ModelMath(Scene):
             xl = MathTex(f"x_{{t-{3-t}}}", color=C_PAST).scale(0.5).next_to(xv, DOWN, buff=0.1)
             x_mobs.append(VGroup(xv, xl))
 
-        self.play(FadeOut(self._act1_extra), FadeOut(self._act1_keep),
-                  FadeIn(h_mobs[0]), FadeIn(h_lbls[0]), run_time=1.1)
+        # the vector we just explained travels down into the first past-race slot x_{t-3}
+        self.play(ReplacementTransform(pr_vec, x_mobs[0][0]), FadeIn(x_mobs[0][1]), run_time=1.2)
+
+        self.play(FadeIn(h_mobs[0]), FadeIn(h_lbls[0]), run_time=1.1)
         h0_note = jt("initial hidden state", 17, color=C_HIST).next_to(h_mobs[0], DOWN, buff=0.35).shift(RIGHT*0.4)
         self.play(FadeIn(h0_note))
         self.wait(1.2)
 
         eq = MathTex(r"h_t=(1-z_t)\odot h_{t-1}+z_t\odot \tilde{h}_t",
-                     color=WHITE).scale(0.7).move_to([-0.3, 2.4, 0])
+                     color=WHITE).scale(0.7).move_to([0.7, 2.4, 0])
         self.play(Write(eq), run_time=1.2)
         self.wait(0.6)
 
-        x_note = jt("each x = one past race's result vector", 17, color=C_PAST).move_to([-0.2, -3.05, 0])
+        x_note = jt("each x = one past race's result vector", 17, color=C_PAST).move_to([0.8, -3.05, 0])
         for t in range(3):
-            self.play(FadeIn(cells[t]), FadeIn(x_mobs[t], shift=UP*0.2), run_time=0.9)
+            if t == 0:
+                self.play(FadeIn(cells[t]), run_time=0.9)  # x_{t-3} already traveled in
+            else:
+                self.play(FadeIn(cells[t]), FadeIn(x_mobs[t], shift=UP*0.2), run_time=0.9)
             if t == 0:
                 self.play(FadeIn(x_note))
                 self.wait(1.0)
@@ -225,27 +251,32 @@ class ModelMath(Scene):
         self.play(Create(box), FadeIn(hist_lbl))
         self.wait(1.8)
 
-        junk = VGroup(*h_mobs, *h_lbls, cells, *x_mobs, eq, box, hist_lbl, x_note)
+        # keep the final history vector h_3 — it carries over into act3's concatenation
+        self._carry_hist = h_mobs[3]
+        junk = VGroup(*h_mobs[:3], *h_lbls, cells, *x_mobs, eq, box, hist_lbl, x_note)
         self.play(FadeOut(junk),
                   *[FadeOut(m) for m in self.mobjects if isinstance(m, Arrow)], run_time=1.0)
 
     # ============================================================
     def act3_mlp(self, cap):
         cap("Concatenate aggregate + history + race features, then a multi-layer MLP encodes ability", C_ABILITY)
+        DX = 1.4  # nudge the whole encoder diagram right so it reads centered (was left-heavy)
         agg = vvec(vs(2, 4), C_AGG, cell=0.26)
-        hist = vvec(vs(13, 4), C_HIST, cell=0.26)
+        hist = vvec(vs(16, 5), C_HIST, cell=0.26)   # matches the carried history vector (act2 h_3)
         race = vvec(vs(5, 3), C_RACE, cell=0.26)
-        concat = VGroup(agg, hist, race).arrange(DOWN, buff=0.06).to_edge(LEFT, buff=1.2)
+        concat = VGroup(agg, hist, race).arrange(DOWN, buff=0.06).to_edge(LEFT, buff=1.2).shift(RIGHT*DX)
         la = jt("Aggregate", 15, C_AGG).next_to(agg, LEFT, buff=0.2)
         lh = jt("History", 15, C_HIST).next_to(hist, LEFT, buff=0.2)
         lr = jt("Race", 15, C_RACE).next_to(race, LEFT, buff=0.2)
-        self.play(FadeIn(concat), FadeIn(la), FadeIn(lh), FadeIn(lr))
+        # the GRU's history vector travels in as the "History" block of the concatenation
+        self.play(FadeIn(agg), FadeIn(race), FadeIn(la), FadeIn(lh), FadeIn(lr),
+                  ReplacementTransform(self._carry_hist, hist), run_time=1.2)
         self.wait(1.0)
 
-        l_in = nlayer(6, C_DIM, -2.4, span=1.3)
-        l_h1 = nlayer(5, WHITE, -0.6, span=1.15)
-        l_h2 = nlayer(5, WHITE, 1.2, span=1.15)
-        l_out = nlayer(4, C_ABILITY, 3.0, span=0.95)
+        l_in = nlayer(6, C_DIM, -2.4 + DX, span=1.3)
+        l_h1 = nlayer(5, WHITE, -0.6 + DX, span=1.15)
+        l_h2 = nlayer(5, WHITE, 1.2 + DX, span=1.15)
+        l_out = nlayer(4, C_ABILITY, 3.0 + DX, span=0.95)
         e1 = edges(l_in, l_h1); e2 = edges(l_h1, l_h2); e3 = edges(l_h2, l_out)
         self.play(Create(l_in), run_time=0.6)
         in_arr = VGroup(*[arr(concat.get_right(), n.get_left(), C_DIM, sw=2) for n in l_in])
@@ -259,13 +290,15 @@ class ModelMath(Scene):
             self.play(LaggedStart(*[ShowPassingFlash(ed.copy().set_stroke(C_SCORE, 2.2), time_width=0.6)
                                     for ed in le], lag_ratio=0.004, run_time=1.2),
                       LaggedStart(*[n.animate.set_fill(col, 0.85) for n in ln], lag_ratio=0.05))
-        ability = vvec(vs(30, 5), C_ABILITY, cell=0.3).next_to(l_out, RIGHT, buff=0.75)
+        ability = vvec(vs(30, 4), C_ABILITY, cell=0.3).next_to(l_out, RIGHT, buff=0.75)
         abl_lbl = jt("ability vector", 16, C_ABILITY).next_to(ability, DOWN, buff=0.16)
         out_arr = VGroup(*[arr(n.get_right(), ability.get_left(), C_ABILITY, sw=2) for n in l_out])
         self.play(*[GrowArrow(a) for a in out_arr], FadeIn(ability), FadeIn(abl_lbl), run_time=1.0)
         self.wait(1.8)
+        # keep the ability vector — it carries over into act4 as a_1
+        self._carry_ability = ability
         junk = VGroup(concat, la, lh, lr, l_in, l_h1, l_h2, l_out, e1, e2, e3,
-                      gelu, abl_lbl, ability, in_arr, out_arr)
+                      gelu, abl_lbl, in_arr, out_arr)
         self.play(FadeOut(junk),
                   *[FadeOut(m) for m in self.mobjects if isinstance(m, Arrow)], run_time=1.0)
 
@@ -273,15 +306,18 @@ class ModelMath(Scene):
     def act4_attention(self, cap):
         n = 4
         ys = [2.0, 0.7, -0.6, -1.9]
-        x_a, x_w, x_q, x_k, x_v = -6.3, -5.15, -3.85, -2.7, -1.55
+        AX = 0.8  # shift the QKV pipeline right so it reads centered (was left-heavy)
+        x_a, x_w, x_q, x_k, x_v = -6.3 + AX, -5.15 + AX, -3.85 + AX, -2.7 + AX, -1.55 + AX
         weights = [0.62, 0.12, 0.18, 0.08]
         cap("Set Transformer: each horse looks at every other horse to update itself", C_ABILITY)
 
-        # ability vectors a_1..a_4 (one per row)
+        # ability vectors a_1..a_4 (one per row); a_1 is the ability vector carried in from act3
         A = VGroup(*[vvec(vs(30 + i, 4), C_ABILITY, 0.12).move_to([x_a, ys[i], 0]) for i in range(n)])
         a_lbls = VGroup(*[MathTex(f"a_{i+1}", color=C_ABILITY).scale(0.45).next_to(A[i], LEFT, buff=0.14)
                           for i in range(n)])
-        self.play(LaggedStart(*[FadeIn(a) for a in A], lag_ratio=0.15), FadeIn(a_lbls), run_time=1.4)
+        self.play(ReplacementTransform(self._carry_ability, A[0]),
+                  LaggedStart(*[FadeIn(A[i]) for i in range(1, n)], lag_ratio=0.15),
+                  FadeIn(a_lbls), run_time=1.4)
         self.wait(0.6)
 
         # per horse: a_i -> W box -> q_i, k_i, v_i (side by side)
@@ -344,8 +380,12 @@ class ModelMath(Scene):
 
         # generalize -> attention matrix -> formula
         cap("Do this for every horse → the attention matrix; repeat over layers", C_SCORE)
-        allmobs = VGroup(A, a_lbls, Wb, Q, K, V, qkv_lbls, q1box, a1p, a1p_lbl, wsum)
-        self.play(FadeOut(allmobs), FadeOut(s_arrows), FadeOut(v_arrows),
+        # in_arrows must be faded explicitly: `in_arrows.animate.set_opacity()` above wrapped its
+        # arrows inside the VGroup in self.mobjects, so the isinstance(Arrow) filter no longer sees
+        # them (otherwise the 8 left-side a→W→Q arrows linger into the following acts).
+        # s_arrows / v_arrows stay top-level Arrows → the filter handles them (don't double-fade).
+        allmobs = VGroup(A, a_lbls, Wb, Q, K, V, qkv_lbls, q1box, a1p, a1p_lbl, wsum, in_arrows)
+        self.play(FadeOut(allmobs),
                   *[FadeOut(m) for m in self.mobjects if isinstance(m, Arrow)], run_time=1.0)
         atts = [[0.62, 0.12, 0.18, 0.08],
                 [0.14, 0.60, 0.16, 0.10],
@@ -429,10 +469,15 @@ class ModelMath(Scene):
         self.play(FadeIn(chain[0]))
         self.play(FadeIn(arrs[0]), FadeIn(chain[1]))
         self.play(FadeIn(arrs[1]), FadeIn(chain[2]))
-        self.play(Indicate(chain[2], color=C_AGG, scale_factor=1.12))
-        self.wait(1.8)
+        # step through the decision: size the stake with Kelly, then commit the recommendation to a horse (H1)
+        self.play(Indicate(chain[1], color=C_ODDS, scale_factor=1.1))
+        buy_tag = jt("BUY", 17, C_AGG, weight=BOLD).next_to(bars[0][0], UP, buff=0.18)
+        self.play(Indicate(chain[2], color=C_AGG, scale_factor=1.15),
+                  bars[0][0].animate.set_fill(C_AGG, 0.9),
+                  FadeIn(buy_tag, shift=DOWN*0.1))
+        self.wait(2.0)
         self.play(FadeOut(self._rows5), FadeOut(bars), FadeOut(winlbl), FadeOut(pl),
-                  FadeOut(chain), FadeOut(arrs), run_time=1.0)
+                  FadeOut(chain), FadeOut(arrs), FadeOut(buy_tag), run_time=1.0)
 
     # ============================================================
     def act7_screens(self, cap):
