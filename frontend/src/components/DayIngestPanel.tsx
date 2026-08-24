@@ -23,13 +23,24 @@ interface DayIngestPanelProps {
   hasResults: boolean;
 }
 
-/** その日が過去か (= 結果が確定しているはず)。 */
-function isPast(date: string): boolean {
+type DayKind = 'past' | 'today' | 'future';
+
+/**
+ * 選択中の日が過去・当日・未来のどれか。出せる操作がこれで決まる。
+ *
+ *   past   … 結果のみ。**出馬表は出さない** — 結果ページに単勝オッズも載っており、
+ *            単日 ingest が出走馬・オッズ・着順・払戻をまとめて入れるので、
+ *            出馬表を取り直す意味が無い (netkeiba に無駄な負荷をかけるだけ)。
+ *   today  … 両方。朝は出馬表、レースが終われば結果、と同じ日に両方要る。
+ *   future … 出馬表のみ。結果はまだ存在しない。
+ */
+function dayKind(date: string): DayKind {
   const d = new Date();
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
     d.getDate()
   ).padStart(2, '0')}`;
-  return date < today;
+  if (date < today) return 'past';
+  return date === today ? 'today' : 'future';
 }
 
 /**
@@ -69,7 +80,7 @@ export function DayIngestPanel({ date, raceCount, hasResults }: DayIngestPanelPr
     resultsMutation.isPolling ||
     (trackedJobId != null && jobStatus.data?.status === 'running');
 
-  const past = date ? isPast(date) : false;
+  const kind: DayKind | null = date ? dayKind(date) : null;
 
   /** 出馬表・オッズ: その日の race_id を発見してから取り込む。 */
   async function handleFetchEntries() {
@@ -156,19 +167,22 @@ export function DayIngestPanel({ date, raceCount, hasResults }: DayIngestPanelPr
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant={hasResults ? 'outline' : 'default'}
-          onClick={handleFetchEntries}
-          disabled={!date || busy || stopped}
-          title="出走馬・単勝オッズ・馬場状態を取り込みます（発走前の情報）"
-        >
-          <Download className="mr-1.5 h-4 w-4" />
-          {raceCount > 0 ? '出馬表・オッズを更新' : '出馬表を取得'}
-        </Button>
+        {/* 出馬表は発走前の情報。過去日では結果取込が上位互換なので出さない */}
+        {kind !== 'past' && (
+          <Button
+            size="sm"
+            variant={hasResults ? 'outline' : 'default'}
+            onClick={handleFetchEntries}
+            disabled={!date || busy || stopped}
+            title="出走馬・単勝オッズ・馬場状態を取り込みます（発走前の情報）"
+          >
+            <Download className="mr-1.5 h-4 w-4" />
+            {raceCount > 0 ? '出馬表・オッズを更新' : '出馬表を取得'}
+          </Button>
+        )}
 
-        {/* 結果は過去日にしか存在しない */}
-        {past && (
+        {/* 結果は未来日にはまだ無い。当日は終わったレースの分が取れる */}
+        {kind !== null && kind !== 'future' && (
           <Button
             size="sm"
             variant="outline"

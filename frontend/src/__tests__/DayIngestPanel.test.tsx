@@ -30,6 +30,13 @@ import {
 
 const PAST_DATE = '2020-06-06';
 const FUTURE_DATE = '2099-06-06';
+/** 当日は「出馬表」も「結果」も要る（朝は出馬表、レース後は結果）。 */
+const TODAY = (() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+})();
 
 const mockStatus: ScraperStatus = {
   stopped: false,
@@ -87,13 +94,33 @@ describe('DayIngestPanel', () => {
     expect(await screen.findByRole('button', { name: '結果を取り込む' })).toBeInTheDocument();
   });
 
+  it('過去日には出馬表ボタンを出さない（結果取込が上位互換）', async () => {
+    // 結果ページに単勝オッズも載っており、単日 ingest が出走馬・オッズ・着順・払戻を
+    // まとめて入れるので、過去日に出馬表を取り直す意味が無い。
+    renderPanel(PAST_DATE, 36);
+    await screen.findByRole('button', { name: '結果を取り込む' });
+    expect(
+      screen.queryByRole('button', { name: /出馬表/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('当日は出馬表と結果の両方を出す', async () => {
+    // 朝は出馬表、レースが終われば結果。当日を過去扱いしないと
+    // 「今日の終わったレースの結果が翌日まで取り込めない」穴ができる。
+    renderPanel(TODAY, 36);
+    expect(
+      await screen.findByRole('button', { name: '出馬表・オッズを更新' })
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '結果を取り込む' })).toBeInTheDocument();
+  });
+
   it('選択中の日の race_id を発見してから出馬表を取り込む', async () => {
     const user = userEvent.setup();
-    renderPanel(PAST_DATE, 0);
+    renderPanel(TODAY, 0);
     await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
 
     await waitFor(() => {
-      expect(vi.mocked(discoverTodayRaceIds)).toHaveBeenCalledWith(PAST_DATE);
+      expect(vi.mocked(discoverTodayRaceIds)).toHaveBeenCalledWith(TODAY);
     });
     await waitFor(() => {
       expect(vi.mocked(runShutubaScraper)).toHaveBeenCalledWith({
@@ -132,7 +159,8 @@ describe('DayIngestPanel', () => {
     expect(
       await screen.findByRole('button', { name: 'スクレイパーを再開' })
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '出馬表・オッズを更新' })).toBeDisabled();
+    // 過去日なので出馬表ボタンは無い。取込ボタン (結果) が無効になっていればよい。
+    expect(screen.getByRole('button', { name: '結果を取り込む' })).toBeDisabled();
   });
 
   it('再開ボタンで停止フラグを解除する（旧 OPS タブの代替）', async () => {
