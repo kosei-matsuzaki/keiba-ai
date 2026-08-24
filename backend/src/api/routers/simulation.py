@@ -314,6 +314,9 @@ def run_simulation(
     # Settings の馬券種ターゲットを simulation でも反映する
     settings = settings_store.load()
     enabled_bet_types = settings.get("enabled_bet_types") or None
+    # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
+    # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
+    stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
 
     logger.info(
         "Simulation request: model_run_id=%d, window=%s..%s, budget=%d, "
@@ -329,6 +332,7 @@ def run_simulation(
         budget=budget,
         strategy=strategy,  # type: ignore[arg-type]
         max_stake_per_race_yen=max_stake_per_race_yen,
+        stake_unit_by_bet_type=stake_units,
         enabled_bet_types=enabled_bet_types,
     )
 
@@ -488,6 +492,9 @@ async def start_simulation_job(
 
     settings = settings_store.load()
     enabled_bet_types = settings.get("enabled_bet_types") or None
+    # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
+    # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
+    stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
 
     logger.info(
         "Simulation job submit: model_run_id=%d, window=%s..%s, budget=%d, "
@@ -513,6 +520,7 @@ async def start_simulation_job(
                 budget=budget,
                 strategy=strategy,  # type: ignore[arg-type]
                 max_stake_per_race_yen=max_stake_per_race_yen,
+        stake_unit_by_bet_type=stake_units,
                 enabled_bet_types=captured_bet_types,
             )
             saved = save_simulation_result(

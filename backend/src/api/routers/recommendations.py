@@ -178,6 +178,19 @@ def get_recommendations(
     eff_min_ev: float = float(settings.get("win_ev_threshold", 1.1))
     # 単勝のオッズ下限
     eff_win_min_odds: float = float(settings.get("win_min_odds", 1.1))
+    # 券種ごとの 1 点あたり金額 (無い券種は stake_unit にフォールバック)。
+    # レース詳細から stake_unit を上書きされたときは、券種間の比率を保ったまま
+    # 全体をスケールする。そうしないと「1 点 ¥1000 にした」のに stake_units を
+    # 持つ券種だけ設定値のままになり、上書きが効かないように見える。
+    eff_stake_units: dict[str, int] = {
+        k: int(v) for k, v in (settings.get("stake_units") or {}).items()
+    }
+    if stake_unit is not None and eff_stake_units:
+        base_unit = int(settings.get("stake_unit", 100)) or 100
+        scale = eff_unit / base_unit
+        eff_stake_units = {
+            k: max(0, int(v * scale / 100) * 100) for k, v in eff_stake_units.items()
+        }
     if bet_types is not None:
         requested = [t.strip() for t in bet_types.split(",") if t.strip()]
         unknown = [t for t in requested if t not in DEFAULT_ENABLED_BET_TYPES]
@@ -198,6 +211,7 @@ def get_recommendations(
         race_id=race_id,
         race_budget=eff_budget,
         stake_unit=eff_unit,
+        stake_unit_by_bet_type=eff_stake_units,
         min_ev=eff_min_ev,
         win_min_odds=eff_win_min_odds,
         top_n_horses=top_n_horses,

@@ -45,19 +45,19 @@ const STRATEGY_PRESETS: StrategyPreset[] = [
     key: 'conservative',
     emoji: '🛡',
     label: '安定',
-    description: '高 EV (期待値 1.30+) の案件のみ少額で。少ない bet 数。',
+    description: '1 点 = 予算の 20%。連系は期待値 1.30 超のみ買う（少ない点数）。',
   },
   {
     key: 'balanced',
     emoji: '⚖',
     label: '標準',
-    description: '中程度の EV (1.10+) を Kelly 1/4 で。バランス重視。',
+    description: '1 点 = 予算の 20%。連系は期待値 1.10 超を買う（標準）。',
   },
   {
     key: 'aggressive',
     emoji: '🔥',
     label: '積極的',
-    description: 'positive edge ならどの combo にも賭ける。bet 数多い。',
+    description: '1 点 = 予算の 50%。連系は期待値 1.00 超なら買う（点数多い）。',
   },
 ];
 
@@ -464,7 +464,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-budget">予算 / Budget (円)</Label>
+              <Label htmlFor="sim-budget">初期資産 (円)</Label>
               <Input
                 id="sim-budget"
                 type="number"
@@ -474,16 +474,17 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 onChange={(e) => setBudget(Math.max(1000, Number(e.target.value) || 0))}
               />
               <p className="text-xs text-muted-foreground">
-                初期資産 (Kelly 戦略の元手)。回収分は次レースの bet 余力に加算され、
-                自信のあるレース (高 EV) ほど Kelly が大きく賭けます。
-                資産が尽きたら以降は実質 bet しません (破産)。
+                この額から始めて、払戻を次レースの余力に足しながら回します。
+                各レースで使う上限は「残資産 × 5%」と下の上限額の小さい方。その範囲に
+                <strong>単勝 → 複勝 → 連系</strong>の順で、Settings の券種ごとの金額の比で
+                並べます（期待値の高い順ではありません）。資産が尽きたら以降は実質 bet しません。
               </p>
             </div>
           </div>
 
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-max-stake">1 race の投資額上限 (円)</Label>
+              <Label htmlFor="sim-max-stake">1 レースに使う上限 (円)</Label>
               <Input
                 id="sim-max-stake"
                 type="number"
@@ -495,9 +496,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                1 race の累計 stake の絶対上限。compounding wealth で資産が
-                増えても、各 race の bet 額がインフレせずこの値で頭打ちになります。
-                <strong>0 で無効</strong> (元手の 5% cap のみ)。
+                Settings の「1 レースに使う上限」と同じ意味の、シミュレーション用の値。
+                資産が増えても 1 レースの賭け額がこれ以上には膨らみません。
+                <strong>0 で無効</strong>（残資産の 5% だけが上限になります）。
               </p>
             </div>
           </div>

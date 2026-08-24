@@ -233,6 +233,7 @@ class SettingsResponse(BaseModel):
     scraper_stopped: bool
     race_budget: int
     stake_unit: int
+    stake_units: dict[str, int]
     enabled_bet_types: list[str]
 
 
@@ -246,6 +247,7 @@ class SettingsUpdate(BaseModel):
     scraper_stopped: bool | None = None
     race_budget: int | None = None
     stake_unit: int | None = None
+    stake_units: dict[str, int] | None = None
     enabled_bet_types: list[str] | None = None
 
     @field_validator("race_budget")

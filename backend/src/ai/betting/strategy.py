@@ -234,30 +234,44 @@ def generate_formation(
 # Flat stake assignment
 # ---------------------------------------------------------------------------
 
+# 買う順番。単勝・複勝は回収率の推定が安定していて市場を上回ることが確認できて
+# いる (5,376 点で 0.931 / 5,402 点で 0.887) 一方、連系は同じ窓で 1,587 点しか
+# 出ず信頼区間が 0.01〜2.6 と測定不能。予算が足りないときに切るべきは連系なので、
+# 単複を先に確保する。
+_BET_TYPE_PRIORITY: dict[str, int] = {"単勝": 0, "複勝": 1}
+_DEFAULT_PRIORITY = 9
+
+
 def assign_flat_stakes(
     candidates: list[BetCandidate],
     race_budget: int,
     stake_unit: int = 100,
+    stake_unit_by_bet_type: dict[str, int] | None = None,
     min_ev: float = 1.0,
     min_ev_by_bet_type: dict[str, float] | None = None,
     keep_zero_stake: bool = False,
 ) -> list[BetCandidate]:
-    """1 点あたり定額で、期待値の高い買い目から順に予算の範囲で賭ける。
+    """券種ごとに定額で、単複を優先して予算の範囲で賭ける。
 
     Kelly（資金の何%を賭けるか）ではなく、人が実際にやる買い方に合わせた配分:
 
-      1. 期待値 (ev) が ``min_ev`` を超える買い目だけを対象にする
-      2. ev の高い順に並べる
-      3. 1 点あたり ``stake_unit`` 円ずつ、``race_budget`` を超えない範囲で賭ける
+      1. 券種ごとの買い条件を満たす買い目だけを対象にする
+      2. **単勝 → 複勝 → 連系**の順に並べ、同じ券種内では的中確率の高い順
+      3. 1 点あたり **その券種の** 金額を、``race_budget`` を超えない範囲で賭ける
 
-    **予算は使い切らなくてよい。** 対象が少なければ賭け金の合計も少なくなる
-    （3 点しか基準を超えなければ 300 円で終わる）。基準を超える買い目が
-    無ければ 1 円も賭けない。
+    **予算は使い切らなくてよい。** 対象が少なければ賭け金の合計も少なくなる。
+
+    **EV の高い順には並べない。** 確率を正直に較正すると単勝の EV は 0.6 前後に
+    なり、連系 (EV 5〜9) の後ろに回る。その状態で予算が足りないと、回収率の推定が
+    最も確かな単複が真っ先に切り捨てられ、測定不能な連系だけが残る (実測: 2,034
+    レースで単勝 3 点・複勝 1 点)。EV は券種をまたいで比較できる指標ではない。
 
     Args:
         candidates: BetCandidate list (stake field is ignored on input).
         race_budget: このレースに使ってよい上限 (円)。
-        stake_unit: 1 点あたりの賭け金 (円)。100 円単位が実際の購入単位。
+        stake_unit: 1 点あたりの賭け金 (円)。券種別指定が無いときの既定。
+        stake_unit_by_bet_type: 券種ごとの 1 点あたり金額。単勝を厚く、連系を
+            薄く、といった配分に使う。無い券種は ``stake_unit`` にフォールバック。
         min_ev: この値を超える ev の買い目だけを対象にする (1.0 = 収支トントン)。
         min_ev_by_bet_type: 券種ごとに min_ev を上書きする dict。単勝・複勝は
             EV 条件を使わない (本命買い) ので -inf を入れて素通しにするのに使う。
@@ -265,11 +279,16 @@ def assign_flat_stakes(
         keep_zero_stake: True なら賭けない買い目も stake=0 で返す。
 
     Returns:
-        New list of BetCandidate (copies) with updated stake values,
-        ev の高い順。keep_zero_stake=False なら stake>0 のものだけ。
+        New list of BetCandidate (copies) with updated stake values。
+        keep_zero_stake=False なら stake>0 のものだけ。
     """
-    if stake_unit <= 0 or race_budget < stake_unit:
-        # 予算が 1 点分にも満たないなら何も買えない
+    units = stake_unit_by_bet_type or {}
+
+    def _unit(c: BetCandidate) -> int:
+        return int(units.get(c.bet_type, stake_unit))
+
+    if race_budget < min([*(units.values() or []), stake_unit], default=stake_unit):
+        # どの券種の 1 点分にも満たないなら何も買えない
         return [c.model_copy(update={"stake": 0}) for c in candidates] if keep_zero_stake else []
 
     by_type = min_ev_by_bet_type or {}
@@ -278,11 +297,11 @@ def assign_flat_stakes(
         return by_type.get(c.bet_type, min_ev)
 
     def _passes(c: BetCandidate) -> bool:
-        return c.ev is not None and c.ev > _threshold(c)
+        return _unit(c) > 0 and c.ev is not None and c.ev > _threshold(c)
 
-    def _sort_key(c: BetCandidate) -> tuple[float, float]:
-        # ev 降順 → 同点は prob 降順 (決定的にするため)
-        return (-(c.ev or 0.0), -c.prob)
+    def _sort_key(c: BetCandidate) -> tuple[int, float]:
+        # 単勝 → 複勝 → 連系。同じ券種内は的中確率の高い順 (EV 順にはしない)
+        return (_BET_TYPE_PRIORITY.get(c.bet_type, _DEFAULT_PRIORITY), -c.prob)
 
     eligible = sorted((c for c in candidates if _passes(c)), key=_sort_key)
     ineligible = [c for c in candidates if not _passes(c)]
@@ -290,9 +309,10 @@ def assign_flat_stakes(
     out: list[BetCandidate] = []
     budget_left = race_budget
     for c in eligible:
-        if budget_left >= stake_unit:
-            out.append(c.model_copy(update={"stake": stake_unit}))
-            budget_left -= stake_unit
+        unit = _unit(c)
+        if budget_left >= unit:
+            out.append(c.model_copy(update={"stake": unit}))
+            budget_left -= unit
         elif keep_zero_stake:
             out.append(c.model_copy(update={"stake": 0}))
 
@@ -311,6 +331,7 @@ def recommend_for_race(
     race_id: str,
     race_budget: int,
     stake_unit: int = 100,
+    stake_unit_by_bet_type: dict[str, int] | None = None,
     min_ev: float = 1.0,
     min_ev_by_bet_type: dict[str, float] | None = None,
     win_min_odds: float = 1.1,
@@ -334,7 +355,9 @@ def recommend_for_race(
             (output of predict_race_with_combinations).
         race_id: Identifier for the race.
         race_budget: このレースに使ってよい上限 (円)。使い切らなくてよい。
-        stake_unit: 1 点あたりの賭け金 (円、既定 100)。
+        stake_unit: 1 点あたりの賭け金 (円、既定 100)。券種別指定が無いときの既定。
+        stake_unit_by_bet_type: 券種ごとの 1 点あたり金額。回収率の推定が確かな
+            単複を厚く、測定不能な連系を薄く、といった配分ができる。
         min_ev: この値を超える期待値の買い目だけを賭ける (1.0 = 収支トントン)。
         min_ev_by_bet_type: 券種ごとの min_ev 上書き (単複は -inf = 素通し)。
         win_min_odds: **単勝・複勝は EV 条件を使わず「モデルの本命 (1 位) を買う」**。
@@ -467,6 +490,7 @@ def recommend_for_race(
         deduped,
         race_budget=race_budget,
         stake_unit=stake_unit,
+        stake_unit_by_bet_type=stake_unit_by_bet_type,
         min_ev=min_ev,
         # 単勝は上で 1 位 1 点に絞り済みなので EV 閾値は通す (負の EV でも「本命」として出す)
         min_ev_by_bet_type={

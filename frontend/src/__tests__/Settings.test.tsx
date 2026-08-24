@@ -45,6 +45,7 @@ const mockSettings: SettingsResponse = {
   scraper_stopped: false,
     race_budget: 5000,
     stake_unit: 100,
+    stake_units: { '単勝': 500, '複勝': 500, '馬連': 100, 'ワイド': 100, '馬単': 100, '三連複': 100, '三連単': 100 },
   enabled_bet_types: ['単勝', '複勝', 'ワイド', '馬連'],
 };
 
@@ -159,7 +160,7 @@ describe('Settings', () => {
 
   it('1 点あたりの賭け金を出す', async () => {
     renderSettings();
-    const input = await screen.findByLabelText('1 点あたりの賭け金');
+    const input = await screen.findByLabelText('1 点あたりの賭け金（既定）');
     expect((input as HTMLInputElement).value).toBe('100');
   });
 
@@ -221,7 +222,7 @@ describe('Settings', () => {
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
 
-    const unitInput = screen.getByLabelText('1 点あたりの賭け金');
+    const unitInput = screen.getByLabelText('1 点あたりの賭け金（既定）');
     fireEvent.change(unitInput, { target: { value: '150' } });
 
     const userAgentInput = screen.getByDisplayValue('TestAgent/1.0');

@@ -268,6 +268,7 @@ export interface SettingsResponse {
   race_budget: number;
   /** 1 点あたりの賭け金 (円)。馬券は 100 円単位。 */
   stake_unit: number;
+  stake_units: Record<string, number>;
   enabled_bet_types: BetType[];
 }
 
@@ -281,6 +282,7 @@ export interface SettingsUpdate {
   scraper_stopped?: boolean;
   race_budget?: number;
   stake_unit?: number;
+  stake_units?: Record<string, number>;
   enabled_bet_types?: BetType[];
 }
 

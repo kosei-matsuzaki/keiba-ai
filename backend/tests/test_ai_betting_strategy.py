@@ -88,22 +88,23 @@ def _fukusho_combos(n: int, odds: float = 2.0) -> list[CombinationPrediction]:
 
 
 # ---------------------------------------------------------------------------
-# kelly_stake
+# assign_flat_stakes
 # ---------------------------------------------------------------------------
 
 class TestAssignFlatStakes:
-    """定額配分: ev の高い順に 1 点 stake_unit 円、予算の範囲で。"""
+    """定額配分: 単勝→複勝→連系の順、同券種内は確率の高い順に 1 点ずつ。"""
 
-    def _c(self, combo: str, ev: float | None, prob: float = 0.1) -> BetCandidate:
+    def _c(self, combo: str, ev: float | None, prob: float = 0.1,
+           bet_type: str = "単勝") -> BetCandidate:
         return BetCandidate(
-            bet_type="単勝",
+            bet_type=bet_type,
             combo=combo,
             pattern="box",
             prob=prob,
             est_odds=(ev / prob) if ev is not None else None,
             ev=ev,
             stake=0,
-            post_positions=(int(combo),),
+            post_positions=(int(combo) if combo.isdigit() else 1,),
         )
 
     def test_each_eligible_candidate_gets_one_unit(self):
@@ -111,10 +112,47 @@ class TestAssignFlatStakes:
         out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
         assert [c.stake for c in out] == [100, 100, 100]
 
-    def test_orders_by_ev_desc(self):
-        cands = [self._c("1", 1.2), self._c("2", 1.9), self._c("3", 1.5)]
+    def test_orders_by_prob_desc_within_a_bet_type(self):
+        # 同じ券種内は的中確率の高い順。EV 順にはしない。
+        cands = [
+            self._c("1", 1.2, prob=0.10),
+            self._c("2", 1.9, prob=0.30),
+            self._c("3", 1.5, prob=0.20),
+        ]
         out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
         assert [c.combo for c in out] == ["2", "3", "1"]
+
+    def test_win_and_place_come_before_exotics(self):
+        """予算が足りないときに切るのは連系。単複の方が回収率の推定が確か。
+
+        較正後は単勝の EV が 0.6 前後で連系 (EV 5〜9) より低く出るので、EV 順に
+        並べると単複が最後尾に回って真っ先に切り捨てられていた (実測: 2,034
+        レースで単勝 3 点・複勝 1 点)。
+        """
+        cands = [
+            self._c("A", 9.0, prob=0.01, bet_type="三連単"),
+            self._c("B", 5.0, prob=0.05, bet_type="馬連"),
+            self._c("1", 0.6, prob=0.25, bet_type="単勝"),
+            self._c("2", 0.8, prob=0.55, bet_type="複勝"),
+        ]
+        out = assign_flat_stakes(
+            cands, race_budget=200, stake_unit=100,
+            min_ev_by_bet_type={"単勝": float("-inf"), "複勝": float("-inf")},
+        )
+        assert [c.bet_type for c in out] == ["単勝", "複勝"]
+
+    def test_stake_unit_can_differ_by_bet_type(self):
+        """単勝を厚く、連系を薄く。総合回収率は券種別回収率の賭け金加重平均。"""
+        cands = [
+            self._c("1", 0.6, prob=0.25, bet_type="単勝"),
+            self._c("A", 9.0, prob=0.01, bet_type="三連単"),
+        ]
+        out = assign_flat_stakes(
+            cands, race_budget=5000, stake_unit=100,
+            stake_unit_by_bet_type={"単勝": 500, "三連単": 100},
+            min_ev_by_bet_type={"単勝": float("-inf")},
+        )
+        assert {(c.bet_type, c.stake) for c in out} == {("単勝", 500), ("三連単", 100)}
 
     def test_budget_caps_the_number_of_bets(self):
         cands = [self._c(str(i), 2.0 - i * 0.1) for i in range(1, 11)]

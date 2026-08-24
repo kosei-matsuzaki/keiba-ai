@@ -123,11 +123,11 @@ describe('Routing', () => {
 
   it('topbar contains all navigation links', async () => {
     renderAt('/');
-    // Topbar の 5 タブ。ラベルは §NN と対になる「章番号 + 英字」
-    expect(await screen.findByRole('link', { name: /^01 DASHBOARD$/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /^02 RACE$/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /^03 LEDGER$/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /^04 MODELS$/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /^05 SETTINGS$/ })).toBeInTheDocument();
+    // Topbar の 5 タブ。等幅の英字のみ (章番号は廃止)
+    expect(await screen.findByRole('link', { name: 'DASHBOARD' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'RACE' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'LEDGER' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'MODELS' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'SETTINGS' })).toBeInTheDocument();
   });
 });

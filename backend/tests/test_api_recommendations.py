@@ -301,7 +301,8 @@ def test_recommendations_enabled_bet_types_filter(
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               side_effect=lambda predictions, combinations_by_type, race_id, race_budget,
-              stake_unit, min_ev, win_min_odds, top_n_horses, enabled_bet_types:
+              stake_unit, stake_unit_by_bet_type, min_ev, win_min_odds,
+              top_n_horses, enabled_bet_types:
               _spy_recommend(
                   enabled_bet_types=enabled_bet_types,
               )),
@@ -334,7 +335,7 @@ def test_recommendations_top_n_horses_param(
     captured_args: dict = {}
 
     def _capture_recommend(predictions, combinations_by_type, race_id,
-                           race_budget, stake_unit, min_ev,
+                           race_budget, stake_unit, stake_unit_by_bet_type, min_ev,
                            win_min_odds, top_n_horses, enabled_bet_types):
         captured_args["top_n_horses"] = top_n_horses
         return RecommendationResult(

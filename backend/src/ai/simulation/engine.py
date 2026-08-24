@@ -43,6 +43,7 @@ StrategyName = Literal["conservative", "balanced", "aggressive"]
 
 # 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「どこから買うか」の 2 つ。
 # stake_ratio は 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)。
+# min_ev は **連系にのみ**効く (単勝・複勝は本命買いで EV 条件を持たない)。
 STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
     "conservative": {"stake_ratio": 0.20, "min_ev": 1.30},
     "balanced":     {"stake_ratio": 0.20, "min_ev": 1.10},
@@ -266,6 +267,7 @@ def simulate_active_model(
     enabled_bet_types: list[str] | None = None,
     top_n_horses: int = 3,
     max_stake_per_race_yen: int | None = None,
+    stake_unit_by_bet_type: dict[str, int] | None = None,
     *,
     bundle: ModelBundle | None = None,
     bet_sink: list[dict] | None = None,
@@ -389,7 +391,12 @@ def simulate_active_model(
 
         # Apply min_ev filter (strategy preset)
         min_ev = preset["min_ev"]
+        # EV 閾値で絞るのは **連系だけ**。単勝・複勝はモデルの本命を買うルールで
+        # EV 条件を持たない (recommend_for_race が担当) ので、ここで落とすと
+        # 本命の EV が 1.0 未満のときにシミュレーションだけ単複を買わなくなる。
         for bt in list(combos_by_type.keys()):
+            if bt in ("単勝", "複勝"):
+                continue
             combos_by_type[bt] = [
                 c for c in combos_by_type[bt]
                 if c.ev is not None and c.ev >= min_ev
@@ -402,6 +409,15 @@ def simulate_active_model(
         if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
             race_budget = min(race_budget, int(max_stake_per_race_yen))
         stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
+        # 券種別の 1 点あたり金額。設定は「単勝 500 / 連系 100」のような比率で
+        # 持つので、シミュレーションでは stake_unit を基準にその比で割り当てる。
+        units: dict[str, int] | None = None
+        if stake_unit_by_bet_type:
+            base = max(stake_unit_by_bet_type.values())
+            units = {
+                bt: max(100, int(stake_unit * (v / base) / 100) * 100)
+                for bt, v in stake_unit_by_bet_type.items()
+            }
 
         rec = recommend_for_race(
             predictions=preds,
@@ -409,6 +425,7 @@ def simulate_active_model(
             race_id=race_id,
             race_budget=race_budget,
             stake_unit=stake_unit,
+            stake_unit_by_bet_type=units,
             min_ev=float(preset["min_ev"]),
             top_n_horses=top_n_horses,
             enabled_bet_types=types,

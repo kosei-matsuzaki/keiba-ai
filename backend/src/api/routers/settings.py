@@ -25,6 +25,7 @@ def _dict_to_response(data: dict) -> SettingsResponse:
         scraper_stopped=bool(data.get("scraper_stopped", False)),
         race_budget=int(data.get("race_budget", 5_000)),
         stake_unit=int(data.get("stake_unit", 100)),
+        stake_units={k: int(v) for k, v in (data.get("stake_units") or {}).items()},
         enabled_bet_types=list(data.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)),
     )
 

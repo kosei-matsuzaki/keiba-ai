@@ -8,39 +8,33 @@ import { cn } from '@/lib/cn';
 
 interface NavItem {
   to: string;
-  /** PageHeader の §NN と揃える章番号。 */
-  index: string;
   label: string;
   /** RaceDetail (/races/:id) も Race tab を active にする */
   activeMatch?: (pathname: string) => boolean;
 }
 
 const navItems: NavItem[] = [
-  { to: '/', index: '01', label: 'DASHBOARD' },
+  { to: '/', label: 'DASHBOARD' },
   {
     to: '/races',
-    index: '02',
     label: 'RACE',
     activeMatch: (p) => p.startsWith('/races') || p.startsWith('/upcoming') || p.startsWith('/past'),
   },
-  { to: '/ledger', index: '03', label: 'LEDGER' },
+  { to: '/ledger', label: 'LEDGER' },
   {
     to: '/models',
-    index: '04',
     label: 'MODELS',
     activeMatch: (p) => p.startsWith('/models'),
   },
   {
     to: '/settings',
-    index: '05',
     label: 'SETTINGS',
     activeMatch: (p) => p.startsWith('/settings') || p.startsWith('/ingest'),
   },
 ];
 
 /**
- * ナビは等幅の英字 + 章番号だけにする (アイコンは外す)。番号は PageHeader の
- * §NN と一致させ、「いまどの章にいるか」がヘッダと見出しの両方で読めるようにする。
+ * ナビは等幅の英字だけにする (アイコンも番号も外す)。
  * 選択中は面ではなく色 (primary) で示す。
  */
 export function Topbar() {
@@ -61,7 +55,7 @@ export function Topbar() {
 
       {/* Nav links */}
       <nav aria-label="主要画面" className="flex flex-1 items-center gap-6">
-        {navItems.map(({ to, index, label, activeMatch }) => (
+        {navItems.map(({ to, label, activeMatch }) => (
           <NavLink
             key={to}
             to={to}
@@ -74,22 +68,7 @@ export function Topbar() {
               );
             }}
           >
-            {({ isActive }) => {
-              const active = activeMatch ? activeMatch(pathname) : isActive;
-              return (
-                <>
-                  <span
-                    className={cn(
-                      'mr-1.5 hidden md:inline',
-                      active ? 'text-primary' : 'text-subtle-foreground/60'
-                    )}
-                  >
-                    {index}
-                  </span>
-                  {label}
-                </>
-              );
-            }}
+            {label}
           </NavLink>
         ))}
       </nav>

@@ -21,7 +21,7 @@ const schema = z
     win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     win_ev_threshold: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     scraper_stopped: z.boolean(),
-    // 賭け金は「1 レースにいくらまで」と「1 点いくら」の 2 つだけ
+    // 賭け金は「1 レースにいくらまで」と「1 点いくら（券種ごと）」
     race_budget: z.coerce
       .number()
       .int('整数で入力してください')
@@ -31,6 +31,14 @@ const schema = z
       .int('整数で入力してください')
       .min(100, '100 以上の値を入力してください')
       .refine((v) => v % 100 === 0, '100 円単位で入力してください'),
+    stake_units: z.record(
+      z.string(),
+      z.coerce
+        .number()
+        .int('整数で入力してください')
+        .min(0, '0 以上の値を入力してください')
+        .refine((v) => v % 100 === 0, '100 円単位で入力してください')
+    ),
     enabled_bet_types: z
       .array(betTypeEnum)
       .min(1, '1 つ以上の馬券種を選択してください'),
@@ -222,9 +230,9 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 </FieldRow>
 
                 <FieldRow
-                  label="1 点あたりの賭け金"
+                  label="1 点あたりの賭け金（既定）"
                   id="stake_unit"
-                  help={`買い目 1 点あたりの金額です。馬券は 100 円単位でしか買えません。${
+                  help={`券種ごとの指定が無いときに使う金額です。馬券は 100 円単位でしか買えません。${
                     maxPoints != null ? `いまの設定なら 1 レース最大 ${maxPoints} 点まで。` : ''
                   }`}
                   error={errors.stake_unit?.message}
@@ -242,36 +250,57 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   </div>
                 </FieldRow>
               </div>
+
         </Section>
 
         <Section
-          description="ふだん買う馬券の種類。ここで外した券種は推奨買目に出ません（レースごとに変えたいときは、レース詳細の「この予想の条件」で切り替えられます）。"
+          description="ふだん買う馬券の種類と、その 1 点あたりの金額。ここで外した券種は推奨買目に出ません（レースごとに変えたいときは、レース詳細の「この予想の条件」で切り替えられます）。"
           hidden={!visible('bet_types')}
         >
-              <div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+              <div className="flex flex-col gap-3">
+                <p className="text-xs text-muted-foreground">
+                  単勝・複勝は AI の本命を買うルールで、回収率の実測（0.93 / 0.89）が
+                  安定していて市場のベースラインを上回ります。連系は同じ検証では点数が少なく
+                  推定が定まらないため、既定では薄く配分しています。金額を空欄にすると
+                  「1 点あたりの賭け金（既定）」が使われます。
+                </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   {ALL_BET_TYPES.map((betType) => {
                     const isSelected = enabledBetTypesField.value.includes(betType);
                     return (
-                      <button
+                      <div
                         key={betType}
-                        type="button"
-                        onClick={() => toggleBetType(betType)}
-                        aria-pressed={isSelected}
-                        className={cn(
-                          'flex h-9 items-center justify-center rounded-sm border text-sm transition-colors',
-                          isSelected
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground',
-                        )}
+                        className="flex items-center gap-2 border-b border-border pb-2"
                       >
-                        {betType}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleBetType(betType)}
+                          aria-pressed={isSelected}
+                          className={cn(
+                            'flex h-9 w-16 shrink-0 items-center justify-center rounded-sm border text-sm transition-colors',
+                            isSelected
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground',
+                          )}
+                        >
+                          {betType}
+                        </button>
+                        <span className="font-mono text-xs text-subtle-foreground">¥</span>
+                        <Input
+                          type="number"
+                          step="100"
+                          min="0"
+                          disabled={!isSelected}
+                          aria-label={`${betType} の 1 点あたりの賭け金`}
+                          className="text-right font-mono tabular-nums"
+                          {...register(`stake_units.${betType}` as const)}
+                        />
+                      </div>
                     );
                   })}
                 </div>
                 {errors.enabled_bet_types?.message && (
-                  <p className="mt-2 text-xs text-destructive">
+                  <p className="text-xs text-destructive">
                     {errors.enabled_bet_types.message}
                   </p>
                 )}
