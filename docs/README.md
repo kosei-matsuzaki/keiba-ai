@@ -13,6 +13,7 @@ README の `<!-- portfolio:begin -->` 〜 `<!-- portfolio:end -->` の内側は�
 | [data-pipeline.md](data-pipeline.md) | スクレイピング・取り込み仕様（対象 URL・レート制御・robots.txt 遵守・HTML キャッシュ・増分取得・失敗レジューム・法的配慮） |
 | [ai-model.md](ai-model.md) | モデル設計（問題定義・Set Transformer・損失・確率変換・特徴量・学習評価フロー・ベットルール・10 回の改善実験） |
 | [operations.md](operations.md) | 運用（セットアップ・データ取り込み・再学習サイクル・モデル世代管理・バックアップ・トラブルシューティング） |
+| [design-review.md](design-review.md) | UI テーマと UX の見直し提案（2026-08-23 時点）。**現状の仕様ではなく設計メモ**なので、実装と食い違うときは spec / design が正 |
 | `model-explainer.py` / `.mp4` | モデルの計算過程を manim で可視化した解説動画とそのソース |
 | `images/` | 画面キャプチャ。直下の README とポートフォリオサイトの両方がここを参照する |
 
@@ -37,7 +38,8 @@ docs/
 ├── design.md          # 設計方針（アーキテクチャ・AI モジュール・UI 構成）
 ├── data-pipeline.md   # スクレイピング・取り込み仕様
 ├── ai-model.md        # モデル設計（Set Transformer・損失・確率変換・評価）
-└── operations.md      # 運用（セットアップ・再学習サイクル・バックアップ・障害対応）
+├── operations.md      # 運用（セットアップ・再学習サイクル・バックアップ・障害対応）
+└── design-review.md   # UI テーマ / UX の見直し提案（設計メモ）
 ```
 
 ## アーキテクチャサマリ
@@ -59,5 +61,5 @@ FastAPI (uvicorn)
 
 - **個人研究限定**: 本ツールは個人研究目的のみ。取得データ・学習済みモデルの第三者への提供・公開は行わない
 - **netkeiba 規約**: スクレイピングは規約上グレーゾーン。レート制御（最低 3 秒 + ジッター）を徹底し、robots.txt を遵守する
-- **即時停止スイッチ**: Settings 画面の停止スイッチ、および `/api/scraper/stop` エンドポイントで任意のタイミングでスクレイピングを止められる
+- **即時停止スイッチ**: Race 画面のスクレイパー状態カード、`/api/scraper/stop` エンドポイント、環境変数 `KEIBA_SCRAPER_STOP=1` の 3 経路で、任意のタイミングでスクレイピングを止められる
 - **規約変更時**: netkeiba の利用規約・robots.txt が変更された場合は即座にスクレイピングを停止し、対応を検討する（[operations.md](operations.md) 参照）

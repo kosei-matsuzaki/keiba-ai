@@ -65,13 +65,14 @@ backend/src/
 ├── scraper/      スクレイピング専用。HTML 取得・パース・DB 保存のみ。AI を知らない
 ├── features/     DB から生データを読み取り、学習・推論用の特徴量 DataFrame を生成
 │                 （リーク防止のため「予測時点での情報のみ使用する」制約を徹底管理）
+│                 race_info.py がレース単位の情報量（新馬戦などの「履歴が無いレース」）を判定する
 ├── ai/           特徴量を受け取り NN の学習・評価・推論を実行。features を知らない
 │                 依存 DAG の層で機能サブパッケージ化されている:
 │                 ├── core/       types / labels / splits / temperature / probabilities（最下層）
 │                 ├── model/      registry / _artifacts_nn + NN 実装（net / loss / dataset / preprocess）
 │                 ├── training/   train_nn（学習 CLI）
 │                 ├── inference/  predict — bundle-aware 推論（predict_race / *_with_combinations）
-│                 ├── betting/    odds / strategy（ベット選定）
+│                 ├── betting/    odds / strategy（ベット選定・賭け金配分）
 │                 ├── simulation/ engine / persistence（バックテストシミュレーション）
 │                 └── evaluation/ backtest — NDCG@k・ヒット率・ROI 計算
 ├── core/         設定（Settings）・ロギング・settings_store（JSON 永続化）
@@ -148,27 +149,29 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 | # | 画面名 | ルート | 役割 | 対応 API |
 |---|---|---|---|---|
-| 1 | Dashboard | `/` | モデル評価指標のサマリ（NDCG@3・Top-1 ヒット率・複勝的中率・ROI）と精度推移グラフ | `GET /api/metrics/summary`, `GET /api/metrics/timeseries` |
-| 2 | Upcoming Races | `/upcoming` | 今週末の出馬表一覧。RaceCard で各レースを表示 | `GET /api/races/upcoming?days=7` |
-| 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬一覧 + PredictionTable（BUY バッジ付き） | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}` |
-| 4 | Models | `/models` | 学習履歴テーブル（ModelTable）。active モデルの切り替え（Activate ボタン）と再学習トリガ（TrainModelDialog） | `GET /api/models`, `POST /api/models/train`, `POST /api/models/{id}/activate` |
-| 5 | Ingest | `/ingest` | ScraperStatusCard でスクレイパー稼働状況表示。IngestRunDialog で手動実行。即時停止 confirm 付き | `GET /api/scraper/status`, `POST /api/scraper/run`, `POST /api/scraper/stop` |
-| 6 | Settings | `/settings` | react-hook-form + zod によるバリデーション付き設定フォーム。率閾値バリデーション（rate_min ≤ rate_max / EV ≥ 1.0）込み | `GET /api/settings`, `PUT /api/settings` |
+| 1 | Dashboard | `/` | active モデルの KPI（NDCG@3 / Top-1 ヒット率 / 複勝的中率 / 単勝回収率）と精度推移グラフ | `GET /api/metrics/summary`, `GET /api/metrics/timeseries` |
+| 2 | Race | `/races` | 月カレンダーで日を選び、その日のレース一覧と取込操作をまとめる | `GET /api/races/calendar`, `GET /api/races/by_date`, `POST /api/scraper/run_shutuba`, `POST /api/scraper/run_results` |
+| 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬表（予想確率・BUY バッジ）+ 推奨買目 + 結果の答え合わせ | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}`, `GET /api/recommendations/{race_id}` |
+| 4 | Ledger | `/ledger` | 購入記録と収支（回収率・的中率・券種別内訳・損益推移） | `GET /api/bets*` |
+| 5 | Models | `/models` | 学習履歴テーブル。active 切り替えと再学習トリガ | `GET /api/models`, `POST /api/models/train`, `POST /api/models/{id}/activate` |
+| 6 | Model Detail | `/models/:model_id` | モデル 1 件の詳細と、期間・予算を指定したバックテスト | `GET /api/models/{id}`, `POST /api/simulation/start`, `GET /api/simulation/runs/{run_id}` |
+| 7 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（SCRAPER / BETTING / BET TYPES タブ） | `GET /api/settings`, `PUT /api/settings` |
+
+旧 `/upcoming` `/past` `/ingest` は Race 画面へ統合済みで、ブックマーク互換のため
+`router.tsx` が `Navigate` でリダイレクトするだけの経路として残している。
 
 ### 画面遷移図
 
 ```text
-[Dashboard]
-    │
-    ├─ "今週のレース" リンク → [Upcoming Races]
-    │       └─ レース行クリック → [Race Detail]
-    │
-    ├─ サイドナビ: [Models]
-    ├─ サイドナビ: [Ingest]
-    └─ サイドナビ: [Settings]
+[Topbar: DASHBOARD / RACE / LEDGER / MODELS / SETTINGS]（全画面共通）
+
+[Dashboard] ─ active モデルカード → [Models] → [Model Detail]
+[Race] ─ カレンダーで日を選ぶ → レース行クリック → [Race Detail]
+[Race Detail] ─ 推奨買目をまとめて記録 → [Ledger]
 ```
 
-サイドナビバーは全画面共通。React Router でルーティングを管理する。
+ナビは左サイドバーではなく上部の `Topbar`。アイコンも番号も置かず、等幅の英字ラベルだけで、
+選択中は面ではなく色（primary）で示す。
 
 ### 各画面の主要コンポーネント
 
@@ -176,24 +179,29 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 ```text
 ┌─────────────────────────────────────────┐
-│  ActiveModelCard（Models ページへの Link付き）
+│  ActiveModelCard（Models ページへの Link 付き）
 │    active モデルが null の場合は「未設定」バッジ + train ガイド
 ├─────────────────────────────────────────┤
-│  MetricCard × 4（NDCG@3 / Top-1 / 複勝的中率 / ROI）
+│  MetricBand（NDCG@3 / Top-1 / 複勝的中率 / 単勝回収率）
+│    カードではなく罫線区切りの帯。値の出所は metrics/summary
 ├─────────────────────────────────────────┤
-│  MetricsTimeseriesChart（30日推移、Recharts LineChart）
+│  AccuracyChart（推移、Recharts LineChart）
 └─────────────────────────────────────────┘
 ```
 
-#### Upcoming Races
+#### Race
 
 ```text
 ┌─────────────────────────────────────────┐
-│  DateFilter（日付タブ or セレクタ）
-├─────────────────────────────────────────┤
-│  RaceCard × N                          │
-│    レース名 / 競馬場 / 距離 / 馬場     │
-│    ProbabilityBar（上位 3 頭）         │
+│  DataCoverageBand（どこまで取り込めているか）
+├──────────────────┬──────────────────────┤
+│  RaceCalendar    │  DayIngestPanel      │
+│   月表示。日ごと │   選んだ日の取込操作 │
+│   に開催と取込   │   過去=結果 /        │
+│   状況を色で示す │   当日=両方 /        │
+│                  │   未来=出馬表        │
+├──────────────────┴──────────────────────┤
+│  選択日のレース一覧（行クリックで Race Detail）
 └─────────────────────────────────────────┘
 ```
 
@@ -201,13 +209,36 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 ```text
 ┌─────────────────────────────────────────┐
-│  RaceHeader（コース・距離・天候・頭数）  │
+│  レース概要（コース・距離・馬場・頭数）  │
+│  LowInformationNotice                   │
+│    出走馬全員が初出走のレース（新馬戦など）で
+│    「判断材料が少ない」と明示する       │
 ├─────────────────────────────────────────┤
-│  PredictionTable（全馬、スコア降順）    │
-│    馬 ID / スコア / 単勝 prob /         │
-│    複勝 prob / BUY バッジ          │
-│    BUY 判定: win_prob × odds_win > 1.1 │
-│    （→ [ai-model.md](ai-model.md) 参照）│
+│  出走馬表（スコア降順）                 │
+│    馬番（Umaban・枠色）/ 馬名 / スコア  │
+│    単勝 prob / 複勝 prob / BUY バッジ   │
+│    BUY 判定: **モデル 1 位** かつ        │
+│      odds_win ≥ win_min_odds            │
+│      （EV 条件ではない → ai-model.md）  │
+├─────────────────────────────────────────┤
+│  RecommendationParamsBar + RecommendationsCard
+│    予算 / 1 点あたり / 券種 を切り替えて再計算
+│    まとめて Ledger に記録できる         │
+├─────────────────────────────────────────┤
+│  結果の答え合わせ（確定後）             │
+└─────────────────────────────────────────┘
+```
+
+#### Ledger
+
+```text
+┌─────────────────────────────────────────┐
+│  サマリ（投資額 / 払戻 / 回収率 / 的中率）
+├─────────────────────────────────────────┤
+│  BankrollChart（損益推移）              │
+├─────────────────────────────────────────┤
+│  券種別内訳 + 購入記録テーブル          │
+│    AddBetDialog で手動登録 / CSV 書き出し
 └─────────────────────────────────────────┘
 ```
 
@@ -220,46 +251,62 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ├─────────────────────────────────────────┤
 │  ModelTable（学習済みモデル一覧）        │
 │    モデル ID / 学習日時 / 評価指標      │
-│    is_active 行: bg-emerald-500/5 ハイライト
-│    Activate ボタン（active 切り替え）   │
+│    is_active 行をハイライト             │
+│    Activate / 名前変更 / 削除           │
 ├─────────────────────────────────────────┤
 │  再学習ボタン → TrainModelDialog        │
-│    （学習中は disabled、ローカル state）│
+│    起動後は JobProgressCard で進捗表示  │
 └─────────────────────────────────────────┘
 ```
 
-#### Ingest
+#### Model Detail
 
 ```text
 ┌─────────────────────────────────────────┐
-│  ScraperStatusCard                      │
-│    稼働状況 / 最終取得日 / ジョブ情報  │
-│    ポーリング: 実行中 5 秒 / アイドル 30 秒
+│  モデル概要（学習条件・評価指標）        │
 ├─────────────────────────────────────────┤
-│  手動実行ボタン → IngestRunDialog       │
-│  即時停止ボタン（confirm ダイアログ付き）│
+│  ModelSimulationPanel                   │
+│    期間 / 予算 / 戦略 / 1 レースの上限  │
+│    「履歴の無いレースを除外」チェック   │
+│      → exclude_low_information          │
+│    実行は POST /simulation/start（非同期）
+├─────────────────────────────────────────┤
+│  BankrollChart + 券種別内訳             │
 └─────────────────────────────────────────┘
 ```
+
+スクレイパーの稼働状況・緊急停止は `ScraperStatusCard`（Race 画面）に置く。
+取込の手動実行は `DayIngestPanel` / `IngestRunDialog` から行う。
 
 #### Settings
 
 ```text
 ┌─────────────────────────────────────────┐
-│  PageHeader（Settings2 アイコン）        │
+│  PageHeader                             │
 ├─────────────────────────────────────────┤
-│  SettingsForm（react-hook-form + zod）  │
-│  ├─ Section: スクレイパー               │
-│  │    User-Agent / rate_min / rate_max  │
-│  │    （rate_min ≤ rate_max バリデーション）
-│  ├─ Section: ベッティング期待値         │
-│  │    EV 閾値（≥ 1.0 バリデーション）  │
-│  └─ Section: 運用                       │
-│       scraper_stopped（説明付き         │
-│       clickable label スタイル）        │
+│  Tabs: SCRAPER / BETTING / BET TYPES    │
+│  SettingsForm（react-hook-form + zod。  │
+│    activeSection で 1 タブ分だけ表示し、│
+│    マウントは維持して入力値を保つ）     │
+│  ├─ SCRAPER                             │
+│  │    User-Agent / rate_min / rate_max /│
+│  │    night_min（rate_min ≤ rate_max）  │
+│  ├─ BETTING                             │
+│  │    連系を買う基準（EV 閾値 ≥ 1.0）   │
+│  │    単勝のオッズ下限                  │
+│  │    1 レースに使う上限 / 1 点あたり   │
+│  └─ BET TYPES                           │
+│       買う券種のチェックと、その券種の  │
+│       1 点あたり金額を同じ場所で編集    │
 └─────────────────────────────────────────┘
 ```
 
-Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section は `icon + title + description` のヘッダを持ち、FieldRow には help text を追加する。
+BETTING に **複勝の EV 閾値は無い**。単勝・複勝は期待値ではなく「AI の本命を買う」ルールで、
+EV 条件を入れると回収率が落ちることが実測で分かっているため（`docs/ai-model.md`）。
+枠連は AI が買い目を生成しないので BET TYPES の選択肢に出さない。
+
+Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section は description ヘッダを持ち、
+FieldRow には help text を添える。
 
 ---
 
@@ -277,6 +324,8 @@ Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section �
 
 | クエリキー | 対応フック | 対象 API | 更新間隔 |
 |---|---|---|---|
+| `['races', 'calendar', year, month]` | `useRacesCalendar` | `GET /api/races/calendar` | 5 分（staleTime） |
+| `['races', 'by_date', date]` | `useRacesByDate` | `GET /api/races/by_date` | 5 分（staleTime） |
 | `['races', 'upcoming']` | `useUpcomingRaces` | `GET /api/races/upcoming` | 5 分（staleTime） |
 | `['races', raceId]` | `useRaceDetail` | `GET /api/races/{race_id}` | ユーザー操作時のみ（refetch） |
 | `['predictions', raceId]` | `usePredictions` | `GET /api/predictions/{race_id}` | ユーザー操作時のみ（refetch） |
@@ -285,13 +334,17 @@ Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section �
 | `['scraper', 'status']` | `useScraperStatus` | `GET /api/scraper/status` | アイドル: 30 秒 / 実行中: 5 秒（refetchInterval を Zustand `isRunning` で切り替え） |
 | `['models']` | `useModels` | `GET /api/models` | ユーザー操作時のみ |
 | `['settings']` | `useSettings` | `GET /api/settings` | ユーザー操作時のみ |
+| `['recommendations', raceId, params]` | `useRecommendations` | `GET /api/recommendations/{race_id}` | ユーザー操作時のみ |
+| `['bets', ...]` | `useBetList` / `useBetSummary` / `useBetBreakdown` / `useBetTimeseries` | `GET /api/bets*` | 記録の追加・削除時に invalidate |
+| `['jobs', jobId]` | `useJobStatus` | `GET /api/jobs/{job_id}` | 2 秒 polling（terminal status で停止）|
 
 ### Zustand（`src/store/app.ts`）
 
 | ストア | 保持する状態 |
 |---|---|
-| `useAppStore` | `sidebarOpen`（サイドナビ開閉状態） |
-| `useScraperStore` | `isRunning`（スクレイパー手動実行中フラグ — ポーリング間隔の切り替えに使用） |
+| `useAppStore` | `sidebarOpen`（旧サイドナビの名残。ナビは Topbar に移行済み） |
+| `useScraperStore` | `isRunning`（スクレイパー手動実行中フラグ — ポーリング間隔の切り替えに使用）/ `trackedJobId`（JobProgressCard が追う取込ジョブ） |
+| `useTrainingStore` | `trackedJobId`（JobProgressCard が追う学習ジョブ） |
 
 ### フロント側 API クライアント（`src/lib/api.ts` + `src/lib/api-base.ts`）
 
@@ -313,7 +366,7 @@ Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section �
 |---|---|
 | DL アンサンブル（TabNet / CatBoost 等との ensemble） | `ai/model/registry.py` の `ModelBundle` と `ai/inference/predict.py` の bundle-aware 推論が、呼び出し側からモデル実装の詳細を隠蔽する |
 | Plackett-Luce モンテカルロによる複勝確率変換 | `ai/core/probabilities.py` の確率変換ロジックを差し替え可能な関数として分離 |
-| 馬連・ワイド以上の券種拡張 | `bet_type` を Settings で設定可能にし、予想テーブルを汎化 |
+| 券種の追加 | 対応券種は `core/bet_types.py` に集約し、Settings の `enabled_bet_types` / `stake_units` と `ai/betting/strategy.py` が同じ定義を参照する（現状 枠連は未対応で、UI の選択肢にも出さない）|
 | 週次自動取り込み・月次自動再学習 | `jobs/` の CLI（`ingest_range` 等）が冪等・レジューム可能なため、外部スケジューラ（cron / タスクスケジューラ）から定期実行するだけで自動化できる |
 | データ可視化の高度化（オッズ動向チャート等） | Recharts コンポーネントを page 配下に追加するのみで対応可能 |
 
@@ -323,16 +376,16 @@ Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section �
 
 ### PageHeader コンポーネント
 
-全 6 ルート（Dashboard / UpcomingRaces / RaceDetail / Models / Ingest / Settings）の最上部に `PageHeader` を配置し、ページ見出しを統一する。
+各ルートの最上部に `PageHeader` を配置し、ページ見出しを統一する。
 
 | prop | 型 | 概要 |
 |---|---|---|
 | `icon` | `LucideIcon` | 左タイルに表示するアイコン（primary tinted 背景） |
 | `title` | `string` | `<h1>` に出力するページ名 |
 | `description` | `string?` | タイトル下のサブテキスト（省略可） |
-| `children` | `ReactNode?` | 右端 actions slot（ボタン類）。Models は TrainModelDialog、Ingest は IngestRunDialog + 即時停止ボタンを配置 |
+| `children` | `ReactNode?` | 右端 actions slot（ボタン類）。Models は TrainModelDialog、Race は取込・即時停止のボタンを配置 |
 
-各ルートで使用するアイコン: LayoutDashboard（Dashboard）/ CalendarClock（UpcomingRaces）/ Trophy（RaceDetail）/ Brain（Models）/ Database（Ingest）/ Settings2（Settings）。RaceDetail は `course + race_class` を title に、開催日・距離・race_id を description に動的設定する（3 状態: loading / error / loaded 対応）。
+RaceDetail は `course + race_class` を title に、開催日・距離・race_id を description に動的設定する（3 状態: loading / error / loaded 対応）。
 
 ### タイポグラフィ階層
 
@@ -340,11 +393,11 @@ Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section �
 |---|---|---|
 | ページ h1 | `text-3xl font-bold tracking-tight` | PageHeader が全ルートに適用 |
 | CardTitle | `text-base font-semibold leading-tight` | `src/components/ui/card.tsx` の CardTitle デフォルト値 |
-| Sidebar ロゴ span | `text-base` | ヘッダーロゴの文字サイズ |
+| Topbar ロゴ span | `text-base` | ヘッダーロゴの文字サイズ |
 
 ページ h1 は `tracking-tight` を加えて視認性を高め、CardTitle は `text-2xl` から `text-base` に縮小してカード内コンテンツとのバランスを改善している。
 
-### Sidebar active state
+### ナビの active state
 
 | 項目 | 値 |
 |---|---|
@@ -377,7 +430,7 @@ Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` �
 #### Card hover
 
 - `ui/card.tsx` に `transition-shadow duration-150` を全 Card 共通で付与し、hover 時の影変化を滑らかにする
-- クリック可能なカード（`RaceCard` / `ActiveModelCard`）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
+- クリック可能なカード（レース一覧の行 / `ActiveModelCard`）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
 
 #### Dialog overlay
 

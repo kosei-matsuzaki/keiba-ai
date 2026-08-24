@@ -83,8 +83,9 @@ def get_metrics_summary(
         #   top1_hit      ≒ test_tansho_hit  (予想1位が1着。ほぼ同義)
         #   place_hit     ≠ test_fukusho_hit (前者=上位3頭のうち1頭以上が3着以内 /
         #                                     後者=予想1位が3着以内。実測 0.885 vs 0.503)
-        #   payback_win   ≠ test_tansho_roi  (前者=EV 閾値超えだけ買う実運用ルール /
-        #                                     後者=top-1 に賭け続ける。実測 0.912 vs 0.930)
+        #   payback_win   ≒ test_tansho_roi  (backtest の既定が --win-bet-rule top1 に
+        #                                     なり、どちらも「予想1位を買う」。差は
+        #                                     オッズ下限とレース集合だけ)
         # フロントのヒット率・回収率のヒットは backtest 側の定義で書いてあるので、
         # fallback 中の値はラベルとずれる。正確を期すなら --persist を回すこと。
         top1_hit=_pick_metric(metrics, "top1_hit", "test_tansho_hit"),

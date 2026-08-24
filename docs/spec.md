@@ -67,6 +67,7 @@
 │   │   ├── features/      # 特徴量エンジニアリング
 │   │   │   ├── builder.py         # FEATURE_COLUMNS (46 列) 定義・build_training_frame / build_inference_frame（レース単位バッチ処理）
 │   │   │   ├── history_sequence.py # 履歴 GRU 用の過去走トークン列生成
+│   │   │   ├── race_info.py       # レース単位の情報量判定（新馬戦など「履歴が無いレース」の検出）
 │   │   │   └── extractors/        # ドメイン別抽出器
 │   │   │       ├── course.py          # レース・馬番・馬体重系特徴量
 │   │   │       ├── horse_history.py   # 馬の過去成績（直近平均着順・上がり3F・脚質 等）
@@ -98,33 +99,37 @@
 │   │   └── logo.svg           # アプリ外（README / 資料）用の単体グリフ。アプリ内は BrandMark.tsx
 │   ├── src/
 │   │   ├── main.tsx           # React + QueryClient + Router マウント
-│   │   ├── App.tsx            # Outlet レイアウト（Sidebar 含む）
-│   │   ├── router.tsx         # createBrowserRouter（6 ルート定義）
-│   │   ├── globals.css        # Tailwind ベース + CSS 変数
+│   │   ├── App.tsx            # Outlet レイアウト（Topbar 含む）
+│   │   ├── router.tsx         # createBrowserRouter（7 画面 + 旧 URL の Navigate リダイレクト 3 本）
+│   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
 │   │   ├── routes/            # ページコンポーネント
-│   │   │   ├── Dashboard.tsx        # ActiveModelCard + MetricCard + AccuracyChart
-│   │   │   ├── UpcomingRaces.tsx    # RaceCard 一覧
-│   │   │   ├── RaceDetail.tsx       # レース概要 + PredictionTable
+│   │   │   ├── Dashboard.tsx        # ActiveModelCard + MetricBand + AccuracyChart
+│   │   │   ├── Races.tsx            # RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
+│   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目 + 答え合わせ
+│   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
 │   │   │   ├── Models.tsx           # ActiveModelCard + ModelTable + Activate + TrainModelDialog
-│   │   │   ├── Ingest.tsx           # ScraperStatusCard + IngestRunDialog + 停止
+│   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
 │   │   ├── components/        # 共通コンポーネント
-│   │   │   ├── BrandMark.tsx       # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従。Topbar のロゴ
-│   │   │   ├── Sidebar.tsx          # サイドナビ（全画面共通）
-│   │   │   ├── PageHeader.tsx       # ページ見出し共通コンポーネント（icon: LucideIcon / title / description? / children?）。左の primary tinted アイコンタイル + h1 + サブテキスト + 右側 actions slot。全 6 ルートに適用
-│   │   │   ├── MetricCard.tsx       # KPI カード
+│   │   │   ├── Topbar.tsx           # 上部ナビ（全画面共通）。等幅英字のみ
+│   │   │   ├── BrandMark.tsx        # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従
+│   │   │   ├── PageHeader.tsx       # ページ見出し共通コンポーネント
+│   │   │   ├── MetricBand.tsx       # KPI 帯（罫線区切り。旧 MetricCard を置換）
 │   │   │   ├── AccuracyChart.tsx    # 精度推移グラフ（Recharts）
-│   │   │   ├── RaceCard.tsx         # 出走レースカード
-│   │   │   ├── EmptyState.tsx       # 空状態表示（icon prop: LucideIcon、デフォルト InboxIcon。サイズ 16、opacity-30、stroke-width 1.5）
-│   │   │   ├── PlaceholderScreen.tsx # 仮表示（未使用）
-│   │   │   ├── PredictionTable.tsx  # 全馬予想テーブル + BUY バッジ
-│   │   │   ├── ActiveModelCard.tsx  # active モデルのサマリカード（ID / 学習日時 / NDCG@3 / 単勝回収率）。未設定時は「未設定」バッジ + train ガイドを表示
-│   │   │   ├── ModelTable.tsx       # 学習済みモデル一覧テーブル（is_active 行に bg-emerald-500/5 ハイライト）
-│   │   │   ├── ScraperStatusCard.tsx # スクレイパー稼働状況カード（直近 N 分 fetch 集計・CLI 進行中バッジを含む）
-│   │   │   ├── JobProgressCard.tsx  # ジョブ進捗カード（Models / Ingest に統合）
-│   │   │   ├── SettingsForm.tsx     # react-hook-form 設定フォーム。Section（icon + title + description ヘッダ）/ FieldRow（help text 付きフィールド行）ヘルパで 3 セクション構成（スクレイパー / ベッティング期待値 / 運用）
-│   │   │   ├── TrainModelDialog.tsx # 再学習確認ダイアログ（react-hook-form + Zod、inline error、open のたびに reset）
-│   │   │   ├── IngestRunDialog.tsx  # スクレイピング実行ダイアログ（react-hook-form + Zod、inline error、open のたびに reset）
+│   │   │   ├── RaceCalendar.tsx     # 月カレンダー。日ごとの取込状況を色で示す
+│   │   │   ├── DayIngestPanel.tsx   # 選択日の取込操作（過去=結果 / 当日=両方 / 未来=出馬表）
+│   │   │   ├── DataCoverageBand.tsx # データ取込のカバレッジ表示
+│   │   │   ├── Umaban.tsx           # 馬番チップ（枠色）
+│   │   │   ├── RecommendationsCard.tsx / RecommendationParamsBar.tsx  # 推奨買目と、その条件（予算 / 1点 / 券種 / 狙い方）
+│   │   │   ├── ModelSimulationPanel.tsx # 期間・予算・戦略を選んでバックテストを回す
+│   │   │   ├── BankrollChart.tsx    # シミュレーションの資産推移
+│   │   │   ├── AddBetDialog.tsx     # 購入記録の手動登録
+│   │   │   ├── EmptyState.tsx / JobProgressCard.tsx / ScraperStatusCard.tsx
+│   │   │   ├── ActiveModelCard.tsx / ModelTable.tsx
+│   │   │   ├── SettingsForm.tsx     # 設定フォーム（Section / FieldRow ヘルパ）
+│   │   │   ├── TrainModelDialog.tsx / IngestRunDialog.tsx / RunResultsDialog.tsx
+│   │   │   ├── DeleteModelDialog.tsx / EditModelNameDialog.tsx / DateYMDPicker.tsx
+│   │   │   ├── PredictionTable.tsx  # ※未使用（RaceDetail が独自の表を持つ）
 │   │   │   └── ui/                  # shadcn 手書きコンポーネント
 │   │   │       ├── button.tsx / card.tsx / table.tsx
 │   │   │       ├── tabs.tsx / badge.tsx / skeleton.tsx
@@ -132,38 +137,34 @@
 │   │   │       ├── label.tsx / select.tsx
 │   │   │       ├── toast.tsx / toaster.tsx  # sonner ラッパ
 │   │   ├── hooks/             # カスタムフック（TanStack Query ラッパ）
-│   │   │   ├── useUpcomingRaces.ts
-│   │   │   ├── useMetricsSummary.ts
-│   │   │   ├── useMetricsTimeseries.ts
-│   │   │   ├── useRaceDetail.ts
-│   │   │   ├── usePredictions.ts
-│   │   │   ├── useModels.ts
-│   │   │   ├── useActivateModel.ts
-│   │   │   ├── useTrainModel.ts
-│   │   │   ├── useScraperStatus.ts  # refetchInterval による polling
-│   │   │   ├── useScraperRun.ts
-│   │   │   ├── useScraperStop.ts
+│   │   │   ├── useRacesCalendar.ts / useRacesByDate.ts / useRaceDetail.ts / useThisWeekendRaces.ts
+│   │   │   ├── usePredictions.ts    # 予想は重いのでボタン主導（enabled で gate）
+│   │   │   ├── useRecommendations.ts
+│   │   │   ├── useMetricsSummary.ts / useMetricsTimeseries.ts
+│   │   │   ├── useModels.ts / useActivateModel.ts / useTrainModel.ts / useUpdateModel.ts / useDeleteModel.ts
+│   │   │   ├── useBetList.ts / useBetSummary.ts / useBetBreakdown.ts / useBetTimeseries.ts
+│   │   │   ├── useCreateBet.ts / useCreateBetsBulk.ts / useDeleteBets.ts
+│   │   │   ├── useScraperStatus.ts / useScraperRun.ts / useScraperStop.ts / useScraperRecentActivity.ts
+│   │   │   ├── useRunShutuba.ts / useRunResults.ts
 │   │   │   ├── useJobStatus.ts      # jobId を 2 秒 polling、terminal status で停止
-│   │   │   ├── useScraperRecentActivity.ts  # 実行中 5 秒 / アイドル 30 秒 polling
-│   │   │   └── useSettings.ts
+│   │   │   ├── useSettings.ts / useTheme.ts
 │   │   ├── store/             # Zustand ストア
 │   │   │   └── app.ts         # useAppStore / useScraperStore（trackedJobId を含む）
 │   │   ├── lib/               # API クライアント・ユーティリティ
-│   │   │   ├── api.ts         # ky ベース API クライアント（lazy 初期化・getApiBaseUrl() 経由）。getStatus / isNotFoundError / isServiceUnavailableError / isValidationError / formatErrorMessage(async) / formatErrorMessageSync の error helpers を含む
-│   │   │   ├── api-base.ts    # getApiBaseUrl()（VITE_KEIBA_API_BASE_URL or http://127.0.0.1:8765）
-│   │   │   ├── formatters.ts  # display formatter 集約（8 関数。null/NaN/Infinity を「—」に統一）
+│   │   │   ├── api.ts         # ky ベース API クライアント。error helpers（getStatus / isNotFoundError / formatErrorMessage 等）を含む
+│   │   │   ├── api-base.ts    # getApiBaseUrl()
+│   │   │   ├── formatters.ts  # display formatter 集約（null/NaN/Infinity を「—」に統一）
+│   │   │   ├── betTypes.ts    # 選択できる馬券種（枠連は AI が買い目を生成しないので含めない）
+│   │   │   ├── betCombos.ts / labels.ts / waku.ts  # 買い目の組立 / 表示ラベル / 枠番と枠色
 │   │   │   ├── query-client.ts
 │   │   │   └── cn.ts          # clsx + tailwind-merge ユーティリティ
 │   │   └── types/
-│   │       └── api.ts         # API レスポンス型定義（JobInfo / ScraperRecentActivity を含む）
+│   │       └── api.ts         # API レスポンス型定義
 │   └── src/__tests__/         # Vitest + @testing-library/react
-│       ├── App.test.tsx
-│       ├── Dashboard.test.tsx
-│       ├── UpcomingRaces.test.tsx
-│       ├── RaceDetail.test.tsx
-│       ├── Models.test.tsx
-│       ├── Ingest.test.tsx
-│       ├── Settings.test.tsx
+│       ├── App.test.tsx / Dashboard.test.tsx / Races.test.tsx / RaceDetail.test.tsx
+│       ├── Ledger.test.tsx / Models.test.tsx / Settings.test.tsx
+│       ├── DayIngestPanel.test.tsx / RecommendationsCard.test.tsx
+│       ├── betCombos.test.ts / waku.test.ts
 │       ├── lib_api_errors.test.ts  # error helpers 単体テスト（9 ケース）
 │       ├── lib_formatters.test.ts  # formatters.ts の全関数ユニットテスト
 │       └── setup.ts
@@ -358,7 +359,12 @@ CREATE TABLE model_runs (
 
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
+| GET | `/api/races/calendar?year=&month=` | 200 | 月カレンダー。日ごとの開催有無と取込状況 |
+| GET | `/api/races/by_date?date=` | 200 | 指定日のレース一覧 |
+| GET | `/api/races/coverage` | 200 | 取込済みデータの期間カバレッジ |
+| GET | `/api/races/this_weekend` | 200 | 今週末のレース一覧 |
 | GET | `/api/races/upcoming?days=7` | 200 | 直近 N 日の出馬表一覧 |
+| GET | `/api/races/recent?days=7` | 200 | 直近 N 日の結果確定済みレース一覧 |
 | GET | `/api/races/{race_id}` | 200 / 404 | レース詳細（出走馬・オッズ・天候等） |
 
 ```json
@@ -383,9 +389,13 @@ CREATE TABLE model_runs (
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
 | GET | `/api/predictions/{race_id}` | 200 / 404 / 503 | 全馬の単勝・複勝予想確率 |
+| GET | `/api/predictions/bulk?race_ids=` | 200 / 503 | 複数レース分をまとめて予想（一覧画面用） |
 
 - active モデルが存在しない場合は **503** を返す
 - `top_features` は特徴量寄与表示用フィールドだが、寄与計算は廃止済みのため常に空配列を返す（API 互換のため残置）
+- `info_coverage` は「このレースにどれだけ判断材料があるか」（`features/race_info.py`）。
+  出走馬の過去走ゼロ率が 0.5 以上なら `is_low_information: true` になり、UI は
+  新馬戦などで「情報が少ない」注意書きを出す
 
 ```json
 // GET /api/predictions/{race_id} レスポンス例（抜粋）
@@ -413,6 +423,9 @@ CREATE TABLE model_runs (
 | GET | `/api/models/{id}` | 200 / 404 | モデル詳細（パラメータ・評価指標） |
 | POST | `/api/models/train` | 202 | 再学習ジョブをバックグラウンド起動（即時 JobAccepted 返却） |
 | POST | `/api/models/{id}/activate` | 200 / 404 | 指定モデルを active に設定 |
+| PATCH | `/api/models/{id}` | 200 / 404 | 表示名の変更 |
+| DELETE | `/api/models/{id}` | 200 / 404 | モデル削除（active は削除不可） |
+| POST | `/api/models/compact` | 200 | 不要なモデル成果物を削除して容量を回収 |
 
 非同期ジョブ（`POST /api/models/train`）は `asyncio.create_task` でバックグラウンド起動し、以下を即時返却する。
 
@@ -438,7 +451,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 |---|---|---|---|
 | `top1_hit` | 予想1位が1着 | `test_tansho_hit` | ほぼ同義 |
 | `place_hit` | **上位3頭のうち1頭以上**が3着以内 | `test_fukusho_hit`（予想1位が3着以内）| **別物**（実測 0.885 vs 0.503）|
-| `payback_win` | EV>閾値の馬すべてに1点定額 | `test_tansho_roi`（top-1 に賭け続ける）| **別物**（実測 0.912 vs 0.930）|
+| `payback_win` | 予想1位に1点定額（`--win-bet-rule top1` が既定）| `test_tansho_roi`（top-1 に賭け続ける）| ほぼ同義（差はオッズ下限とレース集合）|
 
 フロントのヒットは backtest 側の定義で書いてあるので、fallback 中の値はラベルとずれる。正確を期すなら `--persist` を回すこと。
 
@@ -449,6 +462,10 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | GET | `/api/scraper/status` | 200 | スクレイパー稼働状況・最終取得日・未取得日数 |
 | GET | `/api/scraper/recent_activity?minutes=N` | 200 | scrape_log 直近 N 分の集計（status 内訳・rate_per_min・最新 race_id） |
 | POST | `/api/scraper/run` | 202 | 手動スクレイピング実行（非同期・JobAccepted 即時返却） |
+| POST | `/api/scraper/run_shutuba` | 202 | 指定日の出馬表だけを取り込む（未来日・当日） |
+| POST | `/api/scraper/run_results` | 202 | 指定日の結果・払戻だけを取り込む（過去日・当日） |
+| GET | `/api/scraper/discover_today_race_ids` | 200 | 当日開催の race_id を列挙（取込対象の事前確認） |
+| GET | `/api/scraper/discover_this_weekend_race_ids` | 200 | 今週末開催の race_id を列挙 |
 | POST | `/api/scraper/stop` | 200 | スクレイピング即時停止（緊急停止スイッチ） |
 
 `ScraperStatus.missing_dates_count`: `?range=N` クエリで日数を指定（デフォルト 30 日）し、ok ログ 0 件の日数を返す。カレンダー参照ベースではなく簡素な日数カウント実装。
@@ -466,6 +483,53 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 
 ジョブ状態は JobInfoSchema（`job_id` / `status` / `created_at` / `updated_at` / `detail`）で返却する。ジョブ情報はインメモリ管理のためプロセス再起動で消失する。
 
+### 推奨買目
+
+| メソッド | パス | ステータス | 概要 |
+|---|---|---|---|
+| GET | `/api/recommendations/{race_id}` | 200 / 404 / 503 | 予算内に収まる買い目一覧 |
+
+主なクエリ: `top_n_horses`（連系の候補にする上位頭数）/ `top_k`（券種ごとの上限点数）/
+`race_budget` / `stake_unit` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
+
+買い方は券種で異なる（`ai/betting/strategy.py`、根拠は `docs/ai-model.md`）:
+
+- **単勝**: モデル 1 位の 1 頭のみ。EV 条件は使わず、オッズ下限 `win_min_odds` だけ見る
+- **複勝**: モデル 1 位の 1 頭のみ。EV 条件は使わない
+- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: `win_ev_threshold` を超える組み合わせ
+
+賭け金は EV 順ではなく **単勝 → 複勝 → 連系** の順に、同券種内は的中確率順で
+`stake_units`（券種別の 1 点あたり金額）を割り当て、`race_budget` を超えたら打ち切る。
+
+### シミュレーション
+
+| メソッド | パス | ステータス | 概要 |
+|---|---|---|---|
+| POST | `/api/simulation/start` | 202 | バックテストをバックグラウンド起動（`job.result.run_id` に結果 id）|
+| GET | `/api/simulation/active_model` | 200 / 503 | active モデルで同期実行（短い window 用）|
+| GET | `/api/simulation/runs` | 200 | 保存済み run 一覧 |
+| GET | `/api/simulation/runs/{run_id}` | 200 / 404 | run 詳細（資産推移・券種別内訳）|
+| DELETE | `/api/simulation/runs/{run_id}` | 200 / 404 | run 削除 |
+
+主なクエリ: `start` / `end` / `budget` / `strategy`（conservative / balanced / aggressive）/
+`model_id` / `max_stake_per_race_yen` / `exclude_low_information`。
+`exclude_low_information=true` で、出走馬全員が初出走のレース（新馬戦など）を集計から外す。
+買い方・賭け金配分は推奨買目 API と同じ経路（`ai/simulation/engine.py` → `strategy.py`）を通る。
+
+### 購入記録（Ledger）
+
+| メソッド | パス | ステータス | 概要 |
+|---|---|---|---|
+| GET | `/api/bets` | 200 | 購入記録一覧 |
+| POST | `/api/bets` | 200 | 1 件登録 |
+| POST | `/api/bets/bulk` | 200 | 推奨買目からまとめて登録 |
+| POST | `/api/bets/bulk_delete` | 200 | まとめて削除 |
+| GET / PUT / DELETE | `/api/bets/{bet_id}` | 200 / 404 | 1 件の取得・更新・削除 |
+| GET | `/api/bets/summary` | 200 | 投資額・払戻・回収率・的中率 |
+| GET | `/api/bets/breakdown` | 200 | 券種別の内訳 |
+| GET | `/api/bets/timeseries` | 200 | 損益推移（グラフ用）|
+| GET | `/api/bets/export.csv` | 200 | CSV 書き出し |
+
 ### 設定
 
 | メソッド | パス | ステータス | 概要 |
@@ -473,7 +537,26 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | GET | `/api/settings` | 200 | 現在の設定値取得 |
 | PUT | `/api/settings` | 200 | 設定値更新（User-Agent・レート制御値・ベットルール閾値等） |
 
-設定値は `data/settings.json` に永続化される（`core/settings_store.py`）。
+設定値は `data/settings.json` に永続化される（`core/settings_store.py`）。主なキー:
+
+| キー | 概要 | デフォルト |
+|---|---|---|
+| `user_agent` | スクレイパーの User-Agent | 研究用 UA 文字列 |
+| `rate_min_seconds` / `rate_max_seconds` | リクエスト間隔（秒） | 3.0 / 6.0 |
+| `night_min_seconds` | 深夜帯の最小間隔（秒） | 5.0 |
+| `scraper_stopped` | 緊急停止フラグ | `false` |
+| `win_ev_threshold` | **連系のみ**の EV 閾値 | 1.1 |
+| `win_min_odds` | 単勝で買うオッズ下限（EV 条件の代わり） | 1.1 |
+| `race_budget` | 1 レースに使う上限（円） | 5000 |
+| `stake_unit` | 1 点あたりの既定額（円） | 100 |
+| `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |
+| `enabled_bet_types` | 対象券種 | 単勝・複勝・馬連・ワイド・馬単・三連複・三連単 |
+
+- 枠連は AI が買い目を生成しないので選択肢に出さない（`core/bet_types.py` の
+  `supported_bet_types()` が保存済み設定からも落とす）
+- 複勝の EV 閾値（旧 `place_ev_threshold`）は**廃止**。複勝は EV 条件を使わない
+- 旧 Kelly 設定（`bankroll` / `kelly_fraction` / `max_stake_per_race_pct`）は読み込み時に
+  `race_budget` へ読み替えて破棄する（`_migrate_legacy`）
 
 ---
 
@@ -496,6 +579,16 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | `KEIBA_DATA_DIR` | `backend/data/` | バックエンド | DB・モデル・settings.json の保存ルートディレクトリ |
 | `KEIBA_KEEP_MISC_CACHE` | `0` | バックエンド（ingest_range） | `1` に設定すると `ingest_range` が各日完了後の `data/raw/misc/` 自動削除をスキップする。デバッグ用 opt-out フラグ |
 | `KEIBA_INCLUDE_NAR` | `0` | バックエンド（ingest） | `1` に設定すると地方競馬（NAR）のレース ID も ingest 対象に含める。デフォルトは中央（JRA）のみ |
+| `KEIBA_ODDS_DB` | `<data>/odds.db` | バックエンド | オッズ DB のパス上書き |
+| `KEIBA_LOG_DIR` | （なし） | バックエンド | 設定するとファイルログを `<dir>/<name>-<ts>.log` に出す（opt-in）|
+| `KEIBA_SCRAPER_STOP` | `0` | バックエンド（scraper） | `1` でスクレイピングを停止（UI / API と並ぶ 3 経路目）|
+| `KEIBA_USER_AGENT` / `KEIBA_RATE_MIN_SECONDS` / `KEIBA_RATE_MAX_SECONDS` / `KEIBA_NIGHT_MIN_SECONDS` | settings.json の値 | バックエンド（scraper） | スクレイパー設定の環境変数上書き |
+| `KEIBA_TLS_RELAX_STRICT` | `0` | バックエンド（scraper） | TLS 検証の緩和を明示的に opt-in（既定は厳格）|
+| `KEIBA_PLACE_PROB_METHOD` | `plackett_luce` | バックエンド（推論） | 複勝確率の算出方式 |
+| `KEIBA_DISABLE_FRAME_CACHE` | `0` | バックエンド（特徴量） | `1` で特徴量フレームのキャッシュを無効化 |
+| `KEIBA_DEBUG_SIM_MISSES` | `0` | バックエンド（シミュレーション） | `1` で外れ買い目の内訳をログ出力 |
+| `KEIBA_EXCLUDE_ODDS_FEATURES` | `0` | バックエンド（学習・推論） | `1` でオッズ系特徴量を除外（オッズ未確定時の検証用）|
+| `KEIBA_MISSING_INDICATORS` / `KEIBA_LOG_FEATURES` / `KEIBA_SPEED_FIGURE` / `KEIBA_PACE_FEATURES` | `0` | バックエンド（学習・推論） | 実験用の特徴量ノブ。**すべて default-off**（A/B で本番 ROI 改善せず。`docs/ai-model.md`「実験ノブと A/B 知見」）。有効化するときは学習と推論で必ず揃える |
 | `VITE_KEIBA_API_BASE_URL` | `http://127.0.0.1:8765` | フロントエンド | `src/lib/api-base.ts` の `getApiBaseUrl()` が返すベース URL を上書き |
 
 ---
@@ -556,7 +649,7 @@ uv run python -m ai.training.train_nn --loss multi --train-end 2025-12-31
 # バックテスト評価（学習済みモデルディレクトリを指定）
 uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn
 
-# 評価結果を model_runs.metrics_json にマージ保存する（Dashboard MetricCard に反映させる場合は必須）
+# 評価結果を model_runs.metrics_json にマージ保存する（Dashboard の KPI に反映させる場合は必須）
 uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn --persist
 
 # 評価期間を絞る
@@ -566,4 +659,11 @@ uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
 # 1 番人気常時投票ベースラインとの比較（{model, baseline_favorite, delta} を出力）
 uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
     --baseline favorite
+
+# 買い方を変えて評価する（既定はアプリと同じ「本命 1 点」ルール）
+uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
+    --win-bet-rule top1 --place-bet-rule topk --place-top-k 1
 ```
+
+最良構成は **二段階**（`plackett_luce` で事前学習 → `--init-from <model_dir>` で
+`multi` に fine-tune）。損失・監視指標の選び方は `docs/ai-model.md` を参照。

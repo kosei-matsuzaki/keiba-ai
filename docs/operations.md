@@ -12,7 +12,7 @@
 1. `bash scripts/dev.sh` を実行して FastAPI と Vite を起動する
 2. ブラウザで `http://localhost:5173` を開く
 3. Settings 画面で User-Agent と取り込みレート（秒）を設定する
-4. Ingest 画面で初回データ取り込みを実行する
+4. Race 画面のカレンダーで日を選び、取込パネルから初回データ取り込みを実行する
 5. Models 画面で初回学習を実行し、生成されたモデルを active に切り替える
 6. Upcoming Races 画面でレース一覧を確認し、Race Detail 画面で馬ごとの予想を確認する
 
@@ -69,7 +69,7 @@ curl -X POST http://127.0.0.1:8765/api/scraper/stop
 KEIBA_SCRAPER_STOP=1 uv run keiba-ingest --date 2024-12-28
 ```
 
-UI からは Settings 画面の停止スイッチ、または Ingest 画面の即時停止ボタンで操作できます。
+UI からは Race 画面のスクレイパー状態カードにある即時停止ボタンで操作できます。
 
 内部的には `scraper/stop_flag.py` の `is_stopped()` がループのたびに環境変数とプロセス内フラグを検査します。
 
@@ -92,9 +92,9 @@ curl http://127.0.0.1:8765/api/jobs
 curl http://127.0.0.1:8765/api/jobs/{job_id}
 ```
 
-UI の Ingest 画面でも ScraperStatusCard がポーリング表示します（アイドル: 30 秒間隔 / 実行中: 5 秒間隔）。ScraperStatusCard は「直近 10 分: N fetch (ok X, err Y)」「最新 race_id」「CLI 進行中バッジ」を表示するため、`ingest_range` を CLI で実行中も UI を開くだけで 1 分あたり何 fetch 進んでいるかを即座に確認できます。
+UI の Race 画面でも ScraperStatusCard がポーリング表示します（アイドル: 30 秒間隔 / 実行中: 5 秒間隔）。ScraperStatusCard は「直近 10 分: N fetch (ok X, err Y)」「最新 race_id」「CLI 進行中バッジ」を表示するため、`ingest_range` を CLI で実行中も UI を開くだけで 1 分あたり何 fetch 進んでいるかを即座に確認できます。
 
-UI の Models / Ingest 画面では JobProgressCard が API ジョブ（`POST /api/models/train`、`POST /api/scraper/run`）の進捗を 2 秒間隔で polling し、terminal status（completed / failed）で自動停止します。
+UI の Models / Race 画面では JobProgressCard が API ジョブ（`POST /api/models/train`、`POST /api/scraper/run`）の進捗を 2 秒間隔で polling し、terminal status（completed / failed）で自動停止します。
 
 ### モデル学習
 
@@ -115,7 +115,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 # バックテスト評価（NDCG@1/3/5, Top-1 hit, place_hit, payback_win, payback_place）
 uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn
 
-# 評価結果を model_runs.metrics_json に保存する（Dashboard MetricCard に反映させる場合は必須）
+# 評価結果を model_runs.metrics_json に保存する（Dashboard の KPI に反映させる場合は必須）
 uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn --persist
 
 # 1 番人気常時投票ベースラインとの比較（delta = model - baseline を追加出力）
@@ -123,9 +123,9 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
     --baseline favorite
 ```
 
-> **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は **top-1 に賭け続けた場合**の指標で、アプリが実際に使う賭けルール（EV>閾値の馬すべてに1点定額）の成績ではない。`--persist` を回すと backtest がアプリと同じルールで測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、同じレース集合の `ndcg*` を上書き保存し、Dashboard が**利用者が実際に得る数字**を表示するようになる。
+> **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は学習ループが測った valid / test の指標で、レース集合も指標の定義もアプリの画面と揃っていない。`--persist` を回すと backtest が**アプリと同じ賭けルール**（単勝・複勝ともモデルの本命 1 点）で測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、**同じレース集合の** `ndcg*` を上書き保存し、Dashboard が「利用者が実際に得る数字」を表示するようになる。
 >
-> 数字は変わる（実測: 単勝回収率 0.930 → 0.912、複勝的中率 0.503 → 0.885）。後者は**定義が違う**（予想1位が3着以内 → 上位3頭のうち1頭以上が3着以内）ためで、改善ではない。**学習直後に必ず `--persist` 付きで評価すること。**
+> 数字は変わる。単勝回収率は学習時 `test_tansho_roi` 0.930 に対し backtest 0.931 とほぼ一致する（どちらも本命 1 点）が、複勝的中率は 0.503 → 0.885 と大きく動く。これは改善ではなく**定義が違う**ためで、前者は「予想 1 位が 3 着以内」、後者は「上位 3 頭のうち 1 頭以上が 3 着以内」。**学習直後に必ず `--persist` 付きで評価すること。**
 
 評価指標は API からも確認できます。
 
@@ -183,9 +183,20 @@ backend/data/models/
 | `rate_min_seconds` | レート制御の最小待機秒数 | 3.0 |
 | `rate_max_seconds` | レート制御の最大待機秒数 | 6.0 |
 | `night_min_seconds` | 夜間の最小待機秒数 | 5.0 |
-| `win_ev_threshold` | 単勝 EV 閾値（1.0 以上が必須） | 1.1 |
-| `place_ev_threshold` | 複勝 EV 閾値（1.0 以上が必須） | 1.05 |
+| `win_ev_threshold` | **連系のみ**の EV 閾値（1.0 以上が必須） | 1.1 |
+| `win_min_odds` | 単勝で買うオッズ下限（単勝は EV 条件を使わない） | 1.1 |
+| `race_budget` | 1 レースに使う上限（円） | 5000 |
+| `stake_unit` | 1 点あたりの既定額（円） | 100 |
+| `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |
+| `enabled_bet_types` | 買う券種 | 単勝・複勝・馬連・ワイド・馬単・三連複・三連単 |
 | `scraper_stopped` | スクレイパー停止フラグ | false |
+
+- 単勝・複勝は EV 条件ではなく「AI の本命（モデル 1 位）を買う」ルールなので、
+  複勝の EV 閾値（旧 `place_ev_threshold`）は**廃止**しました（`docs/ai-model.md`）
+- 枠連は AI が買い目を生成しないため選択肢に出しません。保存済み設定に残っていても
+  `core/bet_types.py` の `supported_bet_types()` が読み込み時に落とします
+- 旧 Kelly 設定（`bankroll` / `kelly_fraction` / `max_stake_per_race_pct`）は
+  読み込み時に `race_budget` へ読み替えて破棄します
 
 `data/settings.json` は `.gitignore` 対象です。手動で削除するとデフォルト値にリセットされます。API は `GET /api/settings` / `PUT /api/settings`、UI は Settings 画面で操作できます。
 
@@ -265,7 +276,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 
 毎月 1 日を目安に、以下の流れで再学習します。
 
-1. 最新データを取り込む（Ingest 画面または `keiba-ingest`）
+1. 最新データを取り込む（Race 画面の取込パネルまたは `keiba-ingest`）
 2. `uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi --init-from <事前学習ts>-nn --train-end $(date +%Y-%m-%d)` で再学習する
 3. バックテスト評価で指標を確認する
 4. 旧モデルより改善していれば active に切り替える
@@ -458,7 +469,7 @@ uv run alembic upgrade head
 
 ### スクレイピング失敗
 
-**症状**: Ingest 画面にエラーが多発する / データが取得できない
+**症状**: 取込パネルにエラーが多発する / データが取得できない
 
 | 原因 | 確認・対処 |
 |---|---|
@@ -489,7 +500,7 @@ uv run alembic upgrade head
 
 netkeiba からスクレイピング停止要請を受けた場合、または利用規約の改訂を確認した場合は直ちに以下を実行します。
 
-1. Settings 画面の停止スイッチをクリックするか、`POST /api/scraper/stop` を実行する
+1. Race 画面のスクレイパー状態カードで即時停止するか、`POST /api/scraper/stop` を実行する
 2. 既存のローカルデータ・モデルはそのまま保持してよい（新規取得を停止するだけ）
 3. 規約内容を確認し、対応方針を検討する（完全廃止・URL 変更・公式 API 利用等）
 
