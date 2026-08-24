@@ -8,6 +8,7 @@ import {
   ChevronsUpDown,
   Sparkles,
   RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
@@ -35,7 +36,7 @@ import {
 import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
 import { formatOdds, formatPercent, formatRatio, formatScore, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
-import type { EntrySummary, HorsePrediction } from '@/types/api';
+import type { EntrySummary, HorsePrediction, RaceInfoCoverage } from '@/types/api';
 
 /**
  * レース番号。章番号 (§NN) の代わりにこの題材固有の番号を見出しに置く。
@@ -502,6 +503,38 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
   );
 }
 
+/**
+ * 出走馬に過去走がほとんど無いレース (新馬戦など) の注意書き。
+ *
+ * モデルは per-race 履歴 GRU と直近着順・上がり・脚質を主要な入力にしているので、
+ * 全員が初出走だとそれが全滅し、枠順・馬体重・騎手・血統・オッズだけの予想になる。
+ * 同じ画面・同じスコアでも入力の質が別物なので、黙って出さずに明示する。
+ *
+ * 実測 (test 19ヶ月・432 レース) では的中率はむしろ高い (単勝 29.2% / 複勝 63.7%) が、
+ * 人気馬に寄るぶんオッズが低く、回収率は単勝 0.866 と全体 (0.933) を下回る。
+ * 「当たりやすいが儲かりにくい」ので、的中率だけ見て信用しすぎないための注記でもある。
+ */
+function LowInformationNotice({ coverage }: { coverage: RaceInfoCoverage }) {
+  return (
+    <Card className="border-warning/50 bg-warning/5">
+      <CardContent className="flex items-start gap-3 py-4">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-foreground">
+            このレースは判断材料が少なめです
+          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            出走 {coverage.n_runners} 頭のうち <strong>{coverage.n_debut} 頭に過去走がありません</strong>
+            （1 頭あたり平均 {coverage.mean_starts} 走）。AI が重く使っている「前走までの
+            着順・上がり・脚質」がほとんど無いため、枠順・馬体重・騎手・血統・オッズだけで
+            予想しています。参考程度にしてください。
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BuyBadgeNote() {
   const minOdds = useWinMinOdds();
   return (
@@ -867,6 +900,7 @@ export function RaceDetail() {
   }
 
   const predictions = predQuery.data?.predictions ?? null;
+  const infoCoverage = predQuery.data?.info_coverage ?? null;
 
   const hasEntries = race.entries.length > 0;
 
@@ -1011,6 +1045,9 @@ export function RaceDetail() {
       {/* 結論 → 答え合わせ → 根拠(表) の順。表を読ませる前に結論を出す */}
       {hasEntries && aiRequested && !predQuery.isPending && !predQuery.isError && (
         <>
+          {infoCoverage?.is_low_information && (
+            <LowInformationNotice coverage={infoCoverage} />
+          )}
           <ConclusionCard entries={race.entries} predictions={predictions} />
           <ResultReviewCard
             entries={race.entries}

@@ -79,11 +79,26 @@ class CombinationPredictions(BaseModel):
     sanrentan: list[CombinationPrediction]    # 三連単
 
 
+class RaceInfoCoverageOut(BaseModel):
+    """このレースについて手元にどれだけ情報があるか。
+
+    出走馬全員が初出走 (新馬戦など) だと履歴特徴が全滅し、枠順・馬体重・騎手・血統・
+    オッズだけの予想になる。同じモデルでも入力の質が別物なので画面で明示する。
+    """
+
+    n_runners: int
+    n_debut: int
+    debut_ratio: float
+    mean_starts: float
+    is_low_information: bool
+
+
 class PredictionResponse(BaseModel):
     race_id: str
     model_id: int
     predictions: list[HorsePrediction]
     combinations: CombinationPredictions | None = None
+    info_coverage: RaceInfoCoverageOut | None = None
 
 
 class CalendarDay(BaseModel):

@@ -40,6 +40,7 @@ from api.deps import (
 )
 from api.jobs import JobRegistry
 from api.schemas import JobAccepted
+from core.bet_types import supported_bet_types
 from core.logging import get_logger
 from core.settings_store import SettingsStore
 from db.models.model_run import ModelRun
@@ -282,6 +283,14 @@ def run_simulation(
         Literal["conservative", "balanced", "aggressive"],
         Query(description="戦略プリセット"),
     ] = "balanced",
+    exclude_low_information: Annotated[
+        bool,
+        Query(
+            description="履歴の無いレース (新馬戦など) を除外する。出走馬全員が初出走だと"
+            "モデルの履歴特徴が全滅し、枠順・馬体重・騎手・血統・オッズだけの予想になるため、"
+            "同じモデルでも入力の質が別物になる。",
+        ),
+    ] = False,
     max_stake_per_race_yen: Annotated[
         int | None,
         Query(
@@ -313,7 +322,7 @@ def run_simulation(
 
     # Settings の馬券種ターゲットを simulation でも反映する
     settings = settings_store.load()
-    enabled_bet_types = settings.get("enabled_bet_types") or None
+    enabled_bet_types = supported_bet_types(settings.get("enabled_bet_types"))
     # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
@@ -333,6 +342,7 @@ def run_simulation(
         strategy=strategy,  # type: ignore[arg-type]
         max_stake_per_race_yen=max_stake_per_race_yen,
         stake_unit_by_bet_type=stake_units,
+        exclude_low_information=exclude_low_information,
         enabled_bet_types=enabled_bet_types,
     )
 
@@ -464,6 +474,14 @@ async def start_simulation_job(
         Literal["conservative", "balanced", "aggressive"],
         Query(description="戦略プリセット"),
     ] = "balanced",
+    exclude_low_information: Annotated[
+        bool,
+        Query(
+            description="履歴の無いレース (新馬戦など) を除外する。出走馬全員が初出走だと"
+            "モデルの履歴特徴が全滅し、枠順・馬体重・騎手・血統・オッズだけの予想になるため、"
+            "同じモデルでも入力の質が別物になる。",
+        ),
+    ] = False,
     max_stake_per_race_yen: Annotated[
         int | None,
         Query(
@@ -491,7 +509,7 @@ async def start_simulation_job(
     model_path, model_run_id = _resolve_target_model(session, model_id)
 
     settings = settings_store.load()
-    enabled_bet_types = settings.get("enabled_bet_types") or None
+    enabled_bet_types = supported_bet_types(settings.get("enabled_bet_types"))
     # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
@@ -520,7 +538,8 @@ async def start_simulation_job(
                 budget=budget,
                 strategy=strategy,  # type: ignore[arg-type]
                 max_stake_per_race_yen=max_stake_per_race_yen,
-        stake_unit_by_bet_type=stake_units,
+                stake_unit_by_bet_type=stake_units,
+                exclude_low_information=exclude_low_information,
                 enabled_bet_types=captured_bet_types,
             )
             saved = save_simulation_result(

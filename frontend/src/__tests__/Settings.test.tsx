@@ -173,14 +173,22 @@ describe('Settings', () => {
     expect(screen.queryByLabelText('1 レースに使う割合')).not.toBeInTheDocument();
   });
 
-  it('renders enabled_bet_types toggles for all 8 bet types', async () => {
+  it('renders enabled_bet_types toggles for the 7 predictable bet types', async () => {
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
     // 馬券種は checkbox ではなく aria-pressed トグルボタンで描画される
-    const allBetTypes = ['単勝', '複勝', '枠連', '馬連', 'ワイド', '馬単', '三連複', '三連単'];
+    const allBetTypes = ['単勝', '複勝', '馬連', 'ワイド', '馬単', '三連複', '三連単'];
     for (const betType of allBetTypes) {
       expect(getBetTypeToggle(betType)).toHaveAttribute('aria-pressed');
     }
+  });
+
+  it('枠連は選択肢に出さない（AI が買い目を生成しないため）', async () => {
+    // オッズ・払戻は取得しているが COMBINATION_BET_TYPES に無いので候補が 0 件。
+    // 選べるのに何も起きない選択肢を残さない。
+    renderSettings();
+    await screen.findByDisplayValue('TestAgent/1.0');
+    expect(screen.queryByRole('button', { name: '枠連' })).not.toBeInTheDocument();
   });
 
   it('presses enabled_bet_types that match mockSettings defaults', async () => {
@@ -190,7 +198,6 @@ describe('Settings', () => {
     expect(getBetTypeToggle('複勝')).toHaveAttribute('aria-pressed', 'true');
     expect(getBetTypeToggle('ワイド')).toHaveAttribute('aria-pressed', 'true');
     expect(getBetTypeToggle('馬連')).toHaveAttribute('aria-pressed', 'true');
-    expect(getBetTypeToggle('枠連')).toHaveAttribute('aria-pressed', 'false');
     expect(getBetTypeToggle('馬単')).toHaveAttribute('aria-pressed', 'false');
   });
 

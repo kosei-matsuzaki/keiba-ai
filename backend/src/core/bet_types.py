@@ -30,6 +30,28 @@ RENKEI_BET_TYPES: tuple[str, ...] = (
     "三連単",
 )
 
+def supported_bet_types(bet_types: object) -> list[str]:
+    """予測できる馬券種だけに絞る。
+
+    **枠連は当 AI の予測対象外**（`COMBINATION_BET_TYPES` に無い）。払戻・オッズは
+    取得しているので DB や設定に文字列としては現れうるが、買い目候補は 1 件も
+    生成されない。設定に残っていると「選べるのに何も起きない」死んだ選択肢になる
+    ので、読み込み時にここで落とす。
+
+    Args:
+        bet_types: 設定から読んだ値 (list 以外・None も想定)。
+
+    Returns:
+        COMBINATION_BET_TYPES に含まれるものだけを元の順で。空になったら
+        DEFAULT_ENABLED_BET_TYPES にフォールバックする (1 つも買えない設定を
+        作らないため)。
+    """
+    if not isinstance(bet_types, (list, tuple)):
+        return list(DEFAULT_ENABLED_BET_TYPES)
+    kept = [b for b in bet_types if b in COMBINATION_BET_TYPES]
+    return kept or list(DEFAULT_ENABLED_BET_TYPES)
+
+
 # UI のデフォルト有効馬券種 (settings.json 初期値 + 未設定時のフォールバック)
 DEFAULT_ENABLED_BET_TYPES: tuple[str, ...] = (
     "単勝",

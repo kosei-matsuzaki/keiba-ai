@@ -324,6 +324,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   const [strategy, setStrategy] = useState<SimulationStrategy>('balanced');
   // 1 race 絶対上限 (円)。0 で無効。default 5000 円 (= 100k 元手の 5%)。
   const [maxStakePerRaceYen, setMaxStakePerRaceYen] = useState(5_000);
+  // 履歴の無いレース (新馬戦など) を除外するか。既定 off — 実測では単勝が +0.006 と
+  // ほぼ変わらず、複勝はむしろ悪化する (下の説明文参照) ため、既定で切るほどの根拠が無い。
+  const [excludeLowInfo, setExcludeLowInfo] = useState(false);
   const [result, setResult] = useState<SimulationResponse | null>(null);
 
   // ── Background job orchestration ────────────────────────────────────
@@ -401,6 +404,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         budget,
         strategy,
         max_stake_per_race_yen: maxStakePerRaceYen,
+        exclude_low_information: excludeLowInfo,
         model_id: modelId,
       }),
     onSuccess: (data) => {
@@ -499,6 +503,26 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 Settings の「1 レースに使う上限」と同じ意味の、シミュレーション用の値。
                 資産が増えても 1 レースの賭け額がこれ以上には膨らみません。
                 <strong>0 で無効</strong>（残資産の 5% だけが上限になります）。
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[hsl(var(--primary))]"
+                  checked={excludeLowInfo}
+                  onChange={(e) => setExcludeLowInfo(e.target.checked)}
+                />
+                履歴の無いレースを除外する（新馬戦など）
+              </label>
+              <p className="text-xs text-muted-foreground">
+                出走馬全員に過去走が無いレースを飛ばします。AI が重く使う「前走までの
+                着順・上がり・脚質」が無く、枠順・馬体重・騎手・血統・オッズだけの予想に
+                なるためです。ただし <strong>回収率が上がるとは限りません</strong>
+                — test 19ヶ月の実測（432 レース）では単勝 0.933 → 0.938 とほぼ変わらず、
+                複勝は 0.889 → 0.886 とむしろ下がります（的中率は単勝 29%・複勝 64% と
+                高いのですが、人気馬に寄るぶんオッズが低いため）。
               </p>
             </div>
           </div>

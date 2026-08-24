@@ -7,10 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/cn';
-import { ALL_BET_TYPES } from '@/lib/betTypes';
-import type { BetType, SettingsResponse, SettingsUpdate } from '@/types/api';
+import { ALL_BET_TYPES, type SelectableBetType } from '@/lib/betTypes';
+import type { SettingsResponse, SettingsUpdate } from '@/types/api';
 
-const betTypeEnum = z.enum(['単勝', '複勝', '枠連', '馬連', 'ワイド', '馬単', '三連複', '三連単']);
+// 枠連は AI が買い目を生成しないので選択肢に無い (lib/betTypes.ts)。
+// 旧 settings.json に残っていてもバックエンドが読み込み時に落とす。
+const betTypeEnum = z.enum(['単勝', '複勝', '馬連', 'ワイド', '馬単', '三連複', '三連単']);
+
+/** 保存済み設定に選択できない券種 (枠連) が残っていても落として読み込む。 */
+function selectableBetTypes(saved: readonly string[]): SelectableBetType[] {
+  return ALL_BET_TYPES.filter((b) => saved.includes(b));
+}
 
 const schema = z
   .object({
@@ -72,14 +79,14 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
     resolver: zodResolver(schema),
     defaultValues: {
       ...defaults,
-      enabled_bet_types: [...defaults.enabled_bet_types],
+      enabled_bet_types: selectableBetTypes(defaults.enabled_bet_types),
     },
   });
 
   useEffect(() => {
     reset({
       ...defaults,
-      enabled_bet_types: [...defaults.enabled_bet_types],
+      enabled_bet_types: selectableBetTypes(defaults.enabled_bet_types),
     });
   }, [defaults, reset]);
 
@@ -96,7 +103,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
       ? Math.floor(Number(watchedBudget) / Number(watchedUnit))
       : null;
 
-  function toggleBetType(betType: BetType) {
+  function toggleBetType(betType: SelectableBetType) {
     const current = enabledBetTypesField.value;
     const next = current.includes(betType)
       ? current.filter((t) => t !== betType)

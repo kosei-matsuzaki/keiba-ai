@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 
 from api.deps import get_settings_store
 from api.schemas import SettingsResponse, SettingsUpdate
-from core.bet_types import DEFAULT_ENABLED_BET_TYPES
+from core.bet_types import DEFAULT_ENABLED_BET_TYPES, supported_bet_types
 from core.settings_store import SettingsStore
 
 router = APIRouter()
@@ -26,7 +26,11 @@ def _dict_to_response(data: dict) -> SettingsResponse:
         race_budget=int(data.get("race_budget", 5_000)),
         stake_unit=int(data.get("stake_unit", 100)),
         stake_units={k: int(v) for k, v in (data.get("stake_units") or {}).items()},
-        enabled_bet_types=list(data.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)),
+        # 予測できない券種 (枠連) が設定に残っていても落とす。選べるのに何も
+        # 起きない選択肢を残さないため (core.bet_types.supported_bet_types)。
+        enabled_bet_types=supported_bet_types(
+            data.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)
+        ),
     )
 
 

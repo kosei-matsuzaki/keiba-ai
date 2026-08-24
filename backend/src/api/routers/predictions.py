@@ -28,6 +28,7 @@ from api.schemas import (
     CombinationPredictions,
     HorsePrediction,
     PredictionResponse,
+    RaceInfoCoverageOut,
     RacePredictionSummary,
     TopHorse,
 )
@@ -35,6 +36,7 @@ from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.model_run import ModelRun
 from features.builder import build_inference_frame
+from features.race_info import race_info_coverage
 
 log = logging.getLogger(__name__)
 
@@ -210,9 +212,13 @@ def get_predictions(
             sanrentan=combo_map.get("三連単", []),
         )
 
+    # このレースの情報量 (新馬戦などは履歴が全滅するので画面で明示する)
+    cov = race_info_coverage(frame)
+
     return PredictionResponse(
         race_id=race_id,
         model_id=model_id,
         predictions=predictions,
         combinations=combinations_out,
+        info_coverage=RaceInfoCoverageOut(**cov.as_dict()),
     )

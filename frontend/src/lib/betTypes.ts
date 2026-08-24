@@ -5,14 +5,20 @@ import type { BetType } from '@/types/api';
  *
  * Settings（全レース共通の既定値）と、レース詳細の「この予想の条件」
  * （1 レースだけの上書き）の両方から参照する。
+ *
+ * **枠連は含めない。** オッズと払戻は取得しているが、AI は枠連の買い目を
+ * 生成しない（backend の `COMBINATION_BET_TYPES` に無い）。選べるのに何も
+ * 起きない選択肢になるため、UI からは外している。
  */
-export const ALL_BET_TYPES: BetType[] = [
+export const ALL_BET_TYPES = [
   '単勝',
   '複勝',
-  '枠連',
   '馬連',
   'ワイド',
   '馬単',
   '三連複',
   '三連単',
-];
+] as const satisfies readonly BetType[];
+
+/** UI で選べる馬券種。`BetType` は枠連を含むが、こちらは含まない。 */
+export type SelectableBetType = (typeof ALL_BET_TYPES)[number];

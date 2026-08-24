@@ -19,7 +19,7 @@ from api.deps import (
     get_session,
     get_settings_store,
 )
-from core.bet_types import DEFAULT_ENABLED_BET_TYPES
+from core.bet_types import DEFAULT_ENABLED_BET_TYPES, supported_bet_types
 from core.logging import get_logger
 from core.settings_store import SettingsStore
 
@@ -203,7 +203,9 @@ def get_recommendations(
             raise HTTPException(status_code=422, detail="bet_types must not be empty")
         eff_bet_types = requested
     else:
-        eff_bet_types = list(settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES))
+        eff_bet_types = supported_bet_types(
+            settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)
+        )
 
     result = recommend_for_race(
         predictions=predictions,

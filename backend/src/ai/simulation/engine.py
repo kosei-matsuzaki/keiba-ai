@@ -35,6 +35,7 @@ from core.bet_types import COMBINATION_BET_TYPES
 from core.logging import get_logger
 from db.odds_db import init_odds_db, make_odds_engine
 from features.builder import build_training_frame
+from features.race_info import race_info_coverage
 
 log = get_logger(__name__)
 
@@ -268,6 +269,7 @@ def simulate_active_model(
     top_n_horses: int = 3,
     max_stake_per_race_yen: int | None = None,
     stake_unit_by_bet_type: dict[str, int] | None = None,
+    exclude_low_information: bool = False,
     *,
     bundle: ModelBundle | None = None,
     bet_sink: list[dict] | None = None,
@@ -288,6 +290,10 @@ def simulate_active_model(
         enabled_bet_types: subset of DEFAULT_BET_TYPES to consider.
             None = all types.
         top_n_horses: top-N horses for box / formation candidates.
+        exclude_low_information: True なら**履歴の無いレース**(新馬戦など) を
+            まるごと飛ばす。出走馬全員が初出走だとモデルが使える履歴特徴が全滅し、
+            枠順・馬体重・騎手・血統・オッズだけの予想になるため、同じモデルでも
+            入力の質が別物になる (`features/race_info.py`)。
         max_stake_per_race_yen: 1 race の累計 stake の絶対上限 (円)。
             compounding wealth で bankroll が膨らんでも 1 race の bet 額が
             無限にインフレしないようにする。None で無効 (pct cap のみ)。
@@ -344,6 +350,7 @@ def simulate_active_model(
     # 1 レースあたりの予算 (= 残資産 × cap) が増えて点数を多く買える挙動になる。
     # bankroll が最小 stake (100 円) を下回ると recommend_for_race 内の
     # cap × 5% も 100 円未満となり実質賭け不可 (= 破産)。
+    n_skipped_low_info = 0
     current_bankroll = budget
     peak_bankroll = budget
     # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
@@ -360,6 +367,10 @@ def simulate_active_model(
     for race_id in race_ids:
         race_frame = frame[frame["race_id"] == race_id]
         if race_frame.empty or len(race_frame) < 2:
+            continue
+
+        if exclude_low_information and race_info_coverage(race_frame).is_low_information:
+            n_skipped_low_info += 1
             continue
 
         # Predictions (NN bundle 経由)
@@ -543,6 +554,9 @@ def simulate_active_model(
 
     odds_session.close()
 
+    if n_skipped_low_info:
+        log.info("skipped %d low-information races (no past-run history)", n_skipped_low_info)
+    result.n_races = max(0, result.n_races - n_skipped_low_info)
     result.n_settled_races = n_settled
     result.final_bankroll = current_bankroll
     result.peak_bankroll = peak_bankroll

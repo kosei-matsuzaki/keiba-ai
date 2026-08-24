@@ -78,11 +78,21 @@ export interface CombinationPredictions {
   sanrentan: CombinationPrediction[];  // 三連単
 }
 
+/** このレースについて手元にどれだけ情報があるか。新馬戦は履歴特徴が全滅する。 */
+export interface RaceInfoCoverage {
+  n_runners: number;
+  n_debut: number;
+  debut_ratio: number;
+  mean_starts: number;
+  is_low_information: boolean;
+}
+
 export interface PredictionResponse {
   race_id: string;
   model_id: number;
   predictions: HorsePrediction[];
   combinations: CombinationPredictions | null;
+  info_coverage?: RaceInfoCoverage | null;
 }
 
 /** GET /api/races/calendar — カレンダー 1 日分の取込状況。 */
@@ -513,4 +523,6 @@ export interface SimulationRequest {
   max_stake_per_race_yen?: number;
   /** 対象モデル (model_runs.id)。未指定で active モデル。 */
   model_id?: number;
+  /** 履歴の無いレース (新馬戦など) を除外する。 */
+  exclude_low_information?: boolean;
 }
