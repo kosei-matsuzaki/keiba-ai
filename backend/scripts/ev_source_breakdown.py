@@ -26,11 +26,11 @@ from pathlib import Path
 import numpy as np
 from sqlalchemy.orm import Session
 
-from ai.bet_odds import compute_race_odds_with_sources
-from ai.bet_strategy import recommend_for_race
-from ai.predict import predict_race, predict_race_with_combinations
-from ai.registry import load_model_full
-from ai.simulation import DEFAULT_BET_TYPES, STRATEGY_PRESETS
+from ai.betting.odds import compute_race_odds_with_sources
+from ai.betting.strategy import recommend_for_race
+from ai.inference.predict import predict_race, predict_race_with_combinations
+from ai.model.registry import load_model_full
+from ai.simulation.engine import DEFAULT_BET_TYPES, STRATEGY_PRESETS
 from core.paths import db_path
 from db.odds_db import init_odds_db, make_odds_engine
 from db.session import make_engine, session_scope
@@ -117,7 +117,7 @@ def run(model_path: Path, start: str, end: str, strategy: str) -> None:
             n_races += 1
 
             try:
-                preds = predict_race(bundle, rf)
+                preds = predict_race(bundle, rf, session=session)
             except Exception:  # noqa: BLE001
                 continue
             pp_map = dict(zip(rf["horse_id"].values, rf["post_position"].values, strict=True))

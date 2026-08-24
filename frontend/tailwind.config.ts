@@ -20,6 +20,11 @@ export default {
           DEFAULT: 'hsl(var(--muted))',
           foreground: 'hsl(var(--muted-foreground))',
         },
+        // --subtle-foreground は globals.css に定義済みだが Tailwind 側に
+        // 露出していなかったため text-subtle-foreground が効いていなかった。
+        subtle: {
+          foreground: 'hsl(var(--subtle-foreground))',
+        },
         card: {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
@@ -55,10 +60,15 @@ export default {
           foreground: 'hsl(var(--info-foreground))',
         },
       },
+      // shadcn 既定は lg = var(--radius) / sm = radius - 4px という引き算スケール。
+      // --radius を 2px まで落とすと sm が負値になり (calc(2px - 4px))、
+      // 指定が無効になって完全な直角に落ちてしまう。角丸をほぼ捨てる方針なので、
+      // 引き算ではなく倍数で定義し直す: sm = 2px (ボタン・入力・チップ) /
+      // lg = 4px (ダイアログ・boxed な Card)。
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        sm: 'var(--radius)',
+        md: 'var(--radius)',
+        lg: 'calc(var(--radius) * 2)',
       },
       fontFamily: {
         sans: ['var(--font-sans)'],

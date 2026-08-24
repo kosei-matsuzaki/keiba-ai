@@ -81,11 +81,11 @@ def _fake_combinations() -> dict:
     return {bt: [] for bt in ["単勝", "複勝", "馬連", "ワイド", "馬単", "三連複", "三連単"]}
 
 
-def _fake_recommendation_result(race_id: str, bankroll: int = 100_000) -> RecommendationResult:
+def _fake_recommendation_result(race_id: str, race_budget: int = 5_000) -> RecommendationResult:
     """Return a non-empty RecommendationResult for happy-path assertions."""
     return RecommendationResult(
         race_id=race_id,
-        bankroll_at_decision=bankroll,
+        race_budget=race_budget,
         candidates=[
             BetCandidate(
                 bet_type="単勝",
@@ -111,11 +111,11 @@ def _fake_recommendation_result(race_id: str, bankroll: int = 100_000) -> Recomm
     )
 
 
-def _fake_recommendation_result_with_null_odds(race_id: str, bankroll: int = 100_000) -> RecommendationResult:
+def _fake_recommendation_result_with_null_odds(race_id: str, race_budget: int = 5_000) -> RecommendationResult:
     """Return a RecommendationResult with some null est_odds / ev candidates."""
     return RecommendationResult(
         race_id=race_id,
-        bankroll_at_decision=bankroll,
+        race_budget=race_budget,
         candidates=[
             BetCandidate(
                 bet_type="単勝",
@@ -209,7 +209,7 @@ def test_recommendations_success(
     assert resp.status_code == 200
     data = resp.json()
     assert data["race_id"] == race_id
-    assert data["bankroll_at_decision"] == 100_000
+    assert data["race_budget"] == 5_000
     assert len(data["candidates"]) == 2
     for c in data["candidates"]:
         assert c["stake"] >= 0
@@ -220,9 +220,9 @@ def test_recommendations_stake_cap(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """Total stake across candidates must not exceed bankroll * max_stake_per_race_pct.
+    """Total stake across candidates must not exceed the per-race budget.
 
-    Default settings: bankroll=100_000, max_stake_per_race_pct=0.05 → cap=5000.
+    Default settings: race_budget=5_000 → 1 レースの合計はこれ以下。
     The fake result returns stake=500+200=700, well within cap.
     """
     race_id = "REC_RACE2"
@@ -235,7 +235,7 @@ def test_recommendations_stake_cap(
         _seed_active_model(session, str(tmp_path / "fake_model_cap"))
 
     fake_df = _fake_predictions_df(race_id, n=4)
-    fake_result = _fake_recommendation_result(race_id, bankroll=100_000)
+    fake_result = _fake_recommendation_result(race_id, race_budget=5_000)
 
     with (
         patch("api.routers.recommendations.load_model_full", return_value=MagicMock()),
@@ -250,9 +250,9 @@ def test_recommendations_stake_cap(
 
     assert resp.status_code == 200
     data = resp.json()
+    # 合計は 1 レース予算を超えない (定額配分なので予算がそのまま上限)
     total_stake = sum(c["stake"] for c in data["candidates"])
-    cap = data["bankroll_at_decision"] * 0.05
-    assert total_stake <= cap
+    assert total_stake <= data["race_budget"]
 
 
 def test_recommendations_enabled_bet_types_filter(
@@ -273,7 +273,7 @@ def test_recommendations_enabled_bet_types_filter(
     # Result only contains 単勝 (filtered by enabled_bet_types=["単勝"])
     filtered_result = RecommendationResult(
         race_id=race_id,
-        bankroll_at_decision=100_000,
+        race_budget=5_000,
         candidates=[
             BetCandidate(
                 bet_type="単勝",
@@ -300,8 +300,8 @@ def test_recommendations_enabled_bet_types_filter(
         patch("api.routers.recommendations.predict_race_with_combinations",
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
-              side_effect=lambda predictions, combinations_by_type, race_id, bankroll,
-              kelly_fraction, max_stake_per_race_pct, top_n_horses, enabled_bet_types:
+              side_effect=lambda predictions, combinations_by_type, race_id, race_budget,
+              stake_unit, min_ev, win_min_odds, top_n_horses, enabled_bet_types:
               _spy_recommend(
                   enabled_bet_types=enabled_bet_types,
               )),
@@ -334,12 +334,12 @@ def test_recommendations_top_n_horses_param(
     captured_args: dict = {}
 
     def _capture_recommend(predictions, combinations_by_type, race_id,
-                           bankroll, kelly_fraction, max_stake_per_race_pct,
-                           top_n_horses, enabled_bet_types):
+                           race_budget, stake_unit, min_ev,
+                           win_min_odds, top_n_horses, enabled_bet_types):
         captured_args["top_n_horses"] = top_n_horses
         return RecommendationResult(
             race_id=race_id,
-            bankroll_at_decision=bankroll,
+            race_budget=race_budget,
             candidates=[],
         )
 
@@ -380,7 +380,7 @@ def test_recommendations_candidates_include_zero_stake(
     # Result includes one positive-stake and one zero-stake candidate
     mixed_result = RecommendationResult(
         race_id=race_id,
-        bankroll_at_decision=100_000,
+        race_budget=5_000,
         candidates=[
             BetCandidate(
                 bet_type="単勝",
@@ -456,7 +456,7 @@ def test_recommendations_top_k_param(
               side_effect=_spy_combinations),
         patch("api.routers.recommendations.recommend_for_race",
               return_value=RecommendationResult(
-                  race_id=race_id, bankroll_at_decision=100_000, candidates=[]
+                  race_id=race_id, race_budget=5_000, candidates=[]
               )),
         TestClient(app_with_temp_db) as client,
     ):
@@ -483,7 +483,7 @@ def test_recommendations_empty_candidates(
     fake_df = _fake_predictions_df(race_id, n=4)
     empty_result = RecommendationResult(
         race_id=race_id,
-        bankroll_at_decision=100_000,
+        race_budget=5_000,
         candidates=[],
     )
 
@@ -700,3 +700,209 @@ def test_recommendations_null_est_odds_candidates(
         assert nc["est_odds"] is None
         assert nc["ev"] is None
         assert nc["stake"] == 0
+
+
+# ── per-race override tests ───────────────────────────────────────────────────
+# 全レース共通の値は Settings に置き、券種と予算はレースを見ながら上書きできる。
+
+
+def _capture_recommend_kwargs(captured: dict):
+    """recommend_for_race に渡った引数を記録して固定の結果を返すスパイ。"""
+    from ai.betting.strategy import BetCandidate, RecommendationResult
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        return RecommendationResult(
+            race_id=kwargs["race_id"],
+            race_budget=kwargs["race_budget"],
+            candidates=[
+                BetCandidate(
+                    bet_type="単勝",
+                    combo="1",
+                    pattern="box",
+                    prob=0.4,
+                    est_odds=10.0,
+                    ev=4.0,
+                    stake=300,
+                    post_positions=(1,),
+                ),
+            ],
+        )
+
+    return _spy
+
+
+def _run_with_query(app, tmp_path, race_id: str, query: str, captured: dict):
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / f"fake_model_{race_id}"))
+
+    with (
+        patch("api.routers.recommendations.load_model_full", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race",
+              return_value=_fake_predictions_df(race_id, n=4)),
+        patch("api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("api.routers.recommendations.recommend_for_race",
+              side_effect=_capture_recommend_kwargs(captured)),
+        TestClient(app) as client,
+    ):
+        return client.get(f"/api/recommendations/{race_id}{query}")
+
+
+def test_recommendations_uses_settings_when_no_override(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """クエリ未指定なら Settings の値がそのまま使われる。"""
+    captured: dict = {}
+    resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR1", "", captured)
+
+    assert resp.status_code == 200
+    assert captured["race_budget"] == 5_000  # settings 既定
+    assert captured["stake_unit"] == 100
+
+
+def test_recommendations_race_budget_override(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """このレースだけ予算を絞れる。"""
+    captured: dict = {}
+    resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR2", "?race_budget=20000", captured)
+
+    assert resp.status_code == 200
+    assert captured["race_budget"] == 20_000
+    assert resp.json()["race_budget"] == 20_000
+
+
+def test_recommendations_bet_types_override(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """このレースだけ券種を絞れる (カンマ区切り)。"""
+    captured: dict = {}
+    resp = _run_with_query(
+        app_with_temp_db, tmp_path, "REC_OVR3", "?bet_types=単勝,複勝", captured
+    )
+
+    assert resp.status_code == 200
+    assert captured["enabled_bet_types"] == ["単勝", "複勝"]
+
+
+def test_recommendations_stake_unit_override(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """1 点あたりの賭け金だけをこのレースで変える。"""
+    captured: dict = {}
+    resp = _run_with_query(
+        app_with_temp_db, tmp_path, "REC_OVR4", "?stake_unit=500", captured
+    )
+
+    assert resp.status_code == 200
+    assert captured["stake_unit"] == 500
+
+
+def test_recommendations_min_ev_comes_from_settings(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """買う基準は設定の単勝 EV 閾値をそのまま使う。"""
+    captured: dict = {}
+    resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR8", "", captured)
+
+    assert resp.status_code == 200
+    assert captured["min_ev"] == 1.1
+
+
+def test_recommendations_unknown_bet_type_returns_422(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """存在しない券種は 422。黙って無視すると「指定したのに効かない」になる。"""
+    captured: dict = {}
+    resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR5", "?bet_types=単勝,五連単", captured)
+
+    assert resp.status_code == 422
+    assert "五連単" in resp.json()["detail"]
+
+
+def test_recommendations_empty_bet_types_returns_422(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR6", "?bet_types=", captured)
+
+    assert resp.status_code == 422
+
+
+def test_recommendations_race_budget_below_minimum_returns_422(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR7", "?race_budget=50", captured)
+
+    assert resp.status_code == 422
+
+
+def test_recommendations_win_and_place_do_not_use_ev_threshold(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """EV 閾値が渡るのは連系だけ。単勝はオッズ下限、複勝は無条件で本命 1 頭。
+
+    以前は win_ev_threshold を全券種に適用しており、Settings にあった
+    place_ev_threshold は推奨へ一切反映されない死に設定だった。今は単勝・複勝とも
+    「モデルの本命を買う」ルールなので EV 閾値を持たない (較正済み確率で EV 条件に
+    すると大穴を買い込み、単勝 0.931→0.698 / 複勝 0.887→0.654 に落ちる)。
+    """
+    race_id = "REC_RACE_NO_EV"
+    from api.deps import get_settings_store
+    from core.paths import db_path
+    from core.settings_store import SettingsStore
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_no_ev"))
+
+    store = SettingsStore(tmp_path / "settings.json")
+    store.save({"win_ev_threshold": 1.30, "win_min_odds": 1.5})
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+    captured: dict = {}
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        return RecommendationResult(
+            race_id=race_id, race_budget=kwargs["race_budget"], candidates=[]
+        )
+
+    app_with_temp_db.dependency_overrides[get_settings_store] = lambda: store
+    try:
+        with (
+            patch("api.routers.recommendations.load_model_full", return_value=MagicMock()),
+            patch("api.routers.recommendations.predict_race", return_value=fake_df),
+            patch("api.routers.recommendations.predict_race_with_combinations",
+                  return_value=_fake_combinations()),
+            patch("api.routers.recommendations.recommend_for_race", side_effect=_spy),
+            TestClient(app_with_temp_db) as client,
+        ):
+            resp = client.get(f"/api/recommendations/{race_id}")
+    finally:
+        app_with_temp_db.dependency_overrides.pop(get_settings_store, None)
+
+    assert resp.status_code == 200
+    # 連系用の EV 閾値と単勝のオッズ下限だけが渡る
+    assert captured["min_ev"] == 1.30
+    assert captured["win_min_odds"] == 1.5
+    # 券種別の EV 上書きはルーターからは渡さない (strategy 側が単複を素通しにする)
+    assert "min_ev_by_bet_type" not in captured

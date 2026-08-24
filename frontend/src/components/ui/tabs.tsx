@@ -5,10 +5,18 @@ import { cn } from '@/lib/cn';
 const Tabs = TabsPrimitive.Root;
 
 /**
- * Underline-style tabs (CamuQuotes 参考)。
- * - TabsList は背景なしで bottom border を 1 本引く
- * - 各 TabsTrigger は active 時に primary 色 + 下に 2px の indicator を出す
- *   (下線は border-bottom で実現、disabled なときは出ない)
+ * 見出し風のタブ。
+ *
+ * 「ボタンが並んでいる」のではなく「見出しが並んでいる」見た目にする:
+ * - 幅は文字数に任せる (旧実装の min-w-32 = 128px 固定を撤去。2 文字のタブまで
+ *   128px 占有し、5 タブで 640px をラベルの並びに費やしていた)
+ * - 区切りはタブ同士の間隔 (gap-6) で作る
+ * - ラベルは等幅・字間広め。Topbar・表ヘッダ・KPI ラベルと揃い、
+ *   「分類ラベルは等幅」という規則が全画面で通る
+ * - active の指示子は角丸をやめ、タブ幅いっぱいの 1px 直線
+ *
+ * 高さは固定せず中身に任せる (旧 h-10)。下端の罫線は TabsList が持ち、
+ * 指示子はその罫線の上にちょうど重なる。
  */
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
@@ -17,7 +25,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      'inline-flex h-10 items-center gap-1 border-b border-border text-muted-foreground',
+      'inline-flex items-stretch gap-6 border-b border-border text-muted-foreground',
       className
     )}
     {...props}
@@ -32,16 +40,16 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      // base — タブ幅は文字数によらず統一 (min-w-32 で短いラベルも一定幅を確保、
-      // 長いラベルは伸びる)。指示子 indicator は左右 inset を共通にする。
-      'relative inline-flex min-w-32 items-center justify-center whitespace-nowrap px-4 py-2.5 text-sm font-medium ' +
-      'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ' +
+      'relative inline-flex items-center justify-center whitespace-nowrap',
+      'px-0.5 pb-3 pt-2 font-mono text-[12px] tracking-[0.1em] transition-colors',
+      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
       'disabled:pointer-events-none disabled:opacity-50',
-      // hover (inactive)
-      'hover:text-foreground',
-      // active: foreground 色 + 下に indicator (擬似要素風だが border 1 本で表現)
+      'text-subtle-foreground hover:text-foreground',
       'data-[state=active]:text-primary',
-      'data-[state=active]:after:absolute data-[state=active]:after:bottom-[-1px] data-[state=active]:after:left-3 data-[state=active]:after:right-3 data-[state=active]:after:h-[2px] data-[state=active]:after:rounded-full data-[state=active]:after:bg-primary',
+      // 指示子: TabsList の罫線にちょうど重なる 1px の直線
+      'data-[state=active]:after:absolute data-[state=active]:after:inset-x-0',
+      'data-[state=active]:after:bottom-[-1px] data-[state=active]:after:h-px',
+      'data-[state=active]:after:bg-primary',
       className
     )}
     {...props}
@@ -58,7 +66,7 @@ const TabsContent = React.forwardRef<
     className={cn(
       // 注: 上 margin はデフォルト 0。親 (Tabs) の flex gap で TabsList との
       // 間隔を制御し、タブごとに余分な余白が入らないようにする。
-      'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
       className
     )}
     {...props}

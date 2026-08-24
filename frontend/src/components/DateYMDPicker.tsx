@@ -44,8 +44,8 @@ function _dayOfWeek(year: number, month: number, day: number): number {
 
 /** JRA は基本土日開催。土曜=青 / 日曜=赤 で見つけやすくする。 */
 function _dowColorClass(dow: number | null): string {
-  if (dow === 0) return 'text-red-600 dark:text-red-400';
-  if (dow === 6) return 'text-blue-600 dark:text-blue-400';
+  if (dow === 0) return 'text-destructive';
+  if (dow === 6) return 'text-info';
   return '';
 }
 

@@ -10,9 +10,9 @@ from __future__ import annotations
 import sys
 import time
 
-from ai.bet_odds import compute_race_odds_with_sources
-from ai.predict import predict_race
-from ai.registry import get_active, load_model_full
+from ai.betting.odds import compute_race_odds_with_sources
+from ai.inference.predict import predict_race
+from ai.model.registry import get_active, load_model_full
 from core.paths import db_path
 from db.session import make_engine, session_scope
 from features.builder import build_inference_frame
@@ -30,7 +30,7 @@ with session_scope(engine) as session:
 
     bundle = load_model_full(active)
     t1 = time.time()
-    preds = predict_race(bundle, frame)
+    preds = predict_race(bundle, frame, session=session)
     print(f"predict_race: {time.time()-t1:.1f}s  model_type={bundle.model_type}")
 
     preds = preds.sort_values("win_prob", ascending=False).reset_index(drop=True)

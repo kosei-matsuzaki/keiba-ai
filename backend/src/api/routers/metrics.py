@@ -73,14 +73,23 @@ def get_metrics_summary(
     n_races = int(n_races_raw) if isinstance(n_races_raw, (int, float)) else None
 
     return MetricsSummary(
-        # valid_* が NaN になりやすい (--valid-months 0 で学習した場合) ので
-        # test_* に fallback。evaluate.py --persist が走っていれば top-level の
-        # ndcg* も入る可能性があるためそれも候補に含める。
-        ndcg1=_pick_metric(metrics, "valid_ndcg1", "test_ndcg1", "ndcg1"),
-        ndcg3=_pick_metric(metrics, "valid_ndcg3", "test_ndcg3", "ndcg3"),
-        top1_hit=_pick_metric(metrics, "top1_hit"),
-        place_hit=_pick_metric(metrics, "place_hit"),
-        payback_win=_pick_metric(metrics, "payback_win"),
+        # `backtest --persist` が走っていれば、4 指標すべてを **同じ 1 回の評価**
+        # (同じレース集合・同じ賭けルール) から取る。混ぜると「valid の NDCG と
+        # test の回収率」のように出所の違う数字が 1 枚のカードに並んでしまう。
+        ndcg1=_pick_metric(metrics, "ndcg1", "valid_ndcg1", "test_ndcg1"),
+        ndcg3=_pick_metric(metrics, "ndcg3", "valid_ndcg3", "test_ndcg3"),
+        # backtest が未実行のときだけ学習時の指標に fallback する。
+        # **注意: fallback 先は同じ量ではない。**
+        #   top1_hit      ≒ test_tansho_hit  (予想1位が1着。ほぼ同義)
+        #   place_hit     ≠ test_fukusho_hit (前者=上位3頭のうち1頭以上が3着以内 /
+        #                                     後者=予想1位が3着以内。実測 0.885 vs 0.503)
+        #   payback_win   ≠ test_tansho_roi  (前者=EV 閾値超えだけ買う実運用ルール /
+        #                                     後者=top-1 に賭け続ける。実測 0.912 vs 0.930)
+        # フロントのヒット率・回収率のヒットは backtest 側の定義で書いてあるので、
+        # fallback 中の値はラベルとずれる。正確を期すなら --persist を回すこと。
+        top1_hit=_pick_metric(metrics, "top1_hit", "test_tansho_hit"),
+        place_hit=_pick_metric(metrics, "place_hit", "test_fukusho_hit"),
+        payback_win=_pick_metric(metrics, "payback_win", "test_tansho_roi"),
         n_races=n_races,
         model_id=active_run.id,
     )
@@ -92,10 +101,12 @@ def get_metrics_timeseries(
     metric: str = "ndcg3",
     range: str = "180d",  # noqa: A002
 ) -> MetricsTimeseries:
-    # Map public metric name → ordered fallback keys (valid → test → bare)
+    # Map public metric name → ordered fallback keys.
+    # summary と同じ順序にすること (backtest → valid → test)。ここだけ valid 優先に
+    # すると、同じモデルの NDCG が KPI カードと推移グラフで違う値になる。
     _key_chain: dict[str, tuple[str, ...]] = {
-        "ndcg1": ("valid_ndcg1", "test_ndcg1", "ndcg1"),
-        "ndcg3": ("valid_ndcg3", "test_ndcg3", "ndcg3"),
+        "ndcg1": ("ndcg1", "valid_ndcg1", "test_ndcg1"),
+        "ndcg3": ("ndcg3", "valid_ndcg3", "test_ndcg3"),
         "top1_hit": ("top1_hit",),
         "place_hit": ("place_hit",),
         "payback_win": ("payback_win",),

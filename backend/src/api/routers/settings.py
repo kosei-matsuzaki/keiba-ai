@@ -21,11 +21,10 @@ def _dict_to_response(data: dict) -> SettingsResponse:
         rate_max_seconds=float(data.get("rate_max_seconds", 6.0)),
         night_min_seconds=float(data.get("night_min_seconds", 5.0)),
         win_ev_threshold=float(data.get("win_ev_threshold", 1.1)),
-        place_ev_threshold=float(data.get("place_ev_threshold", 1.05)),
+        win_min_odds=float(data.get("win_min_odds", 1.1)),
         scraper_stopped=bool(data.get("scraper_stopped", False)),
-        bankroll=int(data.get("bankroll", 100_000)),
-        kelly_fraction=float(data.get("kelly_fraction", 0.25)),
-        max_stake_per_race_pct=float(data.get("max_stake_per_race_pct", 0.05)),
+        race_budget=int(data.get("race_budget", 5_000)),
+        stake_unit=int(data.get("stake_unit", 100)),
         enabled_bet_types=list(data.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)),
     )
 

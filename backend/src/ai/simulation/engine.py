@@ -6,12 +6,12 @@ aggregates ROI / hit-rate by bet_type / race_class / course.
 
 This is the engine behind the Ledger 「シミュレーション」 tab.
 
-Strategy presets translate user-friendly choices to internal Kelly /
-EV-threshold parameters:
+Strategy presets translate user-friendly choices to internal stake-ratio /
+EV-threshold parameters (賭け金は 1 点定額。Kelly は廃止済み):
 
-  conservative:  kelly=0.10, min_ev=1.30  (高 EV 案件のみ少額で)
-  balanced:      kelly=0.25, min_ev=1.10  (現行 default)
-  aggressive:    kelly=0.40, min_ev=1.00  (positive edge ならどれも賭ける)
+  conservative:  1 点 = 予算の 20%, min_ev=1.30  (高 EV 案件のみ)
+  balanced:      1 点 = 予算の 20%, min_ev=1.10  (現行 default)
+  aggressive:    1 点 = 予算の 50%, min_ev=1.00  (positive edge ならどれも賭ける)
 """
 
 from __future__ import annotations
@@ -41,10 +41,12 @@ log = get_logger(__name__)
 
 StrategyName = Literal["conservative", "balanced", "aggressive"]
 
+# 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「どこから買うか」の 2 つ。
+# stake_ratio は 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)。
 STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
-    "conservative": {"kelly_fraction": 0.10, "min_ev": 1.30},
-    "balanced":     {"kelly_fraction": 0.25, "min_ev": 1.10},
-    "aggressive":   {"kelly_fraction": 0.40, "min_ev": 1.00},
+    "conservative": {"stake_ratio": 0.20, "min_ev": 1.30},
+    "balanced":     {"stake_ratio": 0.20, "min_ev": 1.10},
+    "aggressive":   {"stake_ratio": 0.50, "min_ev": 1.00},
 }
 
 # 単勝 / 複勝 / 連系 すべての券種を simulation 対象とする
@@ -276,7 +278,7 @@ def simulate_active_model(
             optionally preprocessor.pkl / temperature_scaler.pkl).
         start / end: window date range (YYYY-MM-DD), inclusive. Both optional.
         budget: 初期資産 (円)。各 race ごとに残資産 (= budget + 累計 profit) を
-            bankroll として Kelly stake を計算する (compounding wealth)。
+            その race の予算として 1 点定額で賭ける (compounding wealth)。
             payout は次 race の bet 余力に加算される。資産が最小単位 (100 円) を
             下回れば以降の race は実質 bet しない (破産)。
         strategy: preset key from STRATEGY_PRESETS.
@@ -336,8 +338,8 @@ def simulate_active_model(
 
     # Compounding wealth: budget を初期資産として、各 race ごとに
     #   bankroll <- bankroll - sum(stake) + sum(payout)
-    # で更新する。payout は次の race の bet 余力に加算され、
-    # 自信のあるレース (高 EV) ほど Kelly が多めに賭ける挙動になる。
+    # で更新する。payout は次の race の bet 余力に加算され、資産が増えるほど
+    # 1 レースあたりの予算 (= 残資産 × cap) が増えて点数を多く買える挙動になる。
     # bankroll が最小 stake (100 円) を下回ると recommend_for_race 内の
     # cap × 5% も 100 円未満となり実質賭け不可 (= 破産)。
     current_bankroll = budget
@@ -360,7 +362,7 @@ def simulate_active_model(
 
         # Predictions (NN bundle 経由)
         try:
-            preds = predict_race(bundle, race_frame)
+            preds = predict_race(bundle, race_frame, session=session)
         except Exception as exc:  # noqa: BLE001
             log.warning("predict_race failed for %s: %s", race_id, exc)
             continue
@@ -393,19 +395,23 @@ def simulate_active_model(
                 if c.ev is not None and c.ev >= min_ev
             ]
 
-        # Compounding wealth: 残資産 current_bankroll を Kelly base として渡す。
-        # 0 円のときは recommend_for_race 内で cap=0 → 全 stake が 0 に丸まる。
-        # Recommend
+        # 1 レースの予算は「残資産 × max_stake_per_race_pct」を上限とし、
+        # max_stake_per_race_yen が指定されていればそれとの小さい方を採る。
+        # 残資産が尽きれば予算 0 になり、自然に賭けが止まる。
+        race_budget = int(current_bankroll * max_stake_per_race_pct)
+        if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
+            race_budget = min(race_budget, int(max_stake_per_race_yen))
+        stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
+
         rec = recommend_for_race(
             predictions=preds,
             combinations_by_type=combos_by_type,
             race_id=race_id,
-            bankroll=current_bankroll,
-            kelly_fraction=preset["kelly_fraction"],
-            max_stake_per_race_pct=max_stake_per_race_pct,
+            race_budget=race_budget,
+            stake_unit=stake_unit,
+            min_ev=float(preset["min_ev"]),
             top_n_horses=top_n_horses,
             enabled_bet_types=types,
-            max_stake_per_race_yen=max_stake_per_race_yen,
         )
 
         # Determine finish_position map (only finished races settle)

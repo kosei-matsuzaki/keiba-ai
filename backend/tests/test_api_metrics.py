@@ -124,6 +124,80 @@ def test_metrics_summary_falls_back_to_test_when_valid_is_nan(
     assert data["payback_win"] is None
 
 
+def test_metrics_summary_falls_back_to_training_bet_metrics(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """backtest --persist を走らせていなくても、学習時に計算済みの同じ量を出す。
+
+    test_tansho_hit / test_fukusho_hit / test_tansho_roi は、学習の test split で
+    「top-1 予想馬に賭けたら」を計算したもので、top1_hit / place_hit /
+    payback_win と中身が同じ。これに fallback しないとダッシュボードが
+    「未算出」だらけになる。
+    """
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        session.add(
+            ModelRun(
+                created_at="2026-06-13T11:48:17+00:00",
+                model_path=str(tmp_path / "nn"),
+                metrics_json=json.dumps(
+                    {
+                        "test_ndcg1": 0.443,
+                        "test_ndcg3": 0.510,
+                        "test_tansho_hit": 0.2306,
+                        "test_fukusho_hit": 0.5035,
+                        "test_tansho_roi": 0.9303,
+                    }
+                ),
+                is_active=1,
+            )
+        )
+
+    with TestClient(app_with_temp_db) as client:
+        data = client.get("/api/metrics/summary").json()
+
+    assert data["top1_hit"] == 0.2306
+    assert data["place_hit"] == 0.5035
+    assert data["payback_win"] == 0.9303
+
+
+def test_metrics_summary_prefers_persisted_over_training_metrics(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """backtest --persist の値があれば、そちらを優先する。"""
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        session.add(
+            ModelRun(
+                created_at="2026-06-13T11:48:17+00:00",
+                model_path=str(tmp_path / "nn2"),
+                metrics_json=json.dumps(
+                    {
+                        "top1_hit": 0.30,
+                        "payback_win": 1.02,
+                        "test_tansho_hit": 0.2306,
+                        "test_tansho_roi": 0.9303,
+                    }
+                ),
+                is_active=1,
+            )
+        )
+
+    with TestClient(app_with_temp_db) as client:
+        data = client.get("/api/metrics/summary").json()
+
+    assert data["top1_hit"] == 0.30
+    assert data["payback_win"] == 1.02
+
+
 def test_metrics_summary_picks_persisted_evaluation_keys(
     app_with_temp_db: FastAPI,
     tmp_path: Path,

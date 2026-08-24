@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ai.simulation import simulate_active_model
+from ai.simulation.engine import simulate_active_model
 from core.paths import db_path
 from db.session import make_engine, session_scope
 

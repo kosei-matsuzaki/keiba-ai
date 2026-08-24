@@ -19,8 +19,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ai.predict import predict_race
-from ai.registry import load_model_full
+from ai.inference.predict import predict_race
+from ai.model.registry import load_model_full
 from core.paths import db_path
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
@@ -29,22 +29,23 @@ from features.builder import build_training_frame
 def collect(model_path: Path, start: str, end: str) -> pd.DataFrame:
     engine = make_engine(db_path())
     bundle = load_model_full(model_path)
+    rows = []
+    # 履歴エンコーダ (arch-3) は推論時に DB を引くため session を開いたままにする
     with session_scope(engine) as session:
         frame = build_training_frame(session, train_start=start, train_end=end)
-    rows = []
-    for race_id, rf in frame.groupby("race_id"):
-        if len(rf) < 2:
-            continue
-        preds = predict_race(bundle, rf)
-        m = preds.merge(
-            rf[["horse_id", "finish_position", "odds_win", "popularity"]],
-            on="horse_id", how="left",
-        )
-        m["race_id"] = race_id
-        # model predicted rank (1 = top score)
-        m = m.sort_values("score", ascending=False).reset_index(drop=True)
-        m["model_rank"] = np.arange(1, len(m) + 1)
-        rows.append(m)
+        for race_id, rf in frame.groupby("race_id"):
+            if len(rf) < 2:
+                continue
+            preds = predict_race(bundle, rf, session=session)
+            m = preds.merge(
+                rf[["horse_id", "finish_position", "odds_win", "popularity"]],
+                on="horse_id", how="left",
+            )
+            m["race_id"] = race_id
+            # model predicted rank (1 = top score)
+            m = m.sort_values("score", ascending=False).reset_index(drop=True)
+            m["model_rank"] = np.arange(1, len(m) + 1)
+            rows.append(m)
     return pd.concat(rows, ignore_index=True)
 
 

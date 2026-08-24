@@ -34,7 +34,7 @@ function _CustomTooltip({ active, payload, label }: TooltipProps) {
   const p = payload[0].payload;
   const profit = p.payout - p.invested;
   return (
-    <div className="rounded-md border bg-popover px-3 py-2 text-xs shadow-md">
+    <div className="rounded-sm border border-border bg-card px-3 py-2 font-mono text-[11px]">
       <div className="font-medium">{label}</div>
       <div className="mt-1 space-y-0.5 text-muted-foreground">
         <div>
@@ -44,7 +44,7 @@ function _CustomTooltip({ active, payload, label }: TooltipProps) {
         <div>
           投資 {formatYen(p.invested)} → 払戻 {formatYen(p.payout)}
         </div>
-        <div className={profit >= 0 ? 'text-green-600' : 'text-red-600'}>
+        <div className={profit >= 0 ? 'text-success' : 'text-destructive'}>
           当日収支 {profit >= 0 ? '+' : '−'}
           {formatYen(Math.abs(profit))}
         </div>
@@ -71,21 +71,23 @@ function BankrollChartImpl({ points, initialBudget }: BankrollChartProps) {
       <AreaChart data={points} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
         <defs>
           <linearGradient id="bankrollGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.5} />
-            <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0.04} />
+            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.5} />
+            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.04} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" />
+        <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-          stroke="hsl(var(--border))"
-          tickFormatter={(v: string | number) => String(v).slice(5)} // MM-DD
+          tick={{ fontSize: 10, fill: 'hsl(var(--subtle-foreground))', fontFamily: 'var(--font-mono)' }}
+          axisLine={false}
+          tickLine={false}
+                    tickFormatter={(v: string | number) => String(v).slice(5)} // MM-DD
         />
         <YAxis
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-          stroke="hsl(var(--border))"
-          domain={[0, yDomainTop]}
+          tick={{ fontSize: 10, fill: 'hsl(var(--subtle-foreground))', fontFamily: 'var(--font-mono)' }}
+          axisLine={false}
+          tickLine={false}
+                    domain={[0, yDomainTop]}
           tickFormatter={(v: number) => {
             if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
             if (v >= 1_000) return `${Math.round(v / 1_000)}k`;
@@ -108,8 +110,8 @@ function BankrollChartImpl({ points, initialBudget }: BankrollChartProps) {
         <Area
           type="monotone"
           dataKey="bankroll"
-          stroke="hsl(var(--chart-1))"
-          strokeWidth={2}
+          stroke="hsl(var(--primary))"
+          strokeWidth={1.5}
           fill="url(#bankrollGradient)"
         />
       </AreaChart>

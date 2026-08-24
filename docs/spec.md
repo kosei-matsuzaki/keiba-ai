@@ -94,8 +94,8 @@
 │   ├── eslint.config.js       # ESLint v9 flat config
 │   ├── .prettierrc
 │   ├── public/
-│   │   ├── favicon.svg        # ブランド favicon（馬蹄モノグラム、HSL 直書き）
-│   │   └── logo.svg           # サイドナビ用ロゴ（favicon 同モチーフ・CSS 変数で色指定）
+│   │   ├── favicon.svg        # ブランド favicon（馬蹄モノグラム・タイル版、HSL 直書き）
+│   │   └── logo.svg           # アプリ外（README / 資料）用の単体グリフ。アプリ内は BrandMark.tsx
 │   ├── src/
 │   │   ├── main.tsx           # React + QueryClient + Router マウント
 │   │   ├── App.tsx            # Outlet レイアウト（Sidebar 含む）
@@ -109,6 +109,7 @@
 │   │   │   ├── Ingest.tsx           # ScraperStatusCard + IngestRunDialog + 停止
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
 │   │   ├── components/        # 共通コンポーネント
+│   │   │   ├── BrandMark.tsx       # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従。Topbar のロゴ
 │   │   │   ├── Sidebar.tsx          # サイドナビ（全画面共通）
 │   │   │   ├── PageHeader.tsx       # ページ見出し共通コンポーネント（icon: LucideIcon / title / description? / children?）。左の primary tinted アイコンタイル + h1 + サブテキスト + 右側 actions slot。全 6 ルートに適用
 │   │   │   ├── MetricCard.tsx       # KPI カード
@@ -429,7 +430,17 @@ CREATE TABLE model_runs (
 | GET | `/api/metrics/summary` | 200 | モデル評価指標サマリ |
 | GET | `/api/metrics/timeseries` | 200 | 時系列メトリクス（グラフ用） |
 
-**`GET /api/metrics/summary` のフォールバック仕様**: `model_runs.metrics_json` の `valid_ndcg*` が NaN の場合（`--valid-months 0` で学習した場合など）、`test_ndcg*` に自動フォールバックして返す。`top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` は `train.py` が出力しないため、`evaluate.py --persist` を実行して `metrics_json` に保存するまで null（Dashboard 表示: 「—」）になる。
+**`GET /api/metrics/summary` の指標ソース**: `backtest --persist` が走っていれば、4 指標すべてを **同じ 1 回の評価**（同じレース集合・アプリと同じ賭けルール）から取る。混ぜると「valid の NDCG と test の回収率」のように出所の違う数字が 1 枚のカードに並ぶため、`ndcg*` も backtest 側を優先する。
+
+backtest 未実行のときだけ学習時の指標に fallback するが、**fallback 先は同じ量ではない**ので注意:
+
+| API のキー | backtest（優先） | 学習時 fallback | 一致するか |
+|---|---|---|---|
+| `top1_hit` | 予想1位が1着 | `test_tansho_hit` | ほぼ同義 |
+| `place_hit` | **上位3頭のうち1頭以上**が3着以内 | `test_fukusho_hit`（予想1位が3着以内）| **別物**（実測 0.885 vs 0.503）|
+| `payback_win` | EV>閾値の馬すべてに1点定額 | `test_tansho_roi`（top-1 に賭け続ける）| **別物**（実測 0.912 vs 0.930）|
+
+フロントのヒットは backtest 側の定義で書いてあるので、fallback 中の値はラベルとずれる。正確を期すなら `--persist` を回すこと。
 
 ### スクレイパー管理
 

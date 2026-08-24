@@ -1,10 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchRecommendations } from '@/lib/api';
+import { fetchRecommendations, type RecommendationParams } from '@/lib/api';
 
+/**
+ * 推奨買目。params でこのレースだけ設定を上書きできる
+ * (未指定の項目は Settings の全レース共通値が使われる)。
+ */
 export function useRecommendations(
   raceId: string,
   enabled = true,
-  params?: { top_n_horses?: number; top_k?: number },
+  params?: RecommendationParams,
 ) {
   return useQuery({
     queryKey: ['recommendations', raceId, params],

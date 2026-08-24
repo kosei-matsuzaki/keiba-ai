@@ -85,14 +85,49 @@ export interface PredictionResponse {
   combinations: CombinationPredictions | null;
 }
 
+/** GET /api/races/calendar — カレンダー 1 日分の取込状況。 */
+export interface CalendarDay {
+  date: string;
+  /** 取り込んだレース数。 */
+  race_count: number;
+  /** 着順が確定しているレース数。0 なら出馬表だけ取れている状態。 */
+  result_count: number;
+  courses: string[];
+  highlight_race_id: string | null;
+  highlight_name: string | null;
+  highlight_class: string | null;
+}
+
+export interface CalendarResponse {
+  /** 1 レース以上ある日だけが入る。含まれない日 = 未取得。 */
+  days: CalendarDay[];
+}
+
+/** GET /api/races/coverage — 取込済みデータ全体の状況。 */
+export interface DataCoverage {
+  first_date: string | null;
+  last_date: string | null;
+  race_count: number;
+  result_count: number;
+  entry_count: number;
+  recent_days_with_data: number;
+  recent_days_span: number;
+}
+
 export interface TopHorse {
   post_position: number | null;
   horse_name: string | null;
   win_prob: number;
+  /** 単勝オッズ。未確定なら null。 */
+  odds_win: number | null;
+  /** 単勝 EV = win_prob × odds_win。オッズ未確定なら null。 */
+  win_ev: number | null;
 }
 
 export interface RacePredictionSummary {
   top_horses: TopHorse[];
+  /** 単勝 EV > 1.1 の馬の頭数 (出走馬全体)。一覧で「買い候補あり」を示す。 */
+  buy_count: number;
 }
 
 export interface BulkPredictionsResponse {
@@ -227,11 +262,12 @@ export interface SettingsResponse {
   rate_max_seconds: number;
   night_min_seconds: number;
   win_ev_threshold: number;
-  place_ev_threshold: number;
+  win_min_odds: number;
   scraper_stopped: boolean;
-  bankroll: number;
-  kelly_fraction: number;
-  max_stake_per_race_pct: number;
+  /** 1 レースに使ってよい上限 (円)。使い切らなくてよい。 */
+  race_budget: number;
+  /** 1 点あたりの賭け金 (円)。馬券は 100 円単位。 */
+  stake_unit: number;
   enabled_bet_types: BetType[];
 }
 
@@ -241,11 +277,10 @@ export interface SettingsUpdate {
   rate_max_seconds?: number;
   night_min_seconds?: number;
   win_ev_threshold?: number;
-  place_ev_threshold?: number;
+  win_min_odds?: number;
   scraper_stopped?: boolean;
-  bankroll?: number;
-  kelly_fraction?: number;
-  max_stake_per_race_pct?: number;
+  race_budget?: number;
+  stake_unit?: number;
   enabled_bet_types?: BetType[];
 }
 
@@ -281,7 +316,8 @@ export interface RecommendationCandidate {
 
 export interface RecommendationsResponse {
   race_id: string;
-  bankroll_at_decision: number;
+  /** このレースに使ってよい上限 (円)。 */
+  race_budget: number;
   candidates: RecommendationCandidate[];
   /**
    * 'live'    = 当日レースの市場オッズ（entries.odds_win 由来。締切前の単勝オッズ）

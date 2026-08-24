@@ -77,10 +77,11 @@ class RecommendationResult(BaseModel):
 
     Attributes:
         race_id: Target race identifier.
-        bankroll_at_decision: Bankroll used for stake calculation.
+        race_budget: このレースに使ってよい上限 (円)。実際の合計 stake は
+            これ以下になる (対象の買い目が少なければ使い切らない)。
         candidates: List of bet candidates with non-zero stake (after assign_stakes).
     """
 
     race_id: str
-    bankroll_at_decision: int
+    race_budget: int
     candidates: list[BetCandidate]

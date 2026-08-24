@@ -86,16 +86,58 @@ class PredictionResponse(BaseModel):
     combinations: CombinationPredictions | None = None
 
 
+class CalendarDay(BaseModel):
+    """カレンダー 1 日分の取込状況。
+
+    「どの日のデータが手元にあるか」を月表示で示すためのサマリ。
+    race_count は取り込んだレース数、result_count は着順が確定している
+    レース数 (= 結果まで取り込めている数)。両者が一致していれば完了、
+    result_count が 0 なら出馬表だけ取れている状態。
+    """
+    date: str
+    race_count: int
+    result_count: int
+    courses: list[str]
+    # その日の主要レース (重賞優先)。カレンダーに 1 つだけ名前を出す用。
+    highlight_race_id: str | None = None
+    highlight_name: str | None = None
+    highlight_class: str | None = None
+
+
+class CalendarResponse(BaseModel):
+    """期間内で 1 レース以上取り込めている日だけを返す (無い日は含めない)。"""
+    days: list[CalendarDay]
+
+
+class DataCoverage(BaseModel):
+    """取込済みデータ全体の状況。「何がどこまで入っているか」の一望用。"""
+    first_date: str | None
+    last_date: str | None
+    race_count: int
+    result_count: int
+    entry_count: int
+    # 直近 30 日 / 90 日に開催日が何日あり、そのうち何日取り込めているか
+    recent_days_with_data: int
+    recent_days_span: int
+
+
 class TopHorse(BaseModel):
     """上位馬の簡易情報 — bulk predictions 用。"""
     post_position: int | None
     horse_name: str | None
     win_prob: float
+    # 一覧で「買い候補があるレース」を判別するために単勝オッズと EV も返す。
+    # これが無いとフロントは EV を計算できず、詳細を全部開くまで分からない。
+    odds_win: float | None = None
+    win_ev: float | None = None
 
 
 class RacePredictionSummary(BaseModel):
     """1 レース分の top-N 馬情報。entries が無い or モデル無しは top_horses=[]。"""
     top_horses: list[TopHorse]
+    # 単勝 EV > 1.1 の馬の頭数 (top_n に関係なく出走馬全体で数える)。
+    # 一覧に「◎ 2」のように出して、開くべきレースを選べるようにする。
+    buy_count: int = 0
 
 
 class BulkPredictionsResponse(BaseModel):
@@ -187,11 +229,10 @@ class SettingsResponse(BaseModel):
     rate_max_seconds: float
     night_min_seconds: float
     win_ev_threshold: float
-    place_ev_threshold: float
+    win_min_odds: float
     scraper_stopped: bool
-    bankroll: int
-    kelly_fraction: float
-    max_stake_per_race_pct: float
+    race_budget: int
+    stake_unit: int
     enabled_bet_types: list[str]
 
 
@@ -201,32 +242,26 @@ class SettingsUpdate(BaseModel):
     rate_max_seconds: float | None = None
     night_min_seconds: float | None = None
     win_ev_threshold: float | None = None
-    place_ev_threshold: float | None = None
+    win_min_odds: float | None = None
     scraper_stopped: bool | None = None
-    bankroll: int | None = None
-    kelly_fraction: float | None = None
-    max_stake_per_race_pct: float | None = None
+    race_budget: int | None = None
+    stake_unit: int | None = None
     enabled_bet_types: list[str] | None = None
 
-    @field_validator("bankroll")
+    @field_validator("race_budget")
     @classmethod
-    def bankroll_ge_100(cls, v: int | None) -> int | None:
+    def race_budget_ge_100(cls, v: int | None) -> int | None:
+        # 100 円未満だと 1 点も買えない
         if v is not None and v < 100:
-            raise ValueError("bankroll must be >= 100")
+            raise ValueError("race_budget must be >= 100")
         return v
 
-    @field_validator("kelly_fraction")
+    @field_validator("stake_unit")
     @classmethod
-    def kelly_fraction_range(cls, v: float | None) -> float | None:
-        if v is not None and not (0.0 < v <= 1.0):
-            raise ValueError("kelly_fraction must be in (0, 1]")
-        return v
-
-    @field_validator("max_stake_per_race_pct")
-    @classmethod
-    def max_stake_range(cls, v: float | None) -> float | None:
-        if v is not None and not (0.0 < v <= 1.0):
-            raise ValueError("max_stake_per_race_pct must be in (0, 1]")
+    def stake_unit_valid(cls, v: int | None) -> int | None:
+        # 馬券は 100 円単位でしか買えない
+        if v is not None and (v < 100 or v % 100 != 0):
+            raise ValueError("stake_unit must be a multiple of 100 and >= 100")
         return v
 
     @field_validator("enabled_bet_types")

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from ai.simulation import simulate_active_model
+from ai.simulation.engine import simulate_active_model
 from core.paths import db_path
 from db.session import make_engine
 

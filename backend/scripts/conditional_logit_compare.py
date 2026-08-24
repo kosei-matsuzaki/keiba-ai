@@ -24,11 +24,11 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from roi_objective_experiment import build_races  # same dir (scripts/)
 
 from core.paths import db_path
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame, get_active_features
+from scripts.roi_objective_experiment import build_races  # `python -m scripts.X` 前提
 
 TRAIN_END, VALID_END = "2023-11-01", "2024-05-01"
 OOS_START, OOS_END = "2024-05-01", "2026-04-30"

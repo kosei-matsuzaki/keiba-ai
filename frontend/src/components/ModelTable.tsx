@@ -84,7 +84,7 @@ export function ModelTable({
             <TableCell className="text-right">{extractMetric(model.metrics, 'payback_win', 'ratio')}</TableCell>
             <TableCell className="text-center">
               {model.is_active ? (
-                <Badge variant="success">Active</Badge>
+                <Badge tone="success">Active</Badge>
               ) : (
                 <Badge variant="outline">非アクティブ</Badge>
               )}

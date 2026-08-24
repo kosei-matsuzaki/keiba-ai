@@ -13,7 +13,7 @@ import {
 import { BankrollChart } from '@/components/BankrollChart';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
-import { MetricCard } from '@/components/MetricCard';
+import { MetricBand, MetricItem } from '@/components/MetricBand';
 import {
   deleteSimulationRun,
   fetchJob,
@@ -92,9 +92,9 @@ interface GroupTableProps {
 function GroupTable({ title, rows }: GroupTableProps) {
   if (rows.length === 0) {
     return (
-      <Card>
+      <Card className="border-t border-border pt-6">
         <CardHeader>
-          <CardTitle className="text-base">{title}</CardTitle>
+          <CardTitle className="text-label-ja">{title}</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">該当するベットがありません。</p>
@@ -103,9 +103,9 @@ function GroupTable({ title, rows }: GroupTableProps) {
     );
   }
   return (
-    <Card>
+    <Card className="border-t border-border pt-6">
       <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className="text-label-ja">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <Table>
@@ -129,7 +129,7 @@ function GroupTable({ title, rows }: GroupTableProps) {
                 <TableCell
                   className={`text-right ${
                     r.payback_rate >= 1
-                      ? 'text-green-600 font-semibold'
+                      ? 'font-medium text-success'
                       : 'text-muted-foreground'
                   }`}
                 >
@@ -199,7 +199,7 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
   const runs = listQuery.data?.runs ?? [];
 
   return (
-    <Card>
+    <Card className="border-t border-border pt-6">
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
         <CardTitle className="flex items-center gap-2 text-base">
           <Archive className="h-4 w-4" />
@@ -266,9 +266,9 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
                       <TableCell
                         className={`text-right ${
                           profit > 0
-                            ? 'text-green-600 font-semibold'
+                            ? 'font-medium text-success'
                             : profit < 0
-                            ? 'text-red-600'
+                            ? 'text-destructive'
                             : ''
                         }`}
                       >
@@ -441,9 +441,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   return (
     <div className="flex flex-col gap-6">
       {/* Form: window + budget + strategy */}
-      <Card>
+      <Card className="border-t border-border pt-6">
         <CardHeader>
-          <CardTitle className="text-base">シミュレーション設定</CardTitle>
+          <CardTitle className="text-label-ja">シミュレーション設定</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-4">
@@ -517,7 +517,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                   key={p.key}
                   type="button"
                   onClick={() => setStrategy(p.key)}
-                  className={`flex flex-col items-start gap-1 rounded-lg border px-4 py-3 text-left transition-all active:scale-[0.99] ${
+                  className={`flex flex-col items-start gap-1 rounded-sm border px-4 py-3 text-left transition-colors ${
                     strategy === p.key
                       ? 'border-primary bg-primary/15 text-foreground ring-1 ring-primary/40'
                       : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:bg-card-elevated/40 hover:text-foreground'
@@ -590,14 +590,14 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
       ) : (
         <>
           {/* Bankroll KPI cards: 資産の絶対値 */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard
+          <MetricBand cols={4}>
+            <MetricItem
               title="初期資産"
               value={result.budget}
               format="yen"
               description="シミュレーション開始時"
             />
-            <MetricCard
+            <MetricItem
               title="最終資産"
               value={result.final_bankroll}
               format="yen"
@@ -616,13 +616,13 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                   : `−${formatYen(result.budget - result.final_bankroll)}`
               }
             />
-            <MetricCard
+            <MetricItem
               title="ピーク資産"
               value={result.peak_bankroll}
               format="yen"
               description="期間中の最高値"
             />
-            <MetricCard
+            <MetricItem
               title="資産変化率"
               value={
                 result.budget > 0 ? result.final_bankroll / result.budget : 0
@@ -630,12 +630,12 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               format="ratio"
               description="1.00 = 損益なし"
             />
-          </div>
+          </MetricBand>
 
           {/* Bankroll timeseries chart */}
-          <Card>
+          <Card className="border-t border-border pt-6">
             <CardHeader>
-              <CardTitle className="text-base">資産推移</CardTitle>
+              <CardTitle className="text-label-ja">資産推移</CardTitle>
             </CardHeader>
             <CardContent>
               <BankrollChart
@@ -646,20 +646,20 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
           </Card>
 
           {/* Bet stats KPI cards: bet 単位の統計 */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <MetricCard
+          <MetricBand cols={5}>
+            <MetricItem
               title="累計投資"
               value={result.summary.invested}
               format="yen"
               description={`${result.summary.n_bets} bets / ${result.n_settled_races} race`}
             />
-            <MetricCard
+            <MetricItem
               title="累計払戻"
               value={result.summary.payout}
               format="yen"
               description={`的中 ${formatPercent(result.summary.hit_rate)}`}
             />
-            <MetricCard
+            <MetricItem
               title="純利益"
               value={result.summary.payout - result.summary.invested}
               format="yen"
@@ -674,19 +674,19 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                   : 'マイナス収支'
               }
             />
-            <MetricCard
+            <MetricItem
               title="回収率"
               value={result.summary.payback_rate}
               format="ratio"
               description="1.00 = 損益分岐"
             />
-            <MetricCard
+            <MetricItem
               title="的中率"
               value={result.summary.hit_rate}
               format="percent"
               description="bet 全体"
             />
-          </div>
+          </MetricBand>
 
           {/* Group breakdown tables */}
           <GroupTable title="馬券種別" rows={result.by_bet_type} />

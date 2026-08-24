@@ -12,6 +12,8 @@ import { HTTPError } from 'ky';
 import ky from 'ky';
 import { getApiBaseUrl } from './api-base';
 import type {
+  CalendarResponse,
+  DataCoverage,
   BetBreakdown,
   BetRecordBulkIn,
   BetRecordIn,
@@ -55,7 +57,10 @@ function getClient(): Promise<ReturnType<typeof ky.create>> {
   if (!_clientPromise) {
     _clientPromise = (async () => {
       const baseUrl = await getApiBaseUrl();
-      return ky.create({ prefixUrl: `${baseUrl}/api`, retry: 0 });
+      // ky の既定タイムアウトは 10 秒。この API は SQLite の集計や推論で
+      // それを超えるものがあるので、既定を 30 秒に上げる。
+      // 推論系 (predictions / recommendations) はさらに個別に延長する。
+      return ky.create({ prefixUrl: `${baseUrl}/api`, retry: 0, timeout: 30_000 });
     })();
   }
   return _clientPromise;
@@ -87,13 +92,28 @@ export function fetchRaceDetail(raceId: string): Promise<RaceDetail> {
   return getClient().then((c) => c.get(`races/${raceId}`).json<RaceDetail>());
 }
 
+/** 期間内の日ごとの取込状況 (カレンダー表示用)。1 レースも無い日は返らない。 */
+export function fetchRacesCalendar(from: string, to: string): Promise<CalendarResponse> {
+  return getClient().then((c) =>
+    c.get('races/calendar', { searchParams: { from, to } }).json<CalendarResponse>()
+  );
+}
+
+/** 取込済みデータ全体の状況 (期間・レース数・結果の有無)。 */
+export function fetchDataCoverage(): Promise<DataCoverage> {
+  return getClient().then((c) => c.get('races/coverage').json<DataCoverage>());
+}
+
 export function fetchPredictions(raceId: string): Promise<PredictionResponse> {
   // RaceDetail は per-horse 予測 (score/win_prob/place_prob) のみ使い、連系確率は
   // 推奨買目 (/recommendations) 側で取得する。combinations を計算させると PL モンテ
   // カルロ (n=10000) が走り遅くなるため include_combinations=false で省く。
   return getClient().then((c) =>
     c
-      .get(`predictions/${raceId}`, { searchParams: { include_combinations: false } })
+      .get(`predictions/${raceId}`, {
+        searchParams: { include_combinations: false },
+        timeout: 120_000,
+      })
       .json<PredictionResponse>()
   );
 }
@@ -107,7 +127,11 @@ export function fetchBulkPredictions(
   }
   return getClient().then((c) =>
     c
-      .get('predictions/bulk', { searchParams: { race_ids: race_ids.join(','), top_n } })
+      .get('predictions/bulk', {
+        searchParams: { race_ids: race_ids.join(','), top_n },
+        // 1 レースあたり数秒 × 頭数分。1 日分だと数分かかる
+        timeout: 600_000,
+      })
       .json<BulkPredictionsResponse>()
   );
 }
@@ -294,16 +318,35 @@ export async function buildBetExportUrl(params: BetFilterParams): Promise<string
 
 // ── Recommendations / Bet creation ────────────────────────────────────────────
 
+export interface RecommendationParams {
+  top_n_horses?: number;
+  top_k?: number;
+  /** このレースだけの上書き。未指定なら Settings の値が使われる。 */
+  race_budget?: number;
+  stake_unit?: number;
+  /** 対象券種。空配列は送らない (バックエンドが 422 を返す)。 */
+  bet_types?: string[];
+}
+
 export function fetchRecommendations(
   raceId: string,
-  params?: { top_n_horses?: number; top_k?: number },
+  params?: RecommendationParams,
 ): Promise<RecommendationsResponse> {
   const searchParams: Record<string, string | number> = {};
   if (params?.top_n_horses != null) searchParams.top_n_horses = params.top_n_horses;
   if (params?.top_k != null) searchParams.top_k = params.top_k;
+  if (params?.race_budget != null) searchParams.race_budget = params.race_budget;
+  if (params?.stake_unit != null) searchParams.stake_unit = params.stake_unit;
+  if (params?.bet_types != null && params.bet_types.length > 0) {
+    searchParams.bet_types = params.bet_types.join(',');
+  }
+  // 1 レース分でも特徴量生成 + 全券種の組み合わせ EV で 15 秒前後かかる
   return getClient().then((c) =>
     c
-      .get(`recommendations/${raceId}`, Object.keys(searchParams).length ? { searchParams } : {})
+      .get(`recommendations/${raceId}`, {
+        timeout: 120_000,
+        ...(Object.keys(searchParams).length ? { searchParams } : {}),
+      })
       .json<RecommendationsResponse>()
   );
 }

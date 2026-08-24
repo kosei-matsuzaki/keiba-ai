@@ -11,9 +11,16 @@ vi.mock('../lib/api', () => ({
   fetchMetricsTimeseries: vi.fn(),
   // ActiveModelCard 表示のため useModels が使う
   fetchModels: vi.fn(),
+  // 「いまの状態」帯が今週末のレース有無を見る
+  fetchThisWeekendRaces: vi.fn(),
 }));
 
-import { fetchMetricsSummary, fetchMetricsTimeseries, fetchModels } from '../lib/api';
+import {
+  fetchMetricsSummary,
+  fetchMetricsTimeseries,
+  fetchModels,
+  fetchThisWeekendRaces,
+} from '../lib/api';
 
 const mockSummary: MetricsSummary = {
   ndcg1: 0.72,
@@ -51,6 +58,7 @@ beforeEach(() => {
   vi.mocked(fetchMetricsSummary).mockResolvedValue(mockSummary);
   vi.mocked(fetchMetricsTimeseries).mockResolvedValue(mockTimeseries);
   vi.mocked(fetchModels).mockResolvedValue([]);
+  vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
 });
 
 describe('Dashboard', () => {
@@ -66,6 +74,46 @@ describe('Dashboard', () => {
     renderDashboard();
     // 0.651 formatted as decimal → "0.651"
     expect(await screen.findByText('0.651')).toBeInTheDocument();
+  });
+
+  it('shows a single empty state instead of 4 dashes when nothing is evaluated', async () => {
+    vi.mocked(fetchMetricsSummary).mockResolvedValue({
+      ndcg1: null,
+      ndcg3: null,
+      top1_hit: null,
+      place_hit: null,
+      payback_win: null,
+      n_races: null,
+      model_id: null,
+    });
+    renderDashboard();
+    expect(await screen.findByText('評価結果がまだありません')).toBeInTheDocument();
+    // 「—」だらけの KPI カードは描かない
+    expect(screen.queryByText('NDCG@3')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Models 画面へ' })).toBeInTheDocument();
+  });
+
+  it('renders 未算出 (not a big dash) for individually missing metrics', async () => {
+    vi.mocked(fetchMetricsSummary).mockResolvedValue({
+      ...mockSummary,
+      top1_hit: null,
+      place_hit: null,
+    });
+    renderDashboard();
+    await screen.findByText('NDCG@3');
+    expect(screen.getAllByText('未算出')).toHaveLength(2);
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+  });
+
+  it('shows a "needs 2 evaluations" note instead of a lone chart point', async () => {
+    vi.mocked(fetchMetricsTimeseries).mockResolvedValue({
+      metric: 'ndcg3',
+      points: [{ date: '2026-01-01', value: 0.63 }],
+    });
+    renderDashboard();
+    expect(
+      await screen.findByText('推移を出すには評価が 2 回以上必要です')
+    ).toBeInTheDocument();
   });
 
   it('shows error state when API fails', async () => {

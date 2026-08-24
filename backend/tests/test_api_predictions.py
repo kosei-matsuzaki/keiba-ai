@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -254,3 +255,85 @@ def test_bulk_predictions_success(
         assert "win_prob" in h
         assert "horse_name" in h
         assert "post_position" in h
+
+
+def test_bulk_predictions_includes_ev_and_buy_count(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """一覧で「買い候補あり」を出すため、単勝オッズ・EV・買い候補数が返ること。
+
+    seed: odds_win = 5.0, 6.0, 7.0 / win_prob = 0.4, 0.3, 0.2
+      → EV = 2.0, 1.8, 1.4 (いずれも 1.1 超) なので buy_count = 3。
+    """
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    RACE_ID = "BULK_RACE_EV"
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, RACE_ID, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_bulk_ev"))
+
+    fake_df = pd.DataFrame({
+        "horse_id": [f"HP_{RACE_ID}_{i}" for i in range(3)],
+        "score": [2.0, 1.5, 1.0],
+        "win_prob": [0.4, 0.3, 0.2],
+        "place_prob": [0.7, 0.6, 0.5],
+        "post_position": [1, 2, 3],
+    })
+
+    with (
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race", return_value=fake_df),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/predictions/bulk?race_ids={RACE_ID}&top_n=3")
+
+    assert resp.status_code == 200
+    summary = resp.json()["predictions"][RACE_ID]
+    assert summary["buy_count"] == 3
+
+    top = summary["top_horses"]
+    assert top[0]["odds_win"] == pytest.approx(5.0)
+    assert top[0]["win_ev"] == pytest.approx(2.0)
+    assert top[2]["win_ev"] == pytest.approx(1.4)
+
+
+def test_bulk_predictions_ev_is_null_without_odds(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """オッズ未確定なら EV は null、買い候補も 0 になること。"""
+    from core.paths import db_path
+    from db.models.entry import Entry as EntryModel
+    from db.session import make_engine, session_scope
+
+    RACE_ID = "BULK_RACE_NOODDS"
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, RACE_ID, n_horses=3)
+        for e in session.query(EntryModel).filter(EntryModel.race_id == RACE_ID):
+            e.odds_win = None
+        _seed_active_model(session, str(tmp_path / "fake_model_bulk_noodds"))
+
+    fake_df = pd.DataFrame({
+        "horse_id": [f"HP_{RACE_ID}_{i}" for i in range(3)],
+        "score": [2.0, 1.5, 1.0],
+        "win_prob": [0.5, 0.3, 0.2],
+        "place_prob": [0.7, 0.6, 0.5],
+        "post_position": [1, 2, 3],
+    })
+
+    with (
+        patch("api.routers.predictions.load_model_full", return_value=MagicMock()),
+        patch("api.routers.predictions.predict_race", return_value=fake_df),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/predictions/bulk?race_ids={RACE_ID}&top_n=3")
+
+    summary = resp.json()["predictions"][RACE_ID]
+    assert summary["buy_count"] == 0
+    assert all(h["win_ev"] is None and h["odds_win"] is None for h in summary["top_horses"])

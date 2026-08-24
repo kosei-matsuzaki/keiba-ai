@@ -59,40 +59,6 @@ PLACE_EV_THRESHOLD = 1.05  # Expected value threshold for place bet
 _BOOTSTRAP_METRIC_KEYS = ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place")
 
 
-def kelly_bet_size(
-    win_prob: float,
-    odds: float,
-    bankroll: float,
-    kappa: float = 0.25,
-    min_bet: int = 100,
-) -> int:
-    """Fractional Kelly bet size (100 yen 単位で丸め).
-
-    Fractional Kelly fraction: f = kappa * edge / b
-    where edge = win_prob * odds - 1 and b = odds - 1.
-
-    Args:
-        win_prob: Estimated win probability.
-        odds: Decimal odds (payout per 1 yen bet, e.g. 3.5 means 3.5x return).
-        bankroll: Current bankroll in yen.
-        kappa: Fractional Kelly coefficient (0 < kappa <= 1). Default 0.25.
-        min_bet: Minimum bet size in yen; also the rounding unit. Default 100.
-
-    Returns:
-        Bet size in yen, a multiple of min_bet. Returns 0 when edge <= 0.
-    """
-    edge = win_prob * odds - 1.0
-    if edge <= 0:
-        return 0
-    b = odds - 1.0
-    if b <= 0:
-        return 0
-    fraction = kappa * edge / b
-    raw_size = bankroll * fraction
-    rounded = int(raw_size / min_bet) * min_bet
-    return rounded if rounded >= min_bet else 0
-
-
 def _bet_excluded(
     rank: int,
     row: pd.Series,
@@ -121,10 +87,19 @@ def _bet_excluded(
     return False
 
 
+# 市場オッズ由来の 3 着内確率を PL (Harville) で出すときの冪。1.0 だと本命の
+# 3 着内確率を過大評価し、穴馬の推定複勝オッズが実払戻より甘くなる (実測: 実オッズ
+# 6.0 以上の帯で推定/実際 = 1.37)。implied^MARKET_PLACE_POWER を正規化してから PL に
+# 通すことで補正する (Henery / discounted Harville と同じ形)。valid 1,465 レースで
+# 3 着内の log-loss を最小化して 0.85 (lam=1.0 の 0.4111 → 0.4077)。
+MARKET_PLACE_POWER = 0.85
+
+
 def _estimate_place_odds(
     race_frame: pd.DataFrame,
     k: int = 3,
     takeout: float = 0.20,
+    market_power: float = MARKET_PLACE_POWER,
 ) -> dict[str, float]:
     """Estimate each horse's 複勝 decimal odds from PRE-RACE win odds (leak-free).
 
@@ -143,6 +118,9 @@ def _estimate_place_odds(
         return {}
     implied = 1.0 / sub["odds_win"].to_numpy(dtype=np.float64)
     implied = implied / implied.sum()  # strip the win-pool overround
+    # Harville バイアス補正 (MARKET_PLACE_POWER)
+    implied = np.power(implied, float(market_power))
+    implied = implied / implied.sum()
     scores = np.log(np.clip(implied, 1e-12, None))
     p_top_k = np.clip(plackett_luce_place_prob(scores, k=k), 1e-6, 1.0)
     est_odds = (1.0 - takeout) / p_top_k
@@ -442,24 +420,46 @@ def evaluate(
     persist: bool = False,
     *,
     win_ev_threshold: float = WIN_EV_THRESHOLD,
+    win_bet_rule: str = "top1",
+    place_bet_rule: str = "topk",
+    place_top_k: int = 1,
     place_ev_threshold: float = PLACE_EV_THRESHOLD,
     exclude_top_rank: int = 0,
     min_popularity: int | None = None,
     max_popularity: int | None = None,
-    bet_sizing: str = "fixed",
-    kelly_kappa: float = 0.25,
-    bankroll: float = 100_000.0,
     bootstrap_iters: int = 0,
     bootstrap_seed: int = 42,
     bundle: ModelBundle | None = None,
     place_odds_mode: str = "estimated",
     place_takeout: float = 0.20,
+    market_place_power: float = MARKET_PLACE_POWER,
 ) -> dict:
     """Run backtest evaluation and return metrics dict.
 
     When `baseline` is None (default), returns the flat model metrics dict
     (backwards compatible). When baseline=='favorite', returns
     {"model": {...}, "baseline_favorite": {...}, "delta": {...}}.
+
+    `win_bet_rule` は単勝の買い方:
+      - "top1" (既定) … **モデル 1 位の馬**を `odds > win_ev_threshold` のときだけ買う。
+      - "ev"          … `win_prob × odds > win_ev_threshold` の馬すべて (旧既定)。
+
+    温度を NLL 較正すると "ev" は平坦な確率 × 大穴オッズで偽 EV を量産して回収率が
+    落ちる (実測 0.698)。旧既定の 0.912 は温度がグリッド端に張り付いて win_prob が
+    飽和し、EV 条件が実質「1 位を買う」に退化していた結果だった。その戦略を
+    **確率に依存しない形で明示**したのが "top1" で、較正済み確率のもとで
+    **0.931 と旧既定を上回る** (test 19ヶ月 5,404 レース実測)。
+
+    `place_bet_rule` は複勝の買い方:
+      - "topk" (既定) … **モデル上位 `place_top_k` 頭**を無条件に買う。実測 (test 19ヶ月)
+        k=1 で 5,402 点・回収率 **0.887**、k=2 で 0.860、k=3 で 0.837 と k が小さいほど良い。
+      - "ev"          … `place_prob × 推定複勝オッズ > place_ev_threshold` (旧既定)。
+        43,464 点・回収率 0.654 で、1 番人気ベタ買いの複勝 0.850 にも負ける。
+
+    複勝の EV は単に狂っているのではなく **順序が逆**。実測 (test 19ヶ月) の EV 帯別
+    回収率は 0.0-0.9 帯が 0.832 で最良、2.0 以上が 0.573 で最悪と単調減少しており、
+    高 EV = 推定オッズの高い穴馬 = 確率もオッズも最も過大評価される帯、という構造。
+    温度・冪 (Harville 補正) のような単調変換では直らない。
 
     `persist=True` で評価結果を model_runs.metrics_json に merge する
     (Dashboard 側 metrics endpoint がこの値を読む)。
@@ -486,7 +486,6 @@ def evaluate(
     # the on-disk artifacts.
     if bundle is None:
         bundle = load_model_full(model_path)
-    use_kelly = bet_sizing == "kelly"
 
     log.info("Building evaluation frame from %s", resolved_db)
     with session_scope(engine) as session:
@@ -525,138 +524,138 @@ def evaluate(
     place_invested = 0.0
 
     race_ids = frame["race_id"].unique()
-    for race_id in race_ids:
-        race_frame = frame[frame["race_id"] == race_id].copy()
-        if len(race_frame) < 2:
-            continue
-
-        # Per-race stake/payout accumulators (added to the global running
-        # totals AND to the per-race arrays for bootstrap).
-        race_win_invested = 0.0
-        race_win_payout = 0.0
-        race_place_invested = 0.0
-        race_place_payout = 0.0
-
-        # bundle 経由で推論 (NN)
-        preds = predict_race(bundle, race_frame)
-        # Merge actual finish positions + popularity (needed for betting filters)
-        actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]
-        if "popularity" in race_frame.columns:
-            actual_cols.append("popularity")
-        actual = race_frame[actual_cols].copy()
-        preds = preds.merge(actual, on="horse_id", how="left")
-
-        # NDCG
-        true_rel = race_frame["relevance"].values.reshape(1, -1)
-        # Align scores to same order as race_frame
-        score_map = dict(zip(preds["horse_id"], preds["score"], strict=False))
-        pred_scores = np.array([score_map.get(h, 0.0) for h in race_frame["horse_id"]]).reshape(1, -1)
-        ndcg1_list.append(float(ndcg_score(true_rel, pred_scores, k=1)))
-        ndcg3_list.append(float(ndcg_score(true_rel, pred_scores, k=3)))
-
-        # Top-1 hit: does the horse ranked #1 by model actually finish 1st?
-        top_horse = preds.iloc[0]  # sorted by score desc
-        top1_hits.append(1 if top_horse["finish_position"] == 1 else 0)
-
-        # Place hit: is at least one of top-3 model picks in actual top-3?
-        top3_horses = set(preds.iloc[:3]["horse_id"])
-        actual_top3 = set(
-            actual[actual["finish_position"].notna() & (actual["finish_position"] <= 3)]["horse_id"]
-        )
-        place_hits.append(1 if top3_horses & actual_top3 else 0)
-
-        # Win betting: bet if win_prob × odds_win > win_ev_threshold AND
-        # the horse passes the rank/popularity filters.
-        for rank, (_, row) in enumerate(preds.iterrows()):
-            if _bet_excluded(rank, row, exclude_top_rank, min_popularity, max_popularity):
+    # arch-3 (history_feat_dim>0) は推論時に過去走系列を DB から引くため、
+    # ループ中セッションを開いたままにする。session を渡さないと履歴が zero に
+    # degrade し、学習時 (metrics_json) と別モデルを評価することになる。
+    with session_scope(engine) as pred_session:
+        for race_id in race_ids:
+            race_frame = frame[frame["race_id"] == race_id].copy()
+            if len(race_frame) < 2:
                 continue
-            odds = row.get("odds_win")
-            if odds is None or pd.isna(odds):
-                continue
-            ev = row["win_prob"] * odds
-            if ev > win_ev_threshold:
-                if use_kelly:
-                    bet_size = kelly_bet_size(
-                        float(row["win_prob"]), float(odds), bankroll,
-                        kappa=kelly_kappa,
-                    )
-                    if bet_size == 0:
-                        continue
-                else:
-                    bet_size = 100
-                win_bets += 1
-                win_invested += bet_size
-                race_win_invested += bet_size
-                if row.get("finish_position") == 1:
-                    win_gross_payout += odds * bet_size
-                    race_win_payout += odds * bet_size
 
-        # Place betting (複勝): requires payout_place data on the race frame
-        # race_frame may carry payout_place if the training frame includes it.
-        # Look it up from the race_frame column if present.
-        payout_place_raw: str | None = None
-        if "payout_place" in race_frame.columns:
-            vals = race_frame["payout_place"].dropna()
-            if not vals.empty:
-                payout_place_raw = vals.iloc[0]
+            # Per-race stake/payout accumulators (added to the global running
+            # totals AND to the per-race arrays for bootstrap).
+            race_win_invested = 0.0
+            race_win_payout = 0.0
+            race_place_invested = 0.0
+            race_place_payout = 0.0
 
-        payout_place_map = _parse_payout_place(payout_place_raw)
-        if payout_place_map:
-            # Odds used for the place EV / Kelly *decision*:
-            #   "estimated" (default, leak-free): per-horse 複勝 odds estimated
-            #     from PRE-RACE win odds via Plackett-Luce.
-            #   "min_payout" (legacy): min(confirmed post-race payout) shared by
-            #     all horses — a lookahead leak kept only for back-compat / A-B.
-            # Settlement (realized payout) always uses the confirmed payout_place.
-            if place_odds_mode == "estimated":
-                est_place_odds = _estimate_place_odds(race_frame, takeout=place_takeout)
-                min_odds = None  # not used in this mode
-            else:
-                min_odds = min(payout_place_map.values()) / 100.0
-                est_place_odds = None
+            # bundle 経由で推論 (NN)
+            preds = predict_race(bundle, race_frame, session=pred_session)
+            # Merge actual finish positions + popularity (needed for betting filters)
+            actual_cols = ["horse_id", "finish_position", "odds_win", "relevance"]
+            if "popularity" in race_frame.columns:
+                actual_cols.append("popularity")
+            actual = race_frame[actual_cols].copy()
+            preds = preds.merge(actual, on="horse_id", how="left")
 
+            # NDCG
+            true_rel = race_frame["relevance"].values.reshape(1, -1)
+            # Align scores to same order as race_frame
+            score_map = dict(zip(preds["horse_id"], preds["score"], strict=False))
+            pred_scores = np.array([score_map.get(h, 0.0) for h in race_frame["horse_id"]]).reshape(1, -1)
+            ndcg1_list.append(float(ndcg_score(true_rel, pred_scores, k=1)))
+            ndcg3_list.append(float(ndcg_score(true_rel, pred_scores, k=3)))
+
+            # Top-1 hit: does the horse ranked #1 by model actually finish 1st?
+            top_horse = preds.iloc[0]  # sorted by score desc
+            top1_hits.append(1 if top_horse["finish_position"] == 1 else 0)
+
+            # Place hit: is at least one of top-3 model picks in actual top-3?
+            top3_horses = set(preds.iloc[:3]["horse_id"])
+            actual_top3 = set(
+                actual[actual["finish_position"].notna() & (actual["finish_position"] <= 3)]["horse_id"]
+            )
+            place_hits.append(1 if top3_horses & actual_top3 else 0)
+
+            # Win betting: "ev" は win_prob × odds > 閾値、"top1" はモデル 1 位のみを
+            # odds > 閾値 で買う。どちらも rank/popularity フィルタを通った馬が対象。
             for rank, (_, row) in enumerate(preds.iterrows()):
-                if _bet_excluded(
-                    rank, row, exclude_top_rank, min_popularity, max_popularity
-                ):
+                if _bet_excluded(rank, row, exclude_top_rank, min_popularity, max_popularity):
                     continue
-                if est_place_odds is not None:
-                    place_odds = est_place_odds.get(row["horse_id"])
-                    if place_odds is None:
-                        continue  # no pre-race odds → cannot price this bet
+                odds = row.get("odds_win")
+                if odds is None or pd.isna(odds):
+                    continue
+                if win_bet_rule == "top1":
+                    take = rank == 0 and odds > win_ev_threshold
                 else:
-                    place_odds = min_odds
-                ev = row["place_prob"] * place_odds
-                if ev > place_ev_threshold:
-                    if use_kelly:
-                        place_bet_size = kelly_bet_size(
-                            float(row["place_prob"]), place_odds, bankroll,
-                            kappa=kelly_kappa,
-                        )
-                        if place_bet_size == 0:
-                            continue
-                    else:
-                        place_bet_size = 100
-                    place_bets += 1
-                    place_invested += place_bet_size
-                    race_place_invested += place_bet_size
-                    finish_pos = row.get("finish_position")
-                    # 同着（finish_position が小数 = 1.5/2.5 等）は日本競馬で複勝対象外（返還）
-                    # のため整数着順のみカウントし、複勝 ROI を過大評価しないようにする。
-                    if (
-                        finish_pos is not None
-                        and not pd.isna(finish_pos)
-                        and float(finish_pos) == int(finish_pos)
-                        and int(finish_pos) in payout_place_map
-                    ):
-                        race_payout = payout_place_map[int(finish_pos)] * (place_bet_size / 100)
-                        place_gross_payout += race_payout
-                        race_place_payout += race_payout
+                    take = row["win_prob"] * odds > win_ev_threshold
+                if take:
+                    # デプロイ (ai.betting.strategy.assign_flat_stakes) と同じ 1 点定額。
+                    # Kelly (資金比率) は賭け金決定から廃止済みで、評価側にだけ残すと
+                    # 「アプリが実行できない戦略」を測ることになるため置かない。
+                    bet_size = 100
+                    win_bets += 1
+                    win_invested += bet_size
+                    race_win_invested += bet_size
+                    if row.get("finish_position") == 1:
+                        win_gross_payout += odds * bet_size
+                        race_win_payout += odds * bet_size
 
-        per_race_win_invested.append(race_win_invested)
-        per_race_win_payout.append(race_win_payout)
-        per_race_place_invested.append(race_place_invested)
-        per_race_place_payout.append(race_place_payout)
+            # Place betting (複勝): requires payout_place data on the race frame
+            # race_frame may carry payout_place if the training frame includes it.
+            # Look it up from the race_frame column if present.
+            payout_place_raw: str | None = None
+            if "payout_place" in race_frame.columns:
+                vals = race_frame["payout_place"].dropna()
+                if not vals.empty:
+                    payout_place_raw = vals.iloc[0]
+
+            payout_place_map = _parse_payout_place(payout_place_raw)
+            if payout_place_map:
+                # Odds used for the place EV *decision*:
+                #   "estimated" (default, leak-free): per-horse 複勝 odds estimated
+                #     from PRE-RACE win odds via Plackett-Luce.
+                #   "min_payout" (legacy): min(confirmed post-race payout) shared by
+                #     all horses — a lookahead leak kept only for back-compat / A-B.
+                # Settlement (realized payout) always uses the confirmed payout_place.
+                if place_odds_mode == "estimated":
+                    est_place_odds = _estimate_place_odds(
+                        race_frame, takeout=place_takeout,
+                        market_power=market_place_power,
+                    )
+                    min_odds = None  # not used in this mode
+                else:
+                    min_odds = min(payout_place_map.values()) / 100.0
+                    est_place_odds = None
+
+                for rank, (_, row) in enumerate(preds.iterrows()):
+                    if _bet_excluded(
+                        rank, row, exclude_top_rank, min_popularity, max_popularity
+                    ):
+                        continue
+                    if est_place_odds is not None:
+                        place_odds = est_place_odds.get(row["horse_id"])
+                        if place_odds is None:
+                            continue  # no pre-race odds → cannot price this bet
+                    else:
+                        place_odds = min_odds
+                    if place_bet_rule == "topk":
+                        take_place = rank < place_top_k
+                    else:
+                        take_place = row["place_prob"] * place_odds > place_ev_threshold
+                    if take_place:
+                        place_bet_size = 100
+                        place_bets += 1
+                        place_invested += place_bet_size
+                        race_place_invested += place_bet_size
+                        finish_pos = row.get("finish_position")
+                        # 同着（finish_position が小数 = 1.5/2.5 等）は日本競馬で複勝対象外（返還）
+                        # のため整数着順のみカウントし、複勝 ROI を過大評価しないようにする。
+                        if (
+                            finish_pos is not None
+                            and not pd.isna(finish_pos)
+                            and float(finish_pos) == int(finish_pos)
+                            and int(finish_pos) in payout_place_map
+                        ):
+                            race_payout = payout_place_map[int(finish_pos)] * (place_bet_size / 100)
+                            place_gross_payout += race_payout
+                            race_place_payout += race_payout
+
+            per_race_win_invested.append(race_win_invested)
+            per_race_win_payout.append(race_win_payout)
+            per_race_place_invested.append(race_place_invested)
+            per_race_place_payout.append(race_place_payout)
 
     n_races = len(ndcg1_list)
     metrics = {
@@ -681,15 +680,17 @@ def evaluate(
         # Record the betting filter params so that persisted metrics_json /
         # CLI JSON dump explains under what strategy the numbers were produced.
         "win_ev_threshold": float(win_ev_threshold),
+        "win_bet_rule": win_bet_rule,
         "place_ev_threshold": float(place_ev_threshold),
+        "place_bet_rule": place_bet_rule,
+        "place_top_k": int(place_top_k),
         "exclude_top_rank": int(exclude_top_rank),
         "min_popularity": min_popularity,
         "max_popularity": max_popularity,
-        "bet_sizing": bet_sizing,
-        "kelly_kappa": float(kelly_kappa) if use_kelly else None,
-        "bankroll": float(bankroll) if use_kelly else None,
+        "bet_sizing": "flat",
         "place_odds_mode": place_odds_mode,
         "place_takeout": float(place_takeout) if place_odds_mode == "estimated" else None,
+        "market_place_power": float(market_place_power),
     }
 
     if bootstrap_iters > 0 and n_races > 0:
@@ -786,26 +787,21 @@ def _cli() -> None:
         help="Upper bound on popularity rank (inclusive).",
     )
     parser.add_argument(
-        "--bet-sizing",
-        choices=["fixed", "kelly"],
-        default="fixed",
+        "--win-bet-rule",
+        choices=["ev", "top1"],
+        default="top1",
         help=(
-            "Bet sizing strategy. 'fixed' (default) bets 100 yen per pick. "
-            "'kelly' uses Fractional Kelly formula scaled by --bankroll."
+            "単勝の買い方。'ev' (既定) は win_prob × odds > --win-ev-threshold の馬すべて。"
+            "'top1' はモデル 1 位の馬を odds > --win-ev-threshold のときだけ買う。"
         ),
     )
     parser.add_argument(
-        "--kelly-kappa",
-        type=float,
-        default=0.25,
-        help="Fractional Kelly coefficient (0 < kappa <= 1). Default 0.25.",
+        "--place-bet-rule",
+        choices=["ev", "topk"],
+        default="topk",
+        help="複勝の買い方。'topk' (既定) はモデル上位 --place-top-k 頭、'ev' は期待値条件 (旧既定)。",
     )
-    parser.add_argument(
-        "--bankroll",
-        type=float,
-        default=100_000.0,
-        help="Starting bankroll in yen for Kelly bet sizing. Default 100000.",
-    )
+    parser.add_argument("--place-top-k", type=int, default=1, help="--place-bet-rule topk の k")
     parser.add_argument(
         "--bootstrap-iters",
         type=int,
@@ -849,13 +845,13 @@ def _cli() -> None:
         baseline=args.baseline,
         persist=args.persist,
         win_ev_threshold=args.win_ev_threshold,
+        win_bet_rule=args.win_bet_rule,
+        place_bet_rule=args.place_bet_rule,
+        place_top_k=args.place_top_k,
         place_ev_threshold=args.place_ev_threshold,
         exclude_top_rank=args.exclude_top_rank,
         min_popularity=args.min_popularity,
         max_popularity=args.max_popularity,
-        bet_sizing=args.bet_sizing,
-        kelly_kappa=args.kelly_kappa,
-        bankroll=args.bankroll,
         bootstrap_iters=args.bootstrap_iters,
         bootstrap_seed=args.bootstrap_seed,
         place_odds_mode=args.place_odds_mode,

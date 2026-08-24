@@ -18,6 +18,14 @@ class TemperatureScaler:
     T > 1 → 分布が平坦化 (賭けすぎ抑制)
     T < 1 → 分布が鋭利化 (max 確率が上がる)
     T = 1 → 補正なし (恒等)
+
+    **``fit`` (payback グリッド探索) と ``fit_calibration`` (NLL) は目的が違う。**
+    払戻を最大化する T を選ぶと、グリッド端 (0.1 / 10.0) に張り付いて確率が壊れる。
+    実際 2026-08-23 時点の本番モデルは T_win=0.133 / T_place=10.0 で、win_prob が
+    1 位に 0.999999 乗り (画面に「単勝確率 100.0%」と出る)、place_prob はほぼ一様、
+    という**互いに矛盾した確率**を返していた。表示する確率は ``fit_calibration``
+    (勝ち馬の NLL 最小化 = proper scoring rule) で決めること。賭ける/賭けないの
+    判定は温度ではなく買い方のルール側で表現する (docs/ai-model.md「推奨ベットルール」)。
     """
 
     T_win: float = 1.0
@@ -73,6 +81,123 @@ class TemperatureScaler:
 
         self.T_win = best_T_win
         self.T_place = best_T_place
+
+    def fit_calibration(
+        self,
+        scores_per_race: list[np.ndarray],
+        finish_positions_per_race: list[np.ndarray],
+        T_candidates: np.ndarray | None = None,
+    ) -> float:
+        """勝ち馬の負の対数尤度を最小化する T を選び、T_win / T_place に同じ値を入れる。
+
+        payback 最大化 (:meth:`fit`) と違い、これは **確率を正直にする**ための較正。
+        単勝の softmax と複勝の PL に同じ T を使うので、「単勝は 100% と言うのに
+        複勝はほぼ一様」という矛盾が構造的に起きない。
+
+        Args:
+            scores_per_race: 1 レース 1 配列のスコア。
+            finish_positions_per_race: 同形状の着順 (1-based, NaN 可)。
+            T_candidates: 探索する温度。default は np.geomspace(0.1, 20.0, 80)。
+
+        Returns:
+            選ばれた T (= T_win = T_place)。勝ち馬のいるレースが 0 件なら 1.0。
+        """
+        if T_candidates is None:
+            T_candidates = np.geomspace(0.1, 20.0, 80)
+
+        pairs: list[tuple[np.ndarray, int]] = []
+        for s, pos in zip(scores_per_race, finish_positions_per_race, strict=True):
+            if s is None or pos is None or len(s) < 2:
+                continue
+            idx = np.where(np.asarray(pos, dtype=float) == 1.0)[0]
+            if idx.size == 0:
+                continue
+            pairs.append((np.asarray(s, dtype=float), int(idx[0])))
+
+        if not pairs:
+            return 1.0
+
+        best_T, best_nll = 1.0, float("inf")
+        for T in T_candidates:
+            total = 0.0
+            for s, w in pairs:
+                p = _softmax_with_temperature(s, float(T))
+                total -= float(np.log(max(p[w], 1e-12)))
+            nll = total / len(pairs)
+            if nll < best_nll:
+                best_nll, best_T = nll, float(T)
+
+        self.T_win = best_T
+        self.T_place = best_T
+        return best_T
+
+    def fit_place_calibration(
+        self,
+        scores_per_race: list[np.ndarray],
+        finish_positions_per_race: list[np.ndarray],
+        k: int = 3,
+        n_samples: int = 3000,
+        T_candidates: np.ndarray | None = None,
+        seed: int = 0,
+    ) -> float:
+        """3 着内の当たり外れの log-loss を最小化する T_place を選ぶ。
+
+        :meth:`fit_calibration` は **勝ち馬**の NLL で T を決めるが、その T を
+        そのまま PL に流用すると 3 着内確率が壊れる。実測 (test 3ヶ月・12,699 行):
+        予測 0.0-0.1 帯で予測 0.061 / 実測 0.023 = **2.7 倍の過大評価**、
+        0.85 以上の帯でも 1.56 倍。単勝の温度と複勝の温度は別物なので別に当てる。
+
+        スコアに温度を掛けるのは win 確率の冪変換 (softmax(s/T) ∝ p^(1/T)) と
+        等価で、これは競馬の順位確率で Harville 法のバイアスを補正する標準手法
+        (Henery / discounted Harville) と同じ形。
+
+        Args:
+            scores_per_race: 1 レース 1 配列のスコア。
+            finish_positions_per_race: 同形状の着順 (1-based, NaN 可)。
+            k: 何着以内か (複勝は 3)。
+            n_samples: PL モンテカルロのサンプル数 (当てる用なので粗くてよい)。
+            T_candidates: 探索する温度。default は np.geomspace(0.3, 30.0, 30)。
+            seed: MC の再現性用。
+
+        Returns:
+            選ばれた T_place。使える race が無ければ現在値のまま返す。
+        """
+        from ai.core.probabilities import plackett_luce_place_prob  # noqa: PLC0415
+
+        if T_candidates is None:
+            T_candidates = np.geomspace(0.3, 30.0, 30)
+
+        pairs: list[tuple[np.ndarray, np.ndarray]] = []
+        for s, pos in zip(scores_per_race, finish_positions_per_race, strict=True):
+            if s is None or pos is None or len(s) < 2:
+                continue
+            pos_arr = np.asarray(pos, dtype=float)
+            if not np.isfinite(pos_arr).any():
+                continue
+            placed = ((pos_arr <= k) & (pos_arr == np.round(pos_arr))).astype(float)
+            placed[~np.isfinite(pos_arr)] = 0.0
+            pairs.append((np.asarray(s, dtype=float), placed))
+
+        if not pairs:
+            return self.T_place
+
+        best_T, best_ll = self.T_place, float("inf")
+        for T in T_candidates:
+            rng = np.random.default_rng(seed)
+            total, n = 0.0, 0
+            for s, placed in pairs:
+                p = np.clip(
+                    plackett_luce_place_prob(s / float(T), k=k, n_samples=n_samples, rng=rng),
+                    1e-6, 1 - 1e-6,
+                )
+                total -= float(np.sum(placed * np.log(p) + (1 - placed) * np.log(1 - p)))
+                n += len(p)
+            ll = total / max(n, 1)
+            if ll < best_ll:
+                best_ll, best_T = ll, float(T)
+
+        self.T_place = best_T
+        return best_T
 
     def transform_win(self, scores: np.ndarray) -> np.ndarray:
         """softmax(scores / T_win) を返す (1 レース内)."""

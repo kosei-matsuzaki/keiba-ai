@@ -9,11 +9,10 @@ from itertools import combinations, permutations
 import pandas as pd
 
 from ai.betting.strategy import (
-    assign_stakes,
+    assign_flat_stakes,
     generate_box,
     generate_formation,
     generate_nagashi,
-    kelly_stake,
     recommend_for_race,
 )
 from ai.core.types import BetCandidate, CombinationPrediction
@@ -92,64 +91,86 @@ def _fukusho_combos(n: int, odds: float = 2.0) -> list[CombinationPrediction]:
 # kelly_stake
 # ---------------------------------------------------------------------------
 
-class TestKellyStake:
-    def test_textbook_value(self):
-        # prob=0.5, odds=3.0 (net 2x), bankroll=10000, kelly_fraction=1.0
-        # edge = 0.5*3 - 1 = 0.5
-        # fraction = 1.0 * 0.5 / (3.0 - 1.0) = 0.25
-        # raw = 10000 * 0.25 = 2500
-        # rounded to 100 → 2500
-        assert kelly_stake(0.5, 3.0, 10_000, 1.0, 100) == 2500
+class TestAssignFlatStakes:
+    """定額配分: ev の高い順に 1 点 stake_unit 円、予算の範囲で。"""
 
-    def test_quarter_kelly(self):
-        # Same as above but kelly_fraction=0.25
-        # fraction = 0.25 * 0.25 = 0.0625
-        # raw = 10000 * 0.0625 = 625 → 600 (floor to 100)
-        assert kelly_stake(0.5, 3.0, 10_000, 0.25, 100) == 600
+    def _c(self, combo: str, ev: float | None, prob: float = 0.1) -> BetCandidate:
+        return BetCandidate(
+            bet_type="単勝",
+            combo=combo,
+            pattern="box",
+            prob=prob,
+            est_odds=(ev / prob) if ev is not None else None,
+            ev=ev,
+            stake=0,
+            post_positions=(int(combo),),
+        )
 
-    def test_negative_edge_returns_zero(self):
-        # prob=0.1, odds=5.0 → edge = 0.5 - 1 = -0.5 ≤ 0
-        assert kelly_stake(0.1, 5.0, 100_000, 0.25) == 0
+    def test_each_eligible_candidate_gets_one_unit(self):
+        cands = [self._c("1", 1.5), self._c("2", 1.3), self._c("3", 1.2)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        assert [c.stake for c in out] == [100, 100, 100]
 
-    def test_zero_prob_returns_zero(self):
-        assert kelly_stake(0.0, 10.0, 100_000, 0.25) == 0
+    def test_orders_by_ev_desc(self):
+        cands = [self._c("1", 1.2), self._c("2", 1.9), self._c("3", 1.5)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        assert [c.combo for c in out] == ["2", "3", "1"]
 
-    def test_odds_le_1_returns_zero(self):
-        # odds = 1.0 → denominator = 0, should return 0
-        assert kelly_stake(0.5, 1.0, 100_000, 0.25) == 0
-        assert kelly_stake(0.5, 0.9, 100_000, 0.25) == 0
+    def test_budget_caps_the_number_of_bets(self):
+        cands = [self._c(str(i), 2.0 - i * 0.1) for i in range(1, 11)]
+        out = assign_flat_stakes(cands, race_budget=300, stake_unit=100)
+        assert len(out) == 3
+        assert sum(c.stake for c in out) == 300
 
-    def test_rounding_floor(self):
-        # prob=0.4, odds=4.0, bankroll=10000, fraction=1.0
-        # edge = 1.6 - 1 = 0.6
-        # fraction = 0.6 / 3.0 = 0.2
-        # raw = 2000 → 2000 (exact multiple)
-        assert kelly_stake(0.4, 4.0, 10_000, 1.0, 100) == 2000
+    def test_budget_need_not_be_spent(self):
+        """対象が少なければ使い切らない (これが定額運用の要点)。"""
+        cands = [self._c("1", 1.5), self._c("2", 0.9)]
+        out = assign_flat_stakes(cands, race_budget=10_000, stake_unit=100)
+        assert sum(c.stake for c in out) == 100
 
-    def test_round_to_500(self):
-        # prob=0.5, odds=3.0, bankroll=10000, fraction=1.0, round_to=500
-        # raw = 2500 → 2500 (exact multiple of 500)
-        assert kelly_stake(0.5, 3.0, 10_000, 1.0, 500) == 2500
+    def test_below_min_ev_is_not_bet(self):
+        cands = [self._c("1", 1.05), self._c("2", 1.5)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100, min_ev=1.1)
+        assert [c.combo for c in out] == ["2"]
 
-    def test_fractional_round_down(self):
-        # prob=0.5, odds=2.5, bankroll=10000, fraction=1.0
-        # edge = 1.25 - 1 = 0.25
-        # fraction = 0.25 / 1.5 = 0.1667
-        # raw = 1666.7 → 1600
-        result = kelly_stake(0.5, 2.5, 10_000, 1.0, 100)
-        assert result == 1600
+    def test_ev_exactly_at_threshold_is_excluded(self):
+        cands = [self._c("1", 1.0)]
+        assert assign_flat_stakes(cands, race_budget=1000, stake_unit=100) == []
 
-    def test_high_prob_positive_edge(self):
-        # prob=0.8, odds=2.0, bankroll=100000, fraction=0.25
-        # edge = 1.6 - 1 = 0.6
-        # fraction = 0.25 * 0.6 / 1.0 = 0.15
-        # raw = 15000 → 15000
-        assert kelly_stake(0.8, 2.0, 100_000, 0.25, 100) == 15000
+    def test_none_ev_is_not_bet(self):
+        cands = [self._c("1", None), self._c("2", 1.5)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        assert [c.combo for c in out] == ["2"]
 
+    def test_stake_unit_larger_than_100(self):
+        cands = [self._c("1", 1.5), self._c("2", 1.4)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=500)
+        assert [c.stake for c in out] == [500, 500]
 
-# ---------------------------------------------------------------------------
-# generate_nagashi
-# ---------------------------------------------------------------------------
+    def test_budget_smaller_than_unit_bets_nothing(self):
+        cands = [self._c("1", 1.5)]
+        assert assign_flat_stakes(cands, race_budget=50, stake_unit=100) == []
+
+    def test_keep_zero_stake_returns_all(self):
+        cands = [self._c("1", 1.5), self._c("2", 0.8)]
+        out = assign_flat_stakes(
+            cands, race_budget=100, stake_unit=100, keep_zero_stake=True
+        )
+        assert len(out) == 2
+        assert {c.combo: c.stake for c in out} == {"1": 100, "2": 0}
+
+    def test_does_not_mutate_input(self):
+        cands = [self._c("1", 1.5)]
+        assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        assert cands[0].stake == 0
+
+    def test_deterministic_on_ev_ties(self):
+        a = self._c("1", 1.5, prob=0.10)
+        b = self._c("2", 1.5, prob=0.30)
+        out = assign_flat_stakes([a, b], race_budget=100, stake_unit=100)
+        # 同 ev なら確率の高いほうを先に買う
+        assert [c.combo for c in out] == ["2"]
+
 
 class TestGenerateNagashi:
     def test_umaren_includes_axis(self):
@@ -345,167 +366,6 @@ class TestGenerateFormation:
 # assign_stakes
 # ---------------------------------------------------------------------------
 
-class TestAssignStakes:
-    def _make_candidates(self, n: int, prob: float, odds: float) -> list[BetCandidate]:
-        return [
-            BetCandidate(
-                bet_type="馬連",
-                combo=f"{i}-{i+1}",
-                pattern="box",
-                prob=prob,
-                est_odds=odds,
-                ev=prob * odds,
-                stake=0,
-                post_positions=(i, i + 1),
-            )
-            for i in range(1, n + 1)
-        ]
-
-    def test_ev_le_1_excluded(self):
-        cands = self._make_candidates(3, prob=0.05, odds=10.0)  # ev=0.5 < 1
-        # Force ev to be below 1 for all
-        low_ev = [c.model_copy(update={"ev": 0.8}) for c in cands]
-        result = assign_stakes(low_ev, bankroll=100_000, kelly_fraction=0.25,
-                               max_stake_per_race_pct=0.10)
-        assert result == []
-
-    def test_basic_kelly_applied(self):
-        # Single candidate with ev > 1 → stake should be non-zero
-        cand = BetCandidate(
-            bet_type="単勝",
-            combo="1",
-            pattern="box",
-            prob=0.5,
-            est_odds=3.0,
-            ev=1.5,
-            stake=0,
-            post_positions=(1,),
-        )
-        result = assign_stakes([cand], bankroll=10_000, kelly_fraction=1.0,
-                               max_stake_per_race_pct=1.0)
-        assert len(result) == 1
-        assert result[0].stake == 2500  # matches kelly_stake(0.5,3.0,10000,1.0,100)
-
-    def test_proportional_cap_applied(self):
-        # 5 candidates each with kelly stake 2500 → total 12500
-        # cap = 10000 * 0.05 = 500 → all stakes scaled down
-        cands = [
-            BetCandidate(
-                bet_type="馬連",
-                combo=f"{i}-{i+1}",
-                pattern="box",
-                prob=0.5,
-                est_odds=3.0,
-                ev=1.5,
-                stake=0,
-                post_positions=(i, i + 1),
-            )
-            for i in range(1, 6)
-        ]
-        result = assign_stakes(cands, bankroll=10_000, kelly_fraction=1.0,
-                               max_stake_per_race_pct=0.05)
-        total = sum(c.stake for c in result)
-        # Total must not exceed cap = 500; all stakes multiples of 100
-        assert total <= 500
-        for c in result:
-            assert c.stake % 100 == 0
-
-    def test_cap_not_exceeded(self):
-        # Large bankroll, many candidates
-        cands = self._make_candidates(10, prob=0.5, odds=5.0)  # ev=2.5 > 1
-        bankroll = 100_000
-        pct = 0.03
-        result = assign_stakes(cands, bankroll=bankroll, kelly_fraction=0.25,
-                               max_stake_per_race_pct=pct)
-        total = sum(c.stake for c in result)
-        assert total <= bankroll * pct + 100  # +100 for rounding tolerance
-
-    def test_zero_stake_after_cap_excluded(self):
-        # Many candidates → after scaling some may become 0 → excluded
-        cands = self._make_candidates(50, prob=0.5, odds=2.0)  # ev=1.0 exactly
-        # ev == 1.0 is NOT > 1.0, so all should be excluded
-        result = assign_stakes(cands, bankroll=100_000, kelly_fraction=0.25,
-                               max_stake_per_race_pct=0.05)
-        assert result == []
-
-    def test_stake_multiples_of_100(self):
-        cands = [
-            BetCandidate(
-                bet_type="馬連",
-                combo="1-3",
-                pattern="nagashi",
-                prob=0.35,
-                est_odds=4.0,
-                ev=1.4,
-                stake=0,
-                post_positions=(1, 3),
-            )
-        ]
-        result = assign_stakes(cands, bankroll=77_777, kelly_fraction=0.25,
-                               max_stake_per_race_pct=1.0)
-        for c in result:
-            assert c.stake % 100 == 0
-
-    def test_original_candidates_not_mutated(self):
-        cand = BetCandidate(
-            bet_type="単勝",
-            combo="1",
-            pattern="box",
-            prob=0.5,
-            est_odds=3.0,
-            ev=1.5,
-            stake=0,
-            post_positions=(1,),
-        )
-        assign_stakes([cand], bankroll=10_000, kelly_fraction=1.0,
-                      max_stake_per_race_pct=1.0)
-        assert cand.stake == 0  # original unchanged
-
-    def test_keep_zero_stake_includes_low_ev_candidates(self):
-        """keep_zero_stake=True retains ev<=1.0 candidates with stake=0."""
-        high_ev = BetCandidate(
-            bet_type="馬連", combo="1-2", pattern="box",
-            prob=0.5, est_odds=3.0, ev=1.5, stake=0, post_positions=(1, 2),
-        )
-        low_ev = BetCandidate(
-            bet_type="馬連", combo="1-3", pattern="box",
-            prob=0.1, est_odds=5.0, ev=0.5, stake=0, post_positions=(1, 3),
-        )
-        result = assign_stakes(
-            [high_ev, low_ev],
-            bankroll=10_000,
-            kelly_fraction=1.0,
-            max_stake_per_race_pct=1.0,
-            keep_zero_stake=True,
-        )
-        combos = {c.combo for c in result}
-        # high-ev candidate appears with positive stake
-        high_result = next(c for c in result if c.combo == "1-2")
-        assert high_result.stake > 0
-        # low-ev candidate is present with stake=0
-        assert "1-3" in combos
-        low_result = next(c for c in result if c.combo == "1-3")
-        assert low_result.stake == 0
-
-    def test_keep_zero_stake_false_excludes_zero_stake(self):
-        """Default keep_zero_stake=False excludes ev<=1.0 candidates (backward compat)."""
-        low_ev = BetCandidate(
-            bet_type="単勝", combo="1", pattern="box",
-            prob=0.05, est_odds=5.0, ev=0.25, stake=0, post_positions=(1,),
-        )
-        result = assign_stakes(
-            [low_ev],
-            bankroll=100_000,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=0.05,
-        )
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
-# recommend_for_race (integration)
-# ---------------------------------------------------------------------------
-
 class TestRecommendForRace:
     def _build_predictions(self, n: int) -> pd.DataFrame:
         """Simple predictions DataFrame: horse i has win_prob proportional to (n-i+1)."""
@@ -531,13 +391,12 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type=combos,
             race_id="test_race_001",
-            bankroll=100_000,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=0.05,
+            race_budget=5_000,
+            stake_unit=100,
         )
         assert isinstance(result, RecommendationResult)
         assert result.race_id == "test_race_001"
-        assert result.bankroll_at_decision == 100_000
+        assert result.race_budget == 5_000
 
     def test_candidates_have_positive_stake(self):
         preds = self._build_predictions(8)
@@ -548,17 +407,16 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type=combos,
             race_id="r1",
-            bankroll=100_000,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=0.10,
+            race_budget=5_000,
+            stake_unit=100,
         )
         for c in result.candidates:
             assert c.stake > 0
 
-    def test_total_stake_within_cap(self):
+    def test_total_stake_within_budget(self):
+        """合計は必ず 1 レース予算以下 (使い切らないこともある)。"""
         preds = self._build_predictions(8)
-        bankroll = 100_000
-        pct = 0.05
+        budget = 1_000
         combos = {
             "馬連": _umaren_combos(8, odds=50.0),
             "三連複": _sanrenpuku_combos(8, odds=100.0),
@@ -567,12 +425,25 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type=combos,
             race_id="r2",
-            bankroll=bankroll,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=pct,
+            race_budget=budget,
+            stake_unit=100,
         )
         total = sum(c.stake for c in result.candidates)
-        assert total <= bankroll * pct + 100  # +100 rounding tolerance
+        assert total <= budget
+
+    def test_stake_unit_is_used_for_every_bet(self):
+        """どの買い目も 1 点あたり同額 (定額配分)。"""
+        preds = self._build_predictions(8)
+        combos = {"馬連": _umaren_combos(8, odds=50.0)}
+        result = recommend_for_race(
+            predictions=preds,
+            combinations_by_type=combos,
+            race_id="r2b",
+            race_budget=1_000,
+            stake_unit=200,
+        )
+        staked = [c.stake for c in result.candidates if c.stake > 0]
+        assert staked and set(staked) == {200}
 
     def test_enabled_bet_types_filter(self):
         preds = self._build_predictions(6)
@@ -584,9 +455,8 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type=combos,
             race_id="r3",
-            bankroll=100_000,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=0.10,
+            race_budget=5_000,
+            stake_unit=100,
             enabled_bet_types=["馬連"],
         )
         for c in result.candidates:
@@ -598,9 +468,8 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type={},
             race_id="r4",
-            bankroll=100_000,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=0.05,
+            race_budget=5_000,
+            stake_unit=100,
         )
         assert result.candidates == []
 
@@ -614,9 +483,8 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type=combos,
             race_id="r5",
-            bankroll=200_000,
-            kelly_fraction=0.25,
-            max_stake_per_race_pct=0.20,
+            race_budget=5_000,
+            stake_unit=100,
         )
         seen = set()
         for c in result.candidates:
@@ -633,18 +501,16 @@ class TestRecommendForRace:
             predictions=preds,
             combinations_by_type=combos,
             race_id="r6a",
-            bankroll=200_000,
-            kelly_fraction=1.0,
-            max_stake_per_race_pct=0.50,
+            race_budget=5_000,
+            stake_unit=100,
             top_n_horses=2,
         )
         result_n4 = recommend_for_race(
             predictions=preds,
             combinations_by_type=combos,
             race_id="r6b",
-            bankroll=200_000,
-            kelly_fraction=1.0,
-            max_stake_per_race_pct=0.50,
+            race_budget=5_000,
+            stake_unit=100,
             top_n_horses=4,
         )
         # n=2 box has C(2,2)=1 combo; n=4 box has C(4,2)=6 combos

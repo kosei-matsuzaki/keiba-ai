@@ -6,11 +6,19 @@ from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.deps import get_or_404, get_session
-from api.schemas import EntrySummary, RaceDetail, RaceSummary, UpcomingRacesResponse
+from api.schemas import (
+    CalendarDay,
+    CalendarResponse,
+    DataCoverage,
+    EntrySummary,
+    RaceDetail,
+    RaceSummary,
+    UpcomingRacesResponse,
+)
 from core.dates import this_weekend_dates
 from db.models.entry import Entry
 from db.models.horse import Horse
@@ -191,6 +199,138 @@ def get_races_by_date(
     )
     races = session.scalars(stmt).all()
     return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
+
+
+# 重賞ほど前に来るように並べる。カレンダーに 1 つだけ名前を出すときの優先度。
+_CLASS_PRIORITY = ["G1", "G2", "G3", "OP", "L", "3勝", "2勝", "1勝", "新馬", "未勝利"]
+
+
+def _class_rank(race_class: str | None) -> int:
+    """race_class の格付け順位 (小さいほど格上)。未知/None は最下位。"""
+    if not race_class:
+        return len(_CLASS_PRIORITY)
+    for i, key in enumerate(_CLASS_PRIORITY):
+        if key in race_class:
+            return i
+    return len(_CLASS_PRIORITY)
+
+
+@router.get("/races/calendar", response_model=CalendarResponse)
+def get_races_calendar(
+    session: Annotated[Session, Depends(get_session)],
+    from_: Annotated[str, Query(alias="from", description="開始日 YYYY-MM-DD")],
+    to: Annotated[str, Query(description="終了日 YYYY-MM-DD (含む)")],
+) -> CalendarResponse:
+    """期間内の日ごとの取込状況を返す (カレンダー表示用)。
+
+    1 レースも無い日は返さない。呼び出し側は「返って来なかった日 = 未取得」
+    として扱えばよい。
+    """
+    try:
+        start = date.fromisoformat(from_)
+        end = date.fromisoformat(to)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid date format (expected YYYY-MM-DD): {exc}",
+        ) from exc
+    if end < start:
+        raise HTTPException(status_code=422, detail="'to' must not be earlier than 'from'")
+
+    races = session.scalars(
+        select(Race)
+        .where(Race.date >= start.isoformat(), Race.date <= end.isoformat())
+        .order_by(Race.date, Race.race_id)
+    ).all()
+    if not races:
+        return CalendarResponse(days=[])
+
+    # 着順が入っている race_id (= 結果まで取り込めているレース)
+    finished_ids = set(
+        session.scalars(
+            select(Entry.race_id)
+            .join(Race, Race.race_id == Entry.race_id)
+            .where(
+                Race.date >= start.isoformat(),
+                Race.date <= end.isoformat(),
+                Entry.finish_position.is_not(None),
+            )
+            .distinct()
+        ).all()
+    )
+
+    by_date: dict[str, list[Race]] = {}
+    for r in races:
+        by_date.setdefault(r.date, []).append(r)
+
+    days: list[CalendarDay] = []
+    for day, day_races in sorted(by_date.items()):
+        # 開催場は出現順を保ったまま重複を除く
+        courses: list[str] = []
+        for r in day_races:
+            if r.course not in courses:
+                courses.append(r.course)
+
+        highlight = min(day_races, key=lambda r: (_class_rank(r.race_class), r.race_id))
+        # 平場しか無い日は名前を出さない (「未勝利」と出しても情報にならない)
+        has_feature = _class_rank(highlight.race_class) < _CLASS_PRIORITY.index("3勝")
+
+        days.append(
+            CalendarDay(
+                date=day,
+                race_count=len(day_races),
+                result_count=sum(1 for r in day_races if r.race_id in finished_ids),
+                courses=courses,
+                highlight_race_id=highlight.race_id if has_feature else None,
+                highlight_name=(highlight.name if has_feature else None),
+                highlight_class=(highlight.race_class if has_feature else None),
+            )
+        )
+
+    return CalendarResponse(days=days)
+
+
+@router.get("/races/coverage", response_model=DataCoverage)
+def get_data_coverage(
+    session: Annotated[Session, Depends(get_session)],
+) -> DataCoverage:
+    """取込済みデータ全体の状況を返す。
+
+    「いつからいつまで、何レース入っていて、そのうち何レースが結果まで
+    取れているか」を 1 レスポンスで返す。
+    """
+    first_date = session.scalar(select(func.min(Race.date)))
+    last_date = session.scalar(select(func.max(Race.date)))
+    race_count = session.scalar(select(func.count()).select_from(Race)) or 0
+    entry_count = session.scalar(select(func.count()).select_from(Entry)) or 0
+    result_count = (
+        session.scalar(
+            select(func.count(func.distinct(Entry.race_id))).where(
+                Entry.finish_position.is_not(None)
+            )
+        )
+        or 0
+    )
+
+    # 直近 90 日のうち、レースを取り込めている日数
+    span_days = 90
+    since = (date.today() - timedelta(days=span_days)).isoformat()
+    recent_days_with_data = (
+        session.scalar(
+            select(func.count(func.distinct(Race.date))).where(Race.date >= since)
+        )
+        or 0
+    )
+
+    return DataCoverage(
+        first_date=first_date,
+        last_date=last_date,
+        race_count=race_count,
+        result_count=result_count,
+        entry_count=entry_count,
+        recent_days_with_data=recent_days_with_data,
+        recent_days_span=span_days,
+    )
 
 
 @router.get("/races/{race_id}", response_model=RaceDetail)

@@ -1,15 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <!-- background rounded square -->
-  <rect width="32" height="32" rx="7" fill="hsl(221.2 83.2% 53.3%)" />
-  <!-- horseshoe shape (∩) for keiba motif, simplified -->
-  <path
-    d="M9 11.5v8a7 7 0 0 0 14 0v-8"
-    stroke="white"
-    stroke-width="3"
-    stroke-linecap="round"
-    fill="none"
-  />
-  <!-- two studs at the bottom heels -->
-  <circle cx="9" cy="22" r="1.6" fill="white" />
-  <circle cx="23" cy="22" r="1.6" fill="white" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- ブラウザタブ用のタイル。アプリ内のマークは src/components/BrandMark.tsx (inline SVG,
+       currentColor でテーマ追従)。こちらは <link rel="icon"> 経由で CSS 変数が解決されないため
+       globals.css の dark トークンを HSL リテラルで写している:
+         地   = --card         (36 14% 7%  = #14120f)
+         罫線 = --border-strong (30 9% 25% = #46403a)
+         馬蹄 = --primary      (38 92% 55% = #f5a623)
+       タブ地色が明/暗どちらでも成立するよう、地は常に炭 (light テーマ用の別タイルは持たない)。
+       角丸は --radius (2px) に合わせる。 -->
+  <rect width="32" height="32" rx="2" fill="#14120f" />
+  <rect x=".5" y=".5" width="31" height="31" rx="1.5" fill="none" stroke="#46403a" />
+  <!-- 馬蹄 (∩)。BrandMark.tsx と同一ジオメトリ (viewBox だけが違う) -->
+  <path d="M10 21V14a6 6 0 0 1 12 0v7" fill="none" stroke="#f5a623" stroke-width="2.4" />
+  <rect x="8.8" y="22.1" width="2.4" height="2.4" fill="#f5a623" />
+  <rect x="20.8" y="22.1" width="2.4" height="2.4" fill="#f5a623" />
 </svg>

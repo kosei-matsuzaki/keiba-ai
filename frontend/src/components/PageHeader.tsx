@@ -1,8 +1,14 @@
 import type { ReactNode } from 'react';
-import type { LucideIcon } from 'lucide-react';
 
 interface PageHeaderProps {
-  icon: LucideIcon;
+  /**
+   * 見出しの左に置く印。数字を持つのは**レースだけ**なので、レース系の画面が
+   * `11R` を渡す。Dashboard / Ledger / Models / Settings は渡さない
+   * (章番号は読み物の語彙で、この題材のものではない)。
+   */
+  marker?: ReactNode;
+  /** 等幅の小さな英字ラベル。日本語は title 側に置く。 */
+  eyebrow: string;
   title: string;
   /** Optional muted-foreground subtitle shown below the title */
   description?: string;
@@ -11,30 +17,37 @@ interface PageHeaderProps {
 }
 
 /**
- * Shared page header — used at the top of every route.
+ * 全画面共通のページ見出し。
  *
- * Visual:
- *   [icon-tile]  Title (text-3xl)
- *                description (text-sm muted)              [actions →]
+ * 見出しの右へ罫線を伸ばす「競馬新聞の罫」で区切る (方眼紙はやめた)。
  *
- * The icon tile uses bg-primary/10 + text-primary for a subtle brand accent
- * that still picks up dark/light theme automatically.
+ *   RACE DETAIL
+ *   11R  日本ダービー ───────────────────────   [actions →]
+ *        2024-06-01・芝2400m
  */
-export function PageHeader({ icon: Icon, title, description, children }: PageHeaderProps) {
+export function PageHeader({
+  marker,
+  eyebrow,
+  title,
+  description,
+  children,
+}: PageHeaderProps) {
   return (
     <header className="flex items-start justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-          <Icon className="h-4 w-4" strokeWidth={2} />
+      <div className="min-w-0 flex-1">
+        <span className="font-mono text-[11px] tracking-[0.04em] text-subtle-foreground">
+          {eyebrow}
+        </span>
+        <div className="mt-1 flex items-center gap-3">
+          {marker}
+          <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
+          <span className="h-px flex-1 bg-border" aria-hidden="true" />
         </div>
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold leading-tight tracking-tight">{title}</h1>
-          {description && (
-            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
-          )}
-        </div>
+        {description && (
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+        )}
       </div>
-      {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
+      {children && <div className="flex shrink-0 items-center gap-2 pt-5">{children}</div>}
     </header>
   );
 }

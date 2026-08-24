@@ -22,8 +22,13 @@ export function App() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <Topbar />
+      {/* 1920px 幅でカードが伸びきって視線移動が長くなるのを防ぐため、
+          コンテンツ幅に上限を置く。横に広げたい表は、その表側で
+          max-w-none / overflow-x-auto を指定する。 */}
       <main aria-label="メインコンテンツ" className="flex-1 overflow-y-auto">
-        <Outlet />
+        <div className="mx-auto w-full max-w-[1440px]">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

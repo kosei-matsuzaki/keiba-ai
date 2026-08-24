@@ -356,12 +356,21 @@ active state を反転塗りつぶしから inset shadow + tint に変更する�
 
 ### ブランド資産
 
+モチーフは馬蹄（∩ + 両端の studs）。デザイントークン刷新（青 → 琥珀、角丸 7px → 2px）に合わせて
+配色とジオメトリを更新済みで、パス座標は 3 か所すべてで共有する（viewBox だけが違う）。
+
 | ファイル | 役割 |
 |---|---|
-| `public/favicon.svg` | 馬蹄モノグラムをモチーフとした favicon。カラーは HSL 直書き（CSS 変数非依存） |
-| `public/logo.svg` | favicon 同モチーフのサイドナビ用ロゴ。`<img src=...>` 経由で読み込むため CSS 変数は解決されないので、カラーは HSL 直書き（テーマ追従させたい場合は inline SVG / React component 化が必要） |
+| `src/components/BrandMark.tsx` | **アプリ内のマーク**。inline SVG + `currentColor` でテーマ追従する。地（タイル）を持たない素のグリフ |
+| `public/favicon.svg` | ブラウザタブ用のタイル。`<link rel="icon">` 経由では CSS 変数が解決されないため、`--card` / `--border-strong` / `--primary` の dark 値を HSL リテラルで写している |
+| `public/logo.svg` | アプリ外（README / 資料 / OG 画像）用の単体グリフ。同じ理由で琥珀を直書き。**アプリ内では使わない** |
 
-`index.html` の favicon link は `/favicon.svg` を参照する。Sidebar のヘッダ領域に `<img src="/logo.svg" />` を 24x24 で配置する。
+favicon のタイル地は明暗どちらのタブ地色でも成立するよう常に炭（`#14120f`）で、light テーマ用の
+別タイルは持たない。`index.html` の favicon link は `/favicon.svg` を参照する。
+
+Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` を 18x18 で置く。
+ここでタイルではなく素のグリフを使うのは、globals.css の「箱をやめて罫線で区切る」に従い
+ヘッダに app タイルを刺さないため。
 
 ### micro-interactions
 

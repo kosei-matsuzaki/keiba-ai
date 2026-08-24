@@ -54,7 +54,7 @@ export function PredictionTable({ predictions, entries }: PredictionTableProps) 
             <TableCell className="text-right">{formatPercent(pred.place_prob)}</TableCell>
             <TableCell className="text-center">
               {isBuy(pred, entries) && (
-                <Badge variant="success">BUY</Badge>
+                <Badge variant="solid" tone="success" className="rounded-sm">BUY</Badge>
               )}
             </TableCell>
             <TableCell className="text-xs text-muted-foreground italic">

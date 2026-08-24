@@ -7,6 +7,20 @@ import { RaceDetail } from '../routes/RaceDetail';
 import type { JobAccepted, JobInfo, RaceDetail as RaceDetailType, PredictionResponse } from '../types/api';
 
 vi.mock('../lib/api', () => ({
+  // 「この予想の条件」バーが既定値の表示に使う
+  fetchSettings: vi.fn().mockResolvedValue({
+    user_agent: 'test',
+    rate_min_seconds: 3,
+    rate_max_seconds: 6,
+    night_min_seconds: 5,
+    win_ev_threshold: 1.1,
+    win_min_odds: 1.1,
+    scraper_stopped: false,
+    bankroll: 100000,
+    kelly_fraction: 0.25,
+    max_stake_per_race_pct: 0.05,
+    enabled_bet_types: ['単勝', '複勝'],
+  }),
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
@@ -92,7 +106,7 @@ const mockPredictions: PredictionResponse = {
 
 const mockRecommendations = {
   race_id: '202406010101',
-  bankroll_at_decision: 100_000,
+  race_budget: 5_000,
   odds_source: 'unknown' as const,
   candidates: [
     {
@@ -181,7 +195,7 @@ describe('RaceDetail', () => {
     // 予想は自動では走らない — 実行前はスコア空欄
     expect(screen.queryByText('2.500')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
 
     // Score values for both horses appear after running AI
     expect(await screen.findByText('2.500')).toBeInTheDocument();
@@ -211,13 +225,50 @@ describe('RaceDetail', () => {
     expect(postPositions.length).toBeGreaterThan(0);
   });
 
+  it('hides the 着順 column before the race is run', async () => {
+    // 着順が 1 頭も確定していない = レース前。「—」で埋まった列は出さない。
+    const preRace: RaceDetailType = {
+      ...mockRace,
+      payout_win: null,
+      payout_place: null,
+      entries: mockRace.entries.map((e) => ({ ...e, finish_position: null })),
+    };
+    vi.mocked(fetchRaceDetail).mockResolvedValue(preRace);
+
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    expect(screen.queryByRole('columnheader', { name: /着順/ })).not.toBeInTheDocument();
+    // 払戻も未確定なので概要カードから行ごと消える
+    expect(screen.queryByText('単勝払戻')).not.toBeInTheDocument();
+    expect(screen.queryByText('複勝払戻')).not.toBeInTheDocument();
+  });
+
+  it('shows the 着順 column once results exist', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    expect(screen.getByRole('columnheader', { name: /着順/ })).toBeInTheDocument();
+  });
+
+  it('puts 推奨 before 単勝EV so the conclusion is read first', async () => {
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    const rec = headers.findIndex((t) => t.includes('推奨'));
+    const ev = headers.findIndex((t) => t.includes('単勝EV'));
+    const odds = headers.findIndex((t) => t.includes('単勝オッズ'));
+    expect(rec).toBeGreaterThanOrEqual(0);
+    // 結論 (推奨) → 根拠 (単勝EV) → 事実 (オッズ) の順
+    expect(rec).toBeLessThan(ev);
+    expect(ev).toBeLessThan(odds);
+  });
+
   it('shows BUY badge when win EV > 1.1 after running AI', async () => {
     // テスト馬A: win_prob=0.45 * odds_win=3.5 = 1.575 > 1.1
     // テスト馬B: win_prob=0.20 * odds_win=8.0 = 1.60  > 1.1
     const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
     await screen.findByText('2.500'); // wait for predictions
     const buyBadges = screen.getAllByText('BUY');
     expect(buyBadges.length).toBeGreaterThan(0);
@@ -279,7 +330,7 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
     expect(await screen.findByText('推奨買目')).toBeInTheDocument();
   });
 
@@ -287,10 +338,11 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
     await screen.findByText('推奨買目');
-    expect(await screen.findByText('100,000 円')).toBeInTheDocument();
-    expect(screen.getByText('単勝')).toBeInTheDocument();
+    expect(await screen.findByText('5,000 円')).toBeInTheDocument();
+    // 「単勝」は条件バーの券種チップにも出るので、買い目の combo で特定する
+    expect(screen.getByTitle('1')).toBeInTheDocument();
   });
 
   it('column header click toggles sort direction', async () => {
@@ -346,7 +398,7 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    await user.click(screen.getByRole('button', { name: 'AI 予想を実行' }));
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
     await screen.findByText('2.500'); // wait for predictions
     const buyBadges = screen.getAllByText('BUY');
     expect(buyBadges.length).toBeGreaterThan(0);
@@ -358,11 +410,11 @@ describe('RaceDetail', () => {
   });
 
   it('shows BUY badge note below the entry table', async () => {
+    // BUY は「EV が閾値を超えた馬」ではなく「モデル1位の馬」。較正済み確率で EV 条件に
+    // すると大穴を買い込んで回収率が落ちるため (docs/ai-model.md「推奨ベットルール」)。
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    expect(
-      screen.getByText(/BUY バッジは単勝 EV>1\.1 の馬を示しますが/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/BUY バッジは/)).toHaveTextContent('モデル1位の馬');
   });
 
   it('shows race name in PageHeader title when name is set', async () => {
@@ -393,20 +445,20 @@ describe('RaceDetail', () => {
 
     renderRaceDetail();
     await screen.findByText('レース概要');
-    // 取得ボタン (ヘッダ + 空状態カードの 2 箇所) は出るが、自動では走らない
-    const buttons = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    // 「予想を見る」(ヘッダ + 空状態カードの 2 箇所) は出るが、自動では走らない
+    const buttons = await screen.findAllByRole('button', { name: '予想を見る' });
     expect(buttons.length).toBeGreaterThan(0);
     expect(vi.mocked(runShutubaScraper)).not.toHaveBeenCalled();
   });
 
-  it('fires runShutubaScraper when 出馬表を取得 button is clicked', async () => {
+  it('fires runShutubaScraper when 予想を見る is clicked with no entries', async () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
     vi.mocked(fetchJob).mockResolvedValue(mockJobRunning);
     const user = userEvent.setup();
 
     renderRaceDetail();
-    // ボタンはヘッダと空状態カードの 2 箇所にあるので先頭をクリックする
-    const [btn] = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    // 出馬表が無いときは「予想を見る」が取得から先に走る (ヘッダ / 空状態の 2 箇所)
+    const [btn] = await screen.findAllByRole('button', { name: '予想を見る' });
     await user.click(btn);
 
     await waitFor(() => {
@@ -423,7 +475,7 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
 
     renderRaceDetail();
-    const [btn] = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    const [btn] = await screen.findAllByRole('button', { name: '予想を見る' });
     await user.click(btn);
 
     await waitFor(() => {
@@ -437,7 +489,7 @@ describe('RaceDetail', () => {
     const user = userEvent.setup();
 
     renderRaceDetail();
-    const [btn] = await screen.findAllByRole('button', { name: '出馬表を取得' });
+    const [btn] = await screen.findAllByRole('button', { name: '予想を見る' });
     await user.click(btn);
 
     // fetchRaceDetail should be called again after job completes

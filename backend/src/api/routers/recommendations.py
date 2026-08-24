@@ -1,4 +1,4 @@
-"""GET /api/recommendations/{race_id} — recommended bet candidates with Kelly stakes."""
+"""GET /api/recommendations/{race_id} — recommended bet candidates with flat stakes."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class RecommendationCandidate(BaseModel):
 
 class RecommendationsResponse(BaseModel):
     race_id: str
-    bankroll_at_decision: int
+    race_budget: int
     candidates: list[RecommendationCandidate]
     odds_source: Literal["live", "past", "unknown"] = "unknown"
 
@@ -98,6 +98,21 @@ def get_recommendations(
     store: Annotated[SettingsStore, Depends(get_settings_store)],
     top_n_horses: Annotated[int, Query(ge=1, le=18, description="Top-N horses for box/formation candidates (1-18)")] = 3,
     top_k: Annotated[int, Query(ge=1, le=200, description="Combination upper limit per bet type (1-200)")] = 50,
+    # ── このレースだけ Settings を上書きするための任意パラメータ ──
+    # 未指定なら Settings の値を使う。全レース共通の既定値は Settings 側に置き、
+    # 「このレースだけ予算を絞る / 券種を単複に限る」といった判断をここで通す。
+    race_budget: Annotated[
+        int | None,
+        Query(ge=100, description="このレースに使う上限 (円)。未指定なら設定値"),
+    ] = None,
+    stake_unit: Annotated[
+        int | None,
+        Query(ge=100, description="1 点あたりの賭け金 (円)。未指定なら設定値"),
+    ] = None,
+    bet_types: Annotated[
+        str | None,
+        Query(description="このレースだけの対象券種 (カンマ区切り。未指定なら設定値)"),
+    ] = None,
 ) -> RecommendationsResponse:
     """Return recommended bet candidates for a race.
 
@@ -107,7 +122,7 @@ def get_recommendations(
     3. Run predict_race to get win_prob / place_prob per horse.
     4. Resolve race odds: live → past → unknown.
     5. Run predict_race_with_combinations for combination EVs.
-    6. Load Settings (bankroll, kelly_fraction, etc.) and call recommend_for_race.
+    6. Load Settings (race_budget, stake_unit, etc.) and call recommend_for_race.
     7. Return RecommendationsResponse.
     """
     active_path = get_active(session)
@@ -123,7 +138,7 @@ def get_recommendations(
 
     # Step 3: win_prob / place_prob per horse
     # bundle 経由で推論 (temperature scaler 等は内部で適用)
-    predictions = predict_race(bundle, frame)
+    predictions = predict_race(bundle, frame, session=session)
 
     # Join post_position from frame so recommend_for_race can build top_pps.
     # predict_race returns horse_id-indexed rows without post_position.
@@ -150,21 +165,43 @@ def get_recommendations(
     )
 
     # Step 6: load settings and run recommendation logic
+    # クエリで渡された分だけ、このレースに限って設定を上書きする。
     settings = store.load()
-    bankroll: int = int(settings.get("bankroll", 100_000))
-    kelly_fraction: float = float(settings.get("kelly_fraction", 0.25))
-    max_stake_per_race_pct: float = float(settings.get("max_stake_per_race_pct", 0.05))
-    enabled_bet_types: list[str] = list(settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES))
+    eff_budget: int = (
+        race_budget if race_budget is not None else int(settings.get("race_budget", 5_000))
+    )
+    eff_unit: int = (
+        stake_unit if stake_unit is not None else int(settings.get("stake_unit", 100))
+    )
+    # EV 条件を使うのは **連系だけ**。単勝・複勝はモデルの本命 (1 位) を買うルール
+    # なので閾値を持たない (strategy.recommend_for_race / docs/ai-model.md)。
+    eff_min_ev: float = float(settings.get("win_ev_threshold", 1.1))
+    # 単勝のオッズ下限
+    eff_win_min_odds: float = float(settings.get("win_min_odds", 1.1))
+    if bet_types is not None:
+        requested = [t.strip() for t in bet_types.split(",") if t.strip()]
+        unknown = [t for t in requested if t not in DEFAULT_ENABLED_BET_TYPES]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown bet_types: {', '.join(unknown)}",
+            )
+        if not requested:
+            raise HTTPException(status_code=422, detail="bet_types must not be empty")
+        eff_bet_types = requested
+    else:
+        eff_bet_types = list(settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES))
 
     result = recommend_for_race(
         predictions=predictions,
         combinations_by_type=combinations_by_type,
         race_id=race_id,
-        bankroll=bankroll,
-        kelly_fraction=kelly_fraction,
-        max_stake_per_race_pct=max_stake_per_race_pct,
+        race_budget=eff_budget,
+        stake_unit=eff_unit,
+        min_ev=eff_min_ev,
+        win_min_odds=eff_win_min_odds,
         top_n_horses=top_n_horses,
-        enabled_bet_types=enabled_bet_types,
+        enabled_bet_types=eff_bet_types,
     )
 
     candidates = [
@@ -184,7 +221,7 @@ def get_recommendations(
 
     return RecommendationsResponse(
         race_id=result.race_id,
-        bankroll_at_decision=result.bankroll_at_decision,
+        race_budget=result.race_budget,
         candidates=candidates,
         odds_source=odds_source,
     )

@@ -13,6 +13,10 @@ models/ と keiba.db は一切触らない。
   speed       : B1     KEIBA_SPEED_FIGURE (par-time/track-variant タイム指数, 履歴17次元)
   pace        : B2     KEIBA_PACE_FEATURES (projected_pace + 脚質×ペース交互作用)
   loss_kelly  : L1     --loss kelly_deploy (デプロイ整合 Kelly) vs log_growth
+  loss_flat_ev: L2     --loss flat_ev (デプロイ整合 定額配分) vs log_growth
+                       Kelly を賭け金決定から外した後の本番ルール (EV 閾値超えに定額) を
+                       微分可能化したもの。log_growth は資金比例 Kelly を前提にしており、
+                       現行デプロイと目的が食い違っているためその是正を測る。
 
 結論 (全ノブ・multi-seed): **本番 (with-odds) の tansho ROI はどれも改善せず** —
 missing_log/pace は再表現で悪化、speed(新情報)は single-seed の見かけ改善が
@@ -42,7 +46,8 @@ _TREATMENT_FLAGS = {
     "missing_log": {"KEIBA_MISSING_INDICATORS": "1", "KEIBA_LOG_FEATURES": "1"},
     "speed": {"KEIBA_SPEED_FIGURE": "1"},
     "pace": {"KEIBA_PACE_FEATURES": "1"},
-    "loss_kelly": {},  # differs by --loss, not env
+    "loss_kelly": {},    # differs by --loss, not env
+    "loss_flat_ev": {},  # 同上 (--loss flat_ev)
 }
 _KNOB_ALL_FLAGS = [
     "KEIBA_MISSING_INDICATORS", "KEIBA_LOG_FEATURES", "KEIBA_LOG_FEATURE_COLS",
@@ -145,7 +150,8 @@ def main() -> None:
     knob = args.knob
     treat_flags = _TREATMENT_FLAGS[knob]
     base_loss = "log_growth"
-    treat_loss = "kelly_deploy" if knob == "loss_kelly" else "log_growth"
+    _LOSS_BY_KNOB = {"loss_kelly": "kelly_deploy", "loss_flat_ev": "flat_ev"}
+    treat_loss = _LOSS_BY_KNOB.get(knob, "log_growth")
 
     print(f"knob={knob} seeds={seeds} train_end={args.train_end} "
           f"valid/test {args.valid_months}/{args.test_months}m epochs={args.max_epochs}", flush=True)

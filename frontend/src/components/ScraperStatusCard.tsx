@@ -11,12 +11,12 @@ interface ScraperStatusCardProps {
 
 function StatusBadge({ status }: { status: ScraperStatus }) {
   if (status.current_job_id) {
-    return <Badge variant="info">実行中</Badge>;
+    return <Badge>実行中</Badge>;
   }
   if (status.stopped) {
-    return <Badge variant="destructive">停止中</Badge>;
+    return <Badge tone="destructive">停止中</Badge>;
   }
-  return <Badge variant="secondary">アイドル</Badge>;
+  return <Badge variant="outline">アイドル</Badge>;
 }
 
 export function ScraperStatusCard({ status }: ScraperStatusCardProps) {
@@ -28,12 +28,12 @@ export function ScraperStatusCard({ status }: ScraperStatusCardProps) {
     !status.current_job_id && (recent.data?.ok_count ?? 0) > 0;
 
   return (
-    <Card>
+    <Card className="border-t border-border pt-6">
       <CardHeader>
         <CardTitle className="flex items-center gap-3 text-base">
           スクレイパー状態
           <StatusBadge status={status} />
-          {cliActive && <Badge variant="warning">CLI 進行中</Badge>}
+          {cliActive && <Badge>CLI 進行中</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">

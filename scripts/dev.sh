@@ -14,14 +14,25 @@ REPO_ROOT="$SCRIPT_DIR/.."
 
 trap 'kill 0' EXIT
 
+# TLS を傍受するアンチウイルス/プロキシ配下では、uv 同梱のルート証明書だと
+# pypi への接続が `invalid peer certificate: UnknownIssuer` で失敗する。
+# native-tls = OS の証明書ストアを使う指定で、傍受用ルートは OS 側に入っている
+# ため通る。素の環境でも OS ストアを使うだけなので影響はない。
+export UV_NATIVE_TLS="${UV_NATIVE_TLS:-1}"
+
 echo "[dev] Syncing backend dependencies (uv sync --extra nn)..."
 # --extra nn: NN モデル (PyTorch) を active にしている場合に registry.py の
 # _load_nn_bundle が torch を必要とするため。active が GBDT のみでも
 # import 経路の取り違えで不便なため、開発環境では常に同期しておく。
-( cd "$REPO_ROOT/backend" && uv sync --extra nn )
+#
+# ネットワーク不通で sync に失敗しても、既存の .venv で dev サーバは動かせる。
+# ここで set -e により全体が止まると「起動すらできない」になるので警告に留める。
+if ! ( cd "$REPO_ROOT/backend" && uv sync --extra nn ); then
+    echo "[dev] WARNING: uv sync に失敗しました。既存の .venv のまま続行します。"
+fi
 
 echo "[dev] Applying database migrations (alembic upgrade head)..."
-( cd "$REPO_ROOT/backend" && uv run alembic upgrade head )
+( cd "$REPO_ROOT/backend" && uv run --no-sync alembic upgrade head )
 
 # Frontend deps: pnpm-lock.yaml が node_modules/.modules.yaml より新しいときだけ install。
 # pnpm install を毎回走らせると Windows でファイルロック起因の EACCES
@@ -40,7 +51,7 @@ echo "[dev] Starting FastAPI backend on http://127.0.0.1:8765 ..."
 # WATCHFILES_FORCE_POLLING=true: Windows + Git Bash 環境で uvicorn --reload の
 # multiprocessing 子プロセス起動が WinError 87 で死ぬ問題への回避策。
 # native fs event の代わりにポーリングを使うことでシグナル伝播の不具合を避ける。
-( cd "$REPO_ROOT/backend" && WATCHFILES_FORCE_POLLING=true uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload --reload-dir src ) &
+( cd "$REPO_ROOT/backend" && WATCHFILES_FORCE_POLLING=true uv run --no-sync uvicorn main:app --host 127.0.0.1 --port 8765 --reload --reload-dir src ) &
 
 echo "[dev] Starting Vite dev server (browse to http://localhost:5173) ..."
 ( cd "$REPO_ROOT/frontend" && pnpm dev ) &

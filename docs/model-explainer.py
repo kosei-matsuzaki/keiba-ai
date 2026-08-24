@@ -440,7 +440,7 @@ class ModelMath(Scene):
 
     # ============================================================
     def act6_bet(self, cap):
-        cap("One score set → consistent probabilities for every bet type → bet only when EV > 0", C_SCORE)
+        cap("One score set → consistent probabilities for every bet type → bet only when EV clears the bar", C_SCORE)
         self.play(self._rows5.animate.scale(0.82).to_edge(LEFT, buff=0.3), run_time=1.0)
         probs = [0.46, 0.14, 0.28, 0.12]
         bars = VGroup()
@@ -457,7 +457,9 @@ class ModelMath(Scene):
         self.play(FadeIn(pl))
         self.wait(1.4)
 
-        specs = [("EV = p × odds", C_SCORE), ("fractional Kelly", C_ODDS), ("BUY (recommended)", C_AGG)]
+        specs = [("EV = p × odds  (1.0 = break-even)", C_SCORE),
+                 ("flat ¥100 per pick", C_ODDS),
+                 ("BUY (recommended)", C_AGG)]
         chain = VGroup()
         for txt, col in specs:
             t = jt(txt, 18, color=col)
@@ -469,7 +471,7 @@ class ModelMath(Scene):
         self.play(FadeIn(chain[0]))
         self.play(FadeIn(arrs[0]), FadeIn(chain[1]))
         self.play(FadeIn(arrs[1]), FadeIn(chain[2]))
-        # step through the decision: size the stake with Kelly, then commit the recommendation to a horse (H1)
+        # step through the decision: stake a flat amount per pick, then commit the recommendation to a horse (H1)
         self.play(Indicate(chain[1], color=C_ODDS, scale_factor=1.1))
         buy_tag = jt("BUY", 17, C_AGG, weight=BOLD).next_to(bars[0][0], UP, buff=0.18)
         self.play(Indicate(chain[2], color=C_AGG, scale_factor=1.15),

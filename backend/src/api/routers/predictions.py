@@ -31,6 +31,7 @@ from api.schemas import (
     RacePredictionSummary,
     TopHorse,
 )
+from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.model_run import ModelRun
 from features.builder import build_inference_frame
@@ -40,6 +41,23 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 _BULK_MAX_RACE_IDS = 100
+
+# 単勝 EV > この値の馬を「買い候補」とする。UI 側の BUY バッジと同じ基準。
+_BUY_EV_THRESHOLD = 1.1
+
+
+def _win_ev(odds_map: dict[str, float], horse_id: str, win_prob: float) -> float | None:
+    """単勝 EV = 単勝確率 × 単勝オッズ。オッズ未確定なら None。"""
+    odds = odds_map.get(horse_id)
+    return win_prob * odds if odds is not None else None
+
+
+def _odds_win_map(session: Session, race_id: str) -> dict[str, float]:
+    """race_id の horse_id -> 単勝オッズ（未確定馬は含めない）。"""
+    rows = session.execute(
+        select(Entry.horse_id, Entry.odds_win).where(Entry.race_id == race_id)
+    ).all()
+    return {str(hid): float(odds) for hid, odds in rows if odds is not None}
 
 
 @router.get("/predictions/bulk", response_model=BulkPredictionsResponse)
@@ -93,7 +111,7 @@ def get_bulk_predictions(
             continue
 
         try:
-            pred_df = predict_race(bundle, frame)
+            pred_df = predict_race(bundle, frame, session=session)
         except Exception as exc:
             log.warning("Prediction failed for race %s: %s", race_id, exc)
             result[race_id] = RacePredictionSummary(top_horses=[])
@@ -110,16 +128,32 @@ def get_bulk_predictions(
                 pp = frow.get("post_position")
                 post_pos_map[hid] = int(pp) if pp is not None else None
 
+        # 単勝オッズは DB の entries から取る（feature frame の odds_win は
+        # モデル側で標準化される可能性があるため、生値を使う）
+        odds_map = _odds_win_map(session, race_id)
+
+        # buy_count は top_n ではなく出走馬全体で数える
+        buy_count = 0
+        for _, row in pred_df.iterrows():
+            ev = _win_ev(odds_map, str(row["horse_id"]), float(row["win_prob"]))
+            if ev is not None and ev > _BUY_EV_THRESHOLD:
+                buy_count += 1
+
         top_horses = []
         for _, row in top_rows.iterrows():
             hid = str(row["horse_id"])
+            win_prob = float(row["win_prob"])
             top_horses.append(TopHorse(
                 post_position=post_pos_map.get(hid),
                 horse_name=_horse_name(hid),
-                win_prob=float(row["win_prob"]),
+                win_prob=win_prob,
+                odds_win=odds_map.get(hid),
+                win_ev=_win_ev(odds_map, hid, win_prob),
             ))
 
-        result[race_id] = RacePredictionSummary(top_horses=top_horses)
+        result[race_id] = RacePredictionSummary(
+            top_horses=top_horses, buy_count=buy_count
+        )
 
     return BulkPredictionsResponse(predictions=result)
 
@@ -139,7 +173,7 @@ def get_predictions(
 
     bundle = load_model_full(active_path)
     # bundle-aware: NN モデルでは top_features=[] が返る
-    result_df = predict_race_with_shap(bundle, frame)
+    result_df = predict_race_with_shap(bundle, frame, session=session)
 
     # Resolve model_runs id for the active model
     active_run = session.scalars(

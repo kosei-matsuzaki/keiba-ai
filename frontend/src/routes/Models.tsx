@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Brain } from 'lucide-react';
 
 import { useModels } from '@/hooks/useModels';
 import { useActivateModel } from '@/hooks/useActivateModel';
@@ -43,7 +42,10 @@ export function Models() {
         setActivatingId(null);
       },
       onError: async (err) => {
-        toast.error(`Activate に失敗しました: ${await formatErrorMessage(err)}`);
+        toast.error('Activate に失敗しました', {
+          description: await formatErrorMessage(err),
+          action: { label: '再試行', onClick: () => handleActivate(id) },
+        });
         setActivatingId(null);
       },
     });
@@ -71,7 +73,10 @@ export function Models() {
         setDeleteTarget(null);
       },
       onError: async (err) => {
-        toast.error(`削除に失敗しました: ${await formatErrorMessage(err)}`);
+        toast.error('削除に失敗しました', {
+          description: await formatErrorMessage(err),
+          action: { label: '再試行', onClick: () => handleDeleteConfirm(id) },
+        });
       },
     });
   }
@@ -100,11 +105,11 @@ export function Models() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-8 p-6">
       <PageHeader
-        icon={Brain}
-        title="Models"
-        description="学習済みモデルの管理。各モデルの行を開くとバックテストを実行できます。"
+        eyebrow="Models"
+        title="学習済みモデル"
+        description="各モデルの行を開くとバックテストを実行できます。"
       >
         <Button
           variant="outline"
@@ -120,7 +125,7 @@ export function Models() {
 
       <div className="flex flex-col gap-6">
         {modelsQuery.isPending ? (
-          <Skeleton className="h-24 w-full rounded-lg" />
+          <Skeleton className="h-24 w-full rounded-sm" />
         ) : modelsQuery.data ? (
           <ActiveModelCard
             model={modelsQuery.data.find((m) => m.is_active) ?? null}
@@ -137,7 +142,7 @@ export function Models() {
         )}
 
         {modelsQuery.isPending ? (
-          <Skeleton className="h-64 w-full rounded-lg" />
+          <Skeleton className="h-64 w-full rounded-sm" />
         ) : modelsQuery.isError ? (
           <EmptyState
             message="モデル情報の取得に失敗しました"

@@ -9,7 +9,13 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
       <input
         type={type}
         className={cn(
-          'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+          // 黒地に対して入力欄がわずかに明るいほうが「入力できる場所」が分かる。
+          // フォーカスリングは太いと角丸 2px の直角さを殺すので 1px + 枠線の着色。
+          'flex h-9 w-full rounded-sm border border-input bg-card px-3 py-2 text-sm',
+          'file:border-0 file:bg-transparent file:text-sm file:font-medium',
+          'placeholder:text-subtle-foreground',
+          'focus-visible:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary',
+          'disabled:cursor-not-allowed disabled:opacity-50',
           className
         )}
         ref={ref}

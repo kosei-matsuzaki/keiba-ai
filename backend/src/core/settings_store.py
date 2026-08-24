@@ -17,14 +17,38 @@ _DEFAULTS: dict = {
     "rate_max_seconds": 6.0,
     "night_min_seconds": 5.0,
     "win_ev_threshold": 1.1,
-    "place_ev_threshold": 1.05,
+    # 単勝は EV 条件ではなく「モデル 1 位を買う」ルール。これはそのオッズ下限。
+    # (較正済み確率のもとでは EV フィルタが回収率を 0.931 → 0.698 まで落とすため)
+    "win_min_odds": 1.1,
     "scraper_stopped": False,
-    # Bankroll / Kelly settings
-    "bankroll": 100_000,
-    "kelly_fraction": 0.25,
-    "max_stake_per_race_pct": 0.05,
+    # 賭け金の設定 (定額)。1 レースに使う上限と 1 点あたりの額だけで決まる。
+    "race_budget": 5_000,
+    "stake_unit": 100,
     "enabled_bet_types": list(DEFAULT_ENABLED_BET_TYPES),
 }
+
+# 旧 Kelly 設定 (bankroll × max_stake_per_race_pct) から race_budget を復元する。
+_LEGACY_KELLY_KEYS = ("bankroll", "kelly_fraction", "max_stake_per_race_pct")
+
+
+def _migrate_legacy(data: dict) -> dict:
+    """保存済みの旧 Kelly 設定を新しい定額設定に読み替える。
+
+    race_budget が無く bankroll と max_stake_per_race_pct がある場合、
+    「1 レースに使っていた上限額」= bankroll × 割合 を引き継ぐ。
+    設定していた金額感を失わないための移行処理。
+    """
+    out = dict(data)
+    if "race_budget" not in out:
+        bankroll = out.get("bankroll")
+        pct = out.get("max_stake_per_race_pct")
+        if isinstance(bankroll, (int, float)) and isinstance(pct, (int, float)):
+            budget = int(round(float(bankroll) * float(pct)))
+            if budget >= 100:
+                out["race_budget"] = budget
+    for key in _LEGACY_KELLY_KEYS:
+        out.pop(key, None)
+    return out
 
 
 class SettingsStore:
@@ -40,7 +64,7 @@ class SettingsStore:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             # Fill any missing keys from defaults (forward-compatibility)
             merged = dict(_DEFAULTS)
-            merged.update(data)
+            merged.update(_migrate_legacy(data))
             return merged
         except (json.JSONDecodeError, OSError):
             return dict(_DEFAULTS)

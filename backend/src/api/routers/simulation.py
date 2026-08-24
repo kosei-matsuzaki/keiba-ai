@@ -274,7 +274,7 @@ def run_simulation(
             ge=1000,
             le=100_000_000,
             description="初期資産 (円)。各 race ごとに残資産 (= budget + 累計 profit) を "
-            "bankroll として Kelly stake を計算する (compounding wealth)。"
+            "その race の予算として 1 点定額で賭ける (compounding wealth)。"
             "payout は次 race の bet 余力に加算される。資産尽きたら以降は実質 bet しない。",
         ),
     ] = 100_000,

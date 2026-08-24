@@ -26,7 +26,7 @@ beforeEach(() => {
 
 const mockData: RecommendationsResponse = {
   race_id: '202406010101',
-  bankroll_at_decision: 100_000,
+  race_budget: 5_000,
   odds_source: 'live',
   candidates: [
     {
@@ -54,7 +54,7 @@ const mockData: RecommendationsResponse = {
 
 const mockDataWithZeroStake: RecommendationsResponse = {
   race_id: '202406010101',
-  bankroll_at_decision: 100_000,
+  race_budget: 5_000,
   odds_source: 'past',
   candidates: [
     {
@@ -82,7 +82,7 @@ const mockDataWithZeroStake: RecommendationsResponse = {
 
 const mockDataWithNullOdds: RecommendationsResponse = {
   race_id: '202406010101',
-  bankroll_at_decision: 100_000,
+  race_budget: 5_000,
   odds_source: 'past',
   candidates: [
     {
@@ -126,11 +126,12 @@ describe('RecommendationsCard', () => {
     );
 
     expect(screen.getByText('推奨買目')).toBeInTheDocument();
-    expect(screen.getByText('100,000 円')).toBeInTheDocument();
+    expect(screen.getByText('5,000 円')).toBeInTheDocument();
     expect(screen.getByText('単勝')).toBeInTheDocument();
     expect(screen.getByText('馬連')).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
-    expect(screen.getByText('1-2')).toBeInTheDocument();
+    // 買い目は枠色の馬番チップで描かれるので、元の文字列は title で持つ
+    expect(screen.getByTitle('1')).toBeInTheDocument();
+    expect(screen.getByTitle('1-2')).toBeInTheDocument();
   });
 
   it('shows skeleton while loading', () => {
@@ -152,7 +153,7 @@ describe('RecommendationsCard', () => {
     wrap(
       <RecommendationsCard
         raceId="202406010101"
-        data={{ race_id: '202406010101', bankroll_at_decision: 100_000, odds_source: 'unknown', candidates: [] }}
+        data={{ race_id: '202406010101', race_budget: 5_000, odds_source: 'unknown', candidates: [] }}
         isPending={false}
         isError={false}
         error={null}
@@ -454,7 +455,7 @@ describe('RecommendationsCard', () => {
         raceId="202406010101"
         data={{
           race_id: '202406010101',
-          bankroll_at_decision: 100_000,
+          race_budget: 5_000,
           odds_source: 'unknown',
           candidates: [
             {
@@ -515,7 +516,7 @@ describe('RecommendationsCard', () => {
   it('null ev rows sort after rows with ev values', () => {
     const dataWithMixed: RecommendationsResponse = {
       race_id: '202406010101',
-      bankroll_at_decision: 100_000,
+      race_budget: 5_000,
       odds_source: 'past',
       candidates: [
         { bet_type: '馬連', combo: '1-3', pattern: 'box', prob: 0.2, est_odds: null, ev: null, stake: 0, post_positions: [1, 3] },
@@ -542,7 +543,7 @@ describe('RecommendationsCard', () => {
   it('renders 確定 badge for confirmed est_odds_source', () => {
     const data: RecommendationsResponse = {
       race_id: '202406010101',
-      bankroll_at_decision: 100_000,
+      race_budget: 5_000,
       odds_source: 'live',
       candidates: [
         {
@@ -574,7 +575,7 @@ describe('RecommendationsCard', () => {
   it('renders 推定 badge for implied est_odds_source', () => {
     const data: RecommendationsResponse = {
       race_id: '202406010101',
-      bankroll_at_decision: 100_000,
+      race_budget: 5_000,
       odds_source: 'past',
       candidates: [
         {

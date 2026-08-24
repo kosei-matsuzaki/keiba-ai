@@ -1,5 +1,5 @@
 import { useState, useMemo, Fragment } from 'react';
-import { Wallet, ChevronDown, ChevronUp, Download, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, Trash2 } from 'lucide-react';
 import {
   AreaChart,
   Area,
@@ -20,7 +20,7 @@ import { buildBetExportUrl, type BetFilterParams } from '@/lib/api';
 import { formatYen, formatPercent, formatDateTime } from '@/lib/formatters';
 import { AddBetDialog } from '@/components/AddBetDialog';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
-import { MetricCard } from '@/components/MetricCard';
+import { MetricBand, MetricItem } from '@/components/MetricBand';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -96,9 +96,10 @@ function BreakdownTable({ rows }: { rows: BetBreakdownRow[] }) {
     return sortAsc ? <ChevronUp className="inline h-3 w-3" /> : <ChevronDown className="inline h-3 w-3" />;
   }
 
-  const th = (col: SortKey, label: string) => (
+  // 数値列は右揃え。オッズ・金額・率が縦に揃うことで読み比べやすくなる。
+  const th = (col: SortKey, label: string, align: 'left' | 'right' = 'right') => (
     <TableHead
-      className="cursor-pointer select-none"
+      className={`cursor-pointer select-none ${align === 'right' ? 'text-right' : ''}`}
       onClick={() => handleSort(col)}
     >
       {label} <SortIcon col={col} />
@@ -113,7 +114,7 @@ function BreakdownTable({ rows }: { rows: BetBreakdownRow[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          {th('group_key', '券種')}
+          {th('group_key', '券種', 'left')}
           {th('bets', '件数')}
           {th('invested', '投資額')}
           {th('payout', '払戻額')}
@@ -126,14 +127,16 @@ function BreakdownTable({ rows }: { rows: BetBreakdownRow[] }) {
         {sorted.map((row) => (
           <TableRow key={row.group_key}>
             <TableCell className="font-medium">{row.group_key}</TableCell>
-            <TableCell>{row.bets}</TableCell>
-            <TableCell>{formatYen(row.invested)}</TableCell>
-            <TableCell>{formatYen(row.payout)}</TableCell>
-            <TableCell className={row.profit >= 0 ? 'text-green-600' : 'text-red-500'}>
+            <TableCell className="text-right">{row.bets}</TableCell>
+            <TableCell className="text-right">{formatYen(row.invested)}</TableCell>
+            <TableCell className="text-right">{formatYen(row.payout)}</TableCell>
+            <TableCell
+              className={`text-right ${row.profit >= 0 ? 'text-success' : 'text-destructive'}`}
+            >
               {row.profit >= 0 ? '+' : ''}{formatYen(row.profit)}
             </TableCell>
-            <TableCell>{formatPercent(row.payback_rate)}</TableCell>
-            <TableCell>{formatPercent(row.hit_rate)}</TableCell>
+            <TableCell className="text-right">{formatPercent(row.payback_rate)}</TableCell>
+            <TableCell className="text-right">{formatPercent(row.hit_rate)}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -211,7 +214,7 @@ function ProfitCell({ group }: { group: BetGroup }) {
   if (group.settledCount === 0) {
     return <span className="text-muted-foreground">未確定</span>;
   }
-  const cls = group.profitSum >= 0 ? 'text-green-600' : 'text-red-500';
+  const cls = group.profitSum >= 0 ? 'text-success' : 'text-destructive';
   return (
     <span className={cls}>
       {group.profitSum >= 0 ? '+' : ''}
@@ -264,9 +267,9 @@ function DetailTable({ params }: { params: BetFilterParams }) {
             <TableHead>レース ID</TableHead>
             <TableHead>券種</TableHead>
             <TableHead>買い目 / 点数</TableHead>
-            <TableHead>投資</TableHead>
-            <TableHead>払戻</TableHead>
-            <TableHead>損益</TableHead>
+            <TableHead className="text-right">投資</TableHead>
+            <TableHead className="text-right">払戻</TableHead>
+            <TableHead className="text-right">損益</TableHead>
             <TableHead>メモ</TableHead>
             <TableHead className="text-xs text-muted-foreground">区分</TableHead>
             <TableHead className="text-right">操作</TableHead>
@@ -299,9 +302,11 @@ function DetailTable({ params }: { params: BetFilterParams }) {
                       </button>
                     )}
                   </TableCell>
-                  <TableCell>{formatYen(g.stakeSum)}</TableCell>
-                  <TableCell>{g.settledCount === 0 ? '—' : formatYen(g.payoutSum)}</TableCell>
-                  <TableCell>
+                  <TableCell className="text-right">{formatYen(g.stakeSum)}</TableCell>
+                  <TableCell className="text-right">
+                    {g.settledCount === 0 ? '—' : formatYen(g.payoutSum)}
+                  </TableCell>
+                  <TableCell className="text-right">
                     <ProfitCell group={g} />
                   </TableCell>
                   <TableCell
@@ -344,8 +349,8 @@ function DetailTable({ params }: { params: BetFilterParams }) {
                                 it.profit === null
                                   ? 'text-muted-foreground'
                                   : it.profit >= 0
-                                    ? 'text-green-600'
-                                    : 'text-red-500'
+                                    ? 'text-success'
+                                    : 'text-destructive'
                               }
                             >
                               {it.profit !== null
@@ -409,13 +414,14 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
 
   const minProfit = Math.min(...data.points.map((p) => p.cumulative_profit));
   const maxProfit = Math.max(...data.points.map((p) => p.cumulative_profit));
-  // 全プラスなら success (emerald)、全マイナスなら destructive (rose)、混在は chart-1 (indigo)
+  // 全プラスなら success (緑)、全マイナスなら destructive (赤)、混在は
+  // 単系列の既定色 primary。カテゴリカルパレット (--chart-*) は使わない。
   const areaColor =
     minProfit >= 0
       ? 'hsl(var(--success))'
       : maxProfit <= 0
       ? 'hsl(var(--destructive))'
-      : 'hsl(var(--chart-1))';
+      : 'hsl(var(--primary))';
 
   return (
     <ResponsiveContainer width="100%" height={260}>
@@ -426,17 +432,31 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
             <stop offset="95%" stopColor={areaColor} stopOpacity={0.0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="2 4" stroke="hsl(var(--border))" />
+        <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
+        {/* 損益分岐線。これが無いと「上下している」以上のことが読めない */}
+        <ReferenceLine
+          y={0}
+          stroke="hsl(var(--border-strong))"
+          strokeDasharray="3 3"
+          label={{
+            value: '損益分岐',
+            position: 'insideTopLeft',
+            fill: 'hsl(var(--subtle-foreground))',
+            fontSize: 10,
+          }}
+        />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-          stroke="hsl(var(--border))"
-          tickFormatter={(v: string) => v.slice(5)}
+          tick={{ fontSize: 10, fill: 'hsl(var(--subtle-foreground))', fontFamily: 'var(--font-mono)' }}
+          axisLine={false}
+          tickLine={false}
+                    tickFormatter={(v: string) => v.slice(5)}
         />
         <YAxis
-          tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-          stroke="hsl(var(--border))"
-          tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`}
+          tick={{ fontSize: 10, fill: 'hsl(var(--subtle-foreground))', fontFamily: 'var(--font-mono)' }}
+          axisLine={false}
+          tickLine={false}
+                    tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`}
         />
         <Tooltip
           labelFormatter={(label: string) => label}
@@ -444,8 +464,9 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
           contentStyle={{
             background: 'hsl(var(--popover))',
             border: '1px solid hsl(var(--border))',
-            borderRadius: 'var(--radius)',
-            fontSize: 12,
+            borderRadius: '2px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
           }}
         />
         <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" />
@@ -453,7 +474,7 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
           type="monotone"
           dataKey="cumulative_profit"
           stroke={areaColor}
-          strokeWidth={2}
+          strokeWidth={1.5}
           fill="url(#profitGrad)"
           dot={false}
         />
@@ -495,9 +516,9 @@ export function Ledger() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-8 p-6">
       <PageHeader
-        icon={Wallet}
+        eyebrow="Ledger"
         title="収支台帳"
         description="自分の購入履歴と成績管理（回収率・的中率・損益推移）"
       >
@@ -563,52 +584,60 @@ export function Ledger() {
 
       {/* KPI cards */}
       {summaryQuery.isPending ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <div className="grid grid-cols-2 border-y border-border lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-lg" />
+            <div key={i} className="px-5 py-5">
+              <Skeleton className="h-16 w-full rounded-sm" />
+            </div>
           ))}
         </div>
       ) : summaryQuery.isError ? (
         <EmptyState message="サマリ取得に失敗しました" />
       ) : (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-          <MetricCard
+        <MetricBand cols={5}>
+          <MetricItem
             title="累計投資"
             value={summaryQuery.data.total_invested}
             format="yen"
             description={`${summaryQuery.data.total_bets} 件`}
           />
-          <MetricCard
+          <MetricItem
             title="累計払戻"
             value={summaryQuery.data.total_payout}
             format="yen"
             description={`確定 ${summaryQuery.data.settled_bets} 件`}
           />
-          <MetricCard
+          <MetricItem
             title="純利益"
             value={summaryQuery.data.total_profit}
             format="yen"
+            tone={summaryQuery.data.total_profit >= 0 ? 'positive' : 'negative'}
             description={summaryQuery.data.total_profit >= 0 ? 'プラス収支' : 'マイナス収支'}
           />
-          <MetricCard
+          <MetricItem
             title="回収率"
             value={summaryQuery.data.payback_rate}
             format="ratio"
+            tone={
+              summaryQuery.data.payback_rate != null && summaryQuery.data.payback_rate >= 1
+                ? 'positive'
+                : 'negative'
+            }
             description="1.00 = 損益分岐点"
           />
-          <MetricCard
+          <MetricItem
             title="的中率"
             value={summaryQuery.data.hit_rate}
             format="percent"
             description="確定済み中"
           />
-        </div>
+        </MetricBand>
       )}
 
       {/* Cumulative profit chart */}
-      <Card>
+      <Card className="border-t border-border pt-6">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base">累計損益推移</CardTitle>
+          <CardTitle className="text-label-ja">累計損益推移</CardTitle>
           <div className="flex gap-1">
             {(['day', 'week', 'month'] as const).map((b) => (
               <Button
@@ -629,9 +658,9 @@ export function Ledger() {
       </Card>
 
       {/* Breakdown table */}
-      <Card>
+      <Card className="border-t border-border pt-6">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">券種別ブレイクダウン</CardTitle>
+          <CardTitle className="text-label-ja">券種別ブレイクダウン</CardTitle>
         </CardHeader>
         <CardContent>
           {breakdownQuery.isPending ? (
@@ -645,14 +674,14 @@ export function Ledger() {
       </Card>
 
       {/* Detail table (collapsible) */}
-      <Card>
+      <Card className="border-t border-border pt-6">
         <CardHeader className="pb-2">
           <button
             type="button"
             className="flex w-full items-center justify-between"
             onClick={() => setShowDetail((v) => !v)}
           >
-            <CardTitle className="text-base">購入明細</CardTitle>
+            <CardTitle className="text-label-ja">購入明細</CardTitle>
             {showDetail ? (
               <ChevronUp className="h-4 w-4 text-muted-foreground" />
             ) : (

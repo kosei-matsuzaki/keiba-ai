@@ -1,4 +1,4 @@
-"""Bet pattern generation and Kelly fractional stake calculation.
+"""Bet pattern generation and flat stake allocation.
 
 This module is pure-function: no database access, no I/O.  All functions
 operate on CombinationPrediction lists produced by predict_race_with_combinations
@@ -9,12 +9,13 @@ Supported buy patterns:
   box        — top-N horses in all combinations
   formation  — first/second/third legs specified independently
 
-Kelly fractional stake formula:
-  edge = prob * odds - 1
-  if edge <= 0: stake = 0
-  fraction = kelly_fraction * edge / (odds - 1)
-  raw_stake = bankroll * fraction
-  stake = floor(raw_stake / round_to) * round_to
+賭け金の決め方 (定額):
+  期待値が基準を超える買い目を ev の高い順に並べ、1 点 stake_unit 円ずつ、
+  race_budget を上限に賭ける。予算は使い切らなくてよい。
+
+  以前は資金比率の fractional Kelly で決めていたが、利用者が扱うのは
+  「このレースに何円使うか」であって「資金の何%か」ではないため、
+  賭け金の決定からは Kelly を外した (学習の目的関数側は別。ai/model/loss.py)。
 
 Notes on three-leg ordered bets (三連単):
   nagashi and formation for 三連単 are deferred to a future issue.  The
@@ -24,8 +25,6 @@ Notes on three-leg ordered bets (三連単):
 """
 
 from __future__ import annotations
-
-import math
 
 import pandas as pd
 
@@ -232,131 +231,74 @@ def generate_formation(
 
 
 # ---------------------------------------------------------------------------
-# Kelly fractional stake
+# Flat stake assignment
 # ---------------------------------------------------------------------------
 
-def kelly_stake(
-    prob: float,
-    odds: float,
-    bankroll: int,
-    kelly_fraction: float,
-    round_to: int = 100,
-) -> int:
-    """Kelly fractional stake rounded down to the nearest round_to multiple.
-
-    Formula:
-        edge = prob * odds - 1
-        if edge <= 0: return 0
-        fraction = kelly_fraction * edge / (odds - 1)
-        raw_stake = bankroll * fraction
-        return floor(raw_stake / round_to) * round_to
-
-    Args:
-        prob: Estimated win probability in [0, 1].
-        odds: Payout odds (e.g. 5.0 means 5x return on the stake).
-        bankroll: Available bankroll in yen.
-        kelly_fraction: Fractional Kelly multiplier in (0, 1].  0.25 = quarter Kelly.
-        round_to: Stake is always a multiple of this value (default 100 yen).
-
-    Returns:
-        Integer stake in yen (>= 0, multiple of round_to).
-    """
-    edge = prob * odds - 1.0
-    # `odds <= 1.0` ガードは数学的に edge > 0 なら不要だが、後段の (odds - 1.0)
-    # による ZeroDivisionError を防ぐ防御として明示しておく
-    if edge <= 0.0 or odds <= 1.0:
-        return 0
-    fraction = kelly_fraction * edge / (odds - 1.0)
-    raw_stake = bankroll * fraction
-    return int(math.floor(raw_stake / round_to)) * round_to
-
-
-def assign_stakes(
+def assign_flat_stakes(
     candidates: list[BetCandidate],
-    bankroll: int,
-    kelly_fraction: float,
-    max_stake_per_race_pct: float,
-    round_to: int = 100,
+    race_budget: int,
+    stake_unit: int = 100,
+    min_ev: float = 1.0,
+    min_ev_by_bet_type: dict[str, float] | None = None,
     keep_zero_stake: bool = False,
-    max_stake_per_race_yen: int | None = None,
 ) -> list[BetCandidate]:
-    """Assign Kelly stakes to candidates and apply per-race cap.
+    """1 点あたり定額で、期待値の高い買い目から順に予算の範囲で賭ける。
 
-    Processing steps:
-    1. ev <= 1.0  → stake = 0 (excluded from output unless keep_zero_stake=True).
-    2. Apply kelly_stake to each remaining candidate.
-    3. If the total stake exceeds the per-race cap (lower of bankroll * pct
-       or max_stake_per_race_yen), scale all stakes down proportionally
-       (floor to round_to after scaling).
-    4. Remove candidates with stake == 0 from the returned list (unless
-       keep_zero_stake=True, in which case all candidates are returned with
-       their computed stake, including zeros).
+    Kelly（資金の何%を賭けるか）ではなく、人が実際にやる買い方に合わせた配分:
+
+      1. 期待値 (ev) が ``min_ev`` を超える買い目だけを対象にする
+      2. ev の高い順に並べる
+      3. 1 点あたり ``stake_unit`` 円ずつ、``race_budget`` を超えない範囲で賭ける
+
+    **予算は使い切らなくてよい。** 対象が少なければ賭け金の合計も少なくなる
+    （3 点しか基準を超えなければ 300 円で終わる）。基準を超える買い目が
+    無ければ 1 円も賭けない。
 
     Args:
         candidates: BetCandidate list (stake field is ignored on input).
-        bankroll: Current bankroll in yen.
-        kelly_fraction: Fractional Kelly multiplier.
-        max_stake_per_race_pct: Maximum fraction of bankroll to spend per race
-            (e.g. 0.05 = 5%).
-        round_to: Stake rounding granularity in yen.
-        keep_zero_stake: When True, candidates with stake=0 (due to ev<=1.0 or
-            Kelly returning 0 or cap-scaling to 0) are included in the output.
-            Defaults to False for backward compatibility.
-        max_stake_per_race_yen: 1 race の累計 stake の **絶対上限** (円)。
-            compounding wealth で bankroll が膨らんでも 1 race の bet が
-            無制限にインフレしないようにする。None で disable。
+        race_budget: このレースに使ってよい上限 (円)。
+        stake_unit: 1 点あたりの賭け金 (円)。100 円単位が実際の購入単位。
+        min_ev: この値を超える ev の買い目だけを対象にする (1.0 = 収支トントン)。
+        min_ev_by_bet_type: 券種ごとに min_ev を上書きする dict。単勝・複勝は
+            EV 条件を使わない (本命買い) ので -inf を入れて素通しにするのに使う。
+            無い券種は ``min_ev`` にフォールバック。
+        keep_zero_stake: True なら賭けない買い目も stake=0 で返す。
 
     Returns:
-        New list of BetCandidate (copies) with updated stake values.
-        When keep_zero_stake=False (default), stake=0 items are excluded.
-        When keep_zero_stake=True, all input candidates are returned with
-        their computed stake (0 for ineligible / below-EV candidates).
+        New list of BetCandidate (copies) with updated stake values,
+        ev の高い順。keep_zero_stake=False なら stake>0 のものだけ。
     """
-    pct_cap = bankroll * max_stake_per_race_pct
-    if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
-        cap = min(pct_cap, float(max_stake_per_race_yen))
-    else:
-        cap = pct_cap
+    if stake_unit <= 0 or race_budget < stake_unit:
+        # 予算が 1 点分にも満たないなら何も買えない
+        return [c.model_copy(update={"stake": 0}) for c in candidates] if keep_zero_stake else []
 
-    # Step 1 + 2: compute raw Kelly stakes
-    # ev is None or ev <= 1.0 candidates get stake=0 and are tracked separately
-    zero_stake_candidates: list[BetCandidate] = []
-    staked: list[tuple[BetCandidate, int]] = []
-    for c in candidates:
-        if c.ev is None or c.ev <= 1.0:
-            if keep_zero_stake:
-                zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
-            continue
-        # est_odds is guaranteed non-None here since ev = prob * est_odds
-        s = kelly_stake(c.prob, c.est_odds, bankroll, kelly_fraction, round_to)  # type: ignore[arg-type]
-        if s > 0:
-            staked.append((c, s))
+    by_type = min_ev_by_bet_type or {}
+
+    def _threshold(c: BetCandidate) -> float:
+        return by_type.get(c.bet_type, min_ev)
+
+    def _passes(c: BetCandidate) -> bool:
+        return c.ev is not None and c.ev > _threshold(c)
+
+    def _sort_key(c: BetCandidate) -> tuple[float, float]:
+        # ev 降順 → 同点は prob 降順 (決定的にするため)
+        return (-(c.ev or 0.0), -c.prob)
+
+    eligible = sorted((c for c in candidates if _passes(c)), key=_sort_key)
+    ineligible = [c for c in candidates if not _passes(c)]
+
+    out: list[BetCandidate] = []
+    budget_left = race_budget
+    for c in eligible:
+        if budget_left >= stake_unit:
+            out.append(c.model_copy(update={"stake": stake_unit}))
+            budget_left -= stake_unit
         elif keep_zero_stake:
-            zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
-
-    if not staked:
-        return zero_stake_candidates if keep_zero_stake else []
-
-    # Step 3: proportional cap
-    total = sum(s for _, s in staked)
-    if total > cap:
-        scale = cap / total
-        staked = [
-            (c, int(math.floor(s * scale / round_to)) * round_to)
-            for c, s in staked
-        ]
-
-    # Step 4: build result list
-    result: list[BetCandidate] = []
-    for c, s in staked:
-        if s > 0:
-            result.append(c.model_copy(update={"stake": s}))
-        elif keep_zero_stake:
-            zero_stake_candidates.append(c.model_copy(update={"stake": 0}))
+            out.append(c.model_copy(update={"stake": 0}))
 
     if keep_zero_stake:
-        return result + zero_stake_candidates
-    return result
+        out.extend(c.model_copy(update={"stake": 0}) for c in ineligible)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -367,12 +309,13 @@ def recommend_for_race(
     predictions: pd.DataFrame,
     combinations_by_type: dict[str, list[CombinationPrediction]],
     race_id: str,
-    bankroll: int,
-    kelly_fraction: float,
-    max_stake_per_race_pct: float,
+    race_budget: int,
+    stake_unit: int = 100,
+    min_ev: float = 1.0,
+    min_ev_by_bet_type: dict[str, float] | None = None,
+    win_min_odds: float = 1.1,
     top_n_horses: int = 3,
     enabled_bet_types: list[str] | None = None,
-    max_stake_per_race_yen: int | None = None,
 ) -> RecommendationResult:
     """Generate a bet recommendation for one race.
 
@@ -390,21 +333,50 @@ def recommend_for_race(
         combinations_by_type: Dict mapping bet_type to list[CombinationPrediction]
             (output of predict_race_with_combinations).
         race_id: Identifier for the race.
-        bankroll: Current bankroll in yen.
-        kelly_fraction: Fractional Kelly multiplier.
-        max_stake_per_race_pct: Maximum fraction of bankroll per race.
+        race_budget: このレースに使ってよい上限 (円)。使い切らなくてよい。
+        stake_unit: 1 点あたりの賭け金 (円、既定 100)。
+        min_ev: この値を超える期待値の買い目だけを賭ける (1.0 = 収支トントン)。
+        min_ev_by_bet_type: 券種ごとの min_ev 上書き (単複は -inf = 素通し)。
+        win_min_odds: **単勝・複勝は EV 条件を使わず「モデルの本命 (1 位) を買う」**。
+            単勝はこのオッズ下限を下回る場合だけ見送る (複勝に下限は無い)。
+            理由は較正済み確率での実測 (test 19ヶ月・5,404 レース):
+
+            | 券種 | EV 条件 | 本命買い |
+            |---|---|---|
+            | 単勝 | 45,001 点 / 0.698 | 5,376 点 / **0.931** |
+            | 複勝 | 43,464 点 / 0.654 | 5,402 点 / **0.887** |
+
+            複勝の EV は狂っているだけでなく **順序が逆**で、EV 帯別の回収率は
+            0.0-0.9 帯 0.832 → 2.0 以上 0.573 と単調減少する。高 EV = 推定オッズの高い
+            穴馬 = 確率もオッズも最大に過大評価される帯、という構造なので、温度や冪
+            (Harville 補正) のような単調変換では直らない (実測: 冪 0.85 で 0.665 止まり)。
+            **1 位買いでも回収率 1.0 未満**なので「+EV だから買う」ではなく
+            「本命はこれ」という意味の推奨である点に注意 (docs/ai-model.md)。
         top_n_horses: Number of top horses (by win_prob) to include in box /
             formation candidates (default 3).
         enabled_bet_types: Bet types to consider.  None means all types
             present in combinations_by_type.
 
     Returns:
-        RecommendationResult with candidates that have stake > 0.
+        RecommendationResult。stake=0 の候補も含めて返す (UI 側で「基準を
+        超えなかった買い目」も見せられるようにするため)。
     """
     if enabled_bet_types is not None:
         active_types = [bt for bt in enabled_bet_types if bt in combinations_by_type]
     else:
         active_types = list(combinations_by_type.keys())
+
+    # 単勝・複勝は EV ではなく「モデルの本命 (1 位)」で選ぶ。候補自体を 1 点に絞り、
+    # EV 閾値は素通しにする (win_min_odds の docstring に理由と実測値)。
+    combinations_by_type = dict(combinations_by_type)
+    tansho = combinations_by_type.get("単勝")
+    if tansho:
+        best = max(tansho, key=lambda c: c.prob)
+        keep = best.est_odds is not None and best.est_odds > win_min_odds
+        combinations_by_type["単勝"] = [best] if keep else []
+    fukusho = combinations_by_type.get("複勝")
+    if fukusho:
+        combinations_by_type["複勝"] = [max(fukusho, key=lambda c: c.prob)]
 
     # Rank horses by win_prob descending
     sorted_preds = predictions.sort_values("win_prob", ascending=False).reset_index(drop=True)
@@ -491,14 +463,22 @@ def recommend_for_race(
                 seen[key] = c
     deduped = list(seen.values())
 
-    final_candidates = assign_stakes(
-        deduped, bankroll, kelly_fraction, max_stake_per_race_pct,
+    final_candidates = assign_flat_stakes(
+        deduped,
+        race_budget=race_budget,
+        stake_unit=stake_unit,
+        min_ev=min_ev,
+        # 単勝は上で 1 位 1 点に絞り済みなので EV 閾値は通す (負の EV でも「本命」として出す)
+        min_ev_by_bet_type={
+            **(min_ev_by_bet_type or {}),
+            "単勝": float("-inf"),
+            "複勝": float("-inf"),
+        },
         keep_zero_stake=True,
-        max_stake_per_race_yen=max_stake_per_race_yen,
     )
 
     return RecommendationResult(
         race_id=race_id,
-        bankroll_at_decision=bankroll,
+        race_budget=race_budget,
         candidates=final_candidates,
     )

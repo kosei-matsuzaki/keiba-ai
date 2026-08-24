@@ -42,6 +42,7 @@ from ai.core.temperature import TemperatureScaler
 from ai.model.dataset import RaceDataset, collate_fn
 from ai.model.loss import (
     combo_nll_loss,
+    flat_ev_loss,
     kelly_deploy_loss,
     log_growth_loss,
     multi_objective_loss,
@@ -417,12 +418,16 @@ def _fit_temperature_scaler_nn(
             payout_place_per_race.append(payout_map)
 
     scaler = TemperatureScaler()
-    scaler.fit(
+    # payback グリッド探索 (scaler.fit) ではなく **NLL 較正**を使う。
+    # 前者は T をグリッド端に張り付かせ、win_prob が 1 位に 0.999999 乗る一方で
+    # place_prob はほぼ一様、という互いに矛盾した「確率」を作っていた
+    # (実測 T_win=0.133 / T_place=10.0)。賭ける/賭けないは温度ではなく買い方の
+    # ルールで表現する (単勝はモデル 1 位を買う = backtest の --win-bet-rule top1)。
+    T = scaler.fit_calibration(
         scores_per_race=scores_per_race,
         finish_positions_per_race=finish_positions_per_race,
-        odds_win_per_race=odds_win_per_race,
-        payout_place_per_race=payout_place_per_race,
     )
+    log.info("temperature calibrated by winner NLL: T=%.4f", T)
     return scaler
 
 
@@ -473,7 +478,7 @@ def _compute_loss_on_dataset(
                 **_batch_history_kw(batch, device), **_batch_odds_kw(batch, device),
             )
 
-            if loss_fn_name in ("log_growth", "multi", "kelly_deploy"):
+            if loss_fn_name in ("log_growth", "multi", "kelly_deploy", "flat_ev"):
                 loss = loss_fn(scores, fp, batch["odds_win"].to(device), mask)
             elif loss_fn_name == "combo_nll":
                 loss = loss_fn(scores, fp, mask)
@@ -489,35 +494,48 @@ def _compute_loss_on_dataset(
 
 def _build_loss_fn(
     loss_name: str,
-    kelly_fraction: float = 0.25,
+    cash_fraction: float = 0.25,
     combo_bet_type: str = "馬連",
     combo_weight: float = 0.01,
+    flat_ev_threshold: float = 1.1,
+    flat_ev_temp: float = 0.05,
+    flat_ev_max_bets: float = 0.0,
 ):
     """Return the loss callable for the given name.
 
-    kelly_fraction affects the betting losses (bankroll fraction staked per race);
+    cash_fraction は log_growth / multi の cash 項 (odds を勾配に残す装置。賭け金の
+    Kelly ではない — :func:`ai.model.loss.log_growth_loss` の docstring 参照);
     combo_bet_type selects the 連系 type for combo_nll / the multi combo term;
     combo_weight weights the combo-calibration term of the `multi` objective.
-    All are ignored by plackett_luce.
+    flat_ev_* configure the deployment-matched flat-stake loss (EV 閾値 /
+    gate 温度 / 1 レースの最大点数)。All are ignored by plackett_luce.
     """
     if loss_name == "plackett_luce":
         return plackett_luce_loss
     if loss_name == "log_growth":
-        return functools.partial(log_growth_loss, kelly_fraction=kelly_fraction)
+        return functools.partial(log_growth_loss, cash_fraction=cash_fraction)
     if loss_name == "kelly_deploy":
-        return functools.partial(kelly_deploy_loss, kelly_fraction=kelly_fraction)
+        # kelly_deploy は本物の Kelly 係数。同じ定数を流用する (実験用・本番非採用)。
+        return functools.partial(kelly_deploy_loss, kelly_fraction=cash_fraction)
+    if loss_name == "flat_ev":
+        return functools.partial(
+            flat_ev_loss,
+            ev_threshold=flat_ev_threshold,
+            gate_temp=flat_ev_temp,
+            max_bets=flat_ev_max_bets,
+        )
     if loss_name == "combo_nll":
         return functools.partial(combo_nll_loss, bet_type=combo_bet_type)
     if loss_name == "multi":
         return functools.partial(
             multi_objective_loss,
             combo_weight=combo_weight,
-            kelly_fraction=kelly_fraction,
+            cash_fraction=cash_fraction,
             combo_bet_type=combo_bet_type,
         )
     raise ValueError(
         f"Unknown loss: {loss_name!r}. "
-        "Choose from multi, log_growth, kelly_deploy, combo_nll, plackett_luce"
+        "Choose from multi, log_growth, flat_ev, kelly_deploy, combo_nll, plackett_luce"
     )
 
 
@@ -541,12 +559,20 @@ class RaceLitModule(pl.LightningModule):
         max_epochs: int = 100,
         combo_bet_type: str = "馬連",
         combo_weight: float = 0.01,
+        flat_ev_threshold: float = 1.1,
+        flat_ev_temp: float = 0.05,
+        flat_ev_max_bets: float = 0.0,
     ) -> None:
         super().__init__()
         self.model = model
         self.loss_fn_name = loss_fn_name
         self.loss_fn = _build_loss_fn(
-            loss_fn_name, combo_bet_type=combo_bet_type, combo_weight=combo_weight
+            loss_fn_name,
+            combo_bet_type=combo_bet_type,
+            combo_weight=combo_weight,
+            flat_ev_threshold=flat_ev_threshold,
+            flat_ev_temp=flat_ev_temp,
+            flat_ev_max_bets=flat_ev_max_bets,
         )
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -563,7 +589,7 @@ class RaceLitModule(pl.LightningModule):
             history_lengths=batch.get("history_lengths"),
             odds_features=batch.get("odds_features"),
         )
-        if self.loss_fn_name in ("log_growth", "multi", "kelly_deploy"):
+        if self.loss_fn_name in ("log_growth", "multi", "kelly_deploy", "flat_ev"):
             loss = self.loss_fn(
                 scores,
                 batch["finish_positions"],
@@ -722,6 +748,9 @@ def train_nn(
     init_from: Path | None = None,
     combo_bet_type: str = "馬連",
     combo_weight: float = 0.01,
+    flat_ev_threshold: float = 1.1,
+    flat_ev_temp: float = 0.05,
+    flat_ev_max_bets: float = 0.0,
     persist: bool = True,
     history_seq_len: int = 15,
     prebuilt_history=None,
@@ -941,6 +970,9 @@ def train_nn(
         max_epochs=max_epochs,
         combo_bet_type=combo_bet_type,
         combo_weight=combo_weight,
+        flat_ev_threshold=flat_ev_threshold,
+        flat_ev_temp=flat_ev_temp,
+        flat_ev_max_bets=flat_ev_max_bets,
     )
 
     # Trainer callbacks
@@ -1170,6 +1202,17 @@ def train_nn(
             else None
         ),
         "combo_weight": combo_weight if loss == "multi" else None,
+        # flat_ev の決定ルールは推論側では使わないが、どの EV 閾値・gate 温度で
+        # 学習したかが分からないと再現も比較もできないので meta に残す。
+        "flat_ev": (
+            {
+                "ev_threshold": flat_ev_threshold,
+                "gate_temp": flat_ev_temp,
+                "max_bets": flat_ev_max_bets,
+            }
+            if loss == "flat_ev"
+            else None
+        ),
         "params": {
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
@@ -1249,12 +1292,15 @@ def _cli() -> None:
     parser.add_argument("--test-months", type=int, default=6, help="Test window (months)")
     parser.add_argument(
         "--loss",
-        choices=["multi", "log_growth", "kelly_deploy", "combo_nll", "plackett_luce"],
+        choices=[
+            "multi", "log_growth", "flat_ev", "kelly_deploy", "combo_nll", "plackett_luce",
+        ],
         default="multi",
         help=(
             "Loss function (default: multi = production all-markets objective: "
             "log_growth(単複 betting) + --combo-weight·combo_nll(連系 calibration)). "
-            "log_growth = 単勝 fractional-Kelly return; combo_nll = 連系 calibration "
+            "log_growth = 単勝 log-growth betting return; flat_ev = 定額配分 (デプロイ整合); "
+            "combo_nll = 連系 calibration "
             "(proper scoring rule on the analytic-PL combo prob, folds combo "
             "calibration into the NN); plackett_luce = ranking (two-stage pretrain)."
         ),
@@ -1275,6 +1321,30 @@ def _cli() -> None:
         help=(
             "Weight on the combo-calibration NLL term of --loss multi "
             "(default 0.01; combo_nll is ~10× the log_growth magnitude)."
+        ),
+    )
+    parser.add_argument(
+        "--flat-ev-threshold",
+        type=float,
+        default=1.1,
+        help=(
+            "--loss flat_ev: この EV を超える馬を買う (deploy 側 min_ev と揃える。"
+            "default 1.1 = backtest の WIN_EV_THRESHOLD)。"
+        ),
+    )
+    parser.add_argument(
+        "--flat-ev-temp",
+        type=float,
+        default=0.05,
+        help="--loss flat_ev: 買う/買わない gate の sigmoid 温度 (小さいほど硬い境界)。",
+    )
+    parser.add_argument(
+        "--flat-ev-max-bets",
+        type=float,
+        default=0.0,
+        help=(
+            "--loss flat_ev: 1 レースの最大点数 (deploy の race_budget/stake_unit 相当)。"
+            "0 = 無制限。"
         ),
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
@@ -1390,6 +1460,9 @@ def _cli() -> None:
         init_from=args.init_from,
         combo_bet_type=args.combo_bet_type,
         combo_weight=args.combo_weight,
+        flat_ev_threshold=args.flat_ev_threshold,
+        flat_ev_temp=args.flat_ev_temp,
+        flat_ev_max_bets=args.flat_ev_max_bets,
         history_seq_len=args.history_seq_len,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

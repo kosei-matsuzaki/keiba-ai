@@ -41,11 +41,10 @@ const mockSettings: SettingsResponse = {
   rate_max_seconds: 10,
   night_min_seconds: 30,
   win_ev_threshold: 1.1,
-  place_ev_threshold: 1.05,
+  win_min_odds: 1.1,
   scraper_stopped: false,
-  bankroll: 100000,
-  kelly_fraction: 0.25,
-  max_stake_per_race_pct: 0.05,
+    race_budget: 5000,
+    stake_unit: 100,
   enabled_bet_types: ['単勝', '複勝', 'ワイド', '馬連'],
 };
 
@@ -79,11 +78,22 @@ describe('Settings', () => {
     expect(input).toBeInTheDocument();
   });
 
-  it('save button is disabled when form is not dirty', async () => {
+  it('hides the save bar entirely when the form is not dirty', async () => {
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
-    const saveBtn = screen.getByRole('button', { name: '変更を保存' });
-    expect(saveBtn).toBeDisabled();
+    // 常時出ていると「未保存かどうか」の情報が失われるので、変更が無ければ出さない
+    expect(screen.queryByRole('button', { name: '変更を保存' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/件の変更があります/)).not.toBeInTheDocument();
+  });
+
+  it('save button becomes available after editing a field', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const input = await screen.findByDisplayValue('TestAgent/1.0');
+    await user.tripleClick(input);
+    await user.type(input, 'NewAgent/2.0');
+    const saveBtn = await screen.findByRole('button', { name: '変更を保存' });
+    expect(saveBtn).toBeEnabled();
   });
 
   it('save button becomes enabled after editing a field', async () => {
@@ -141,25 +151,25 @@ describe('Settings', () => {
 
   // ── 新フィールドのレンダリング ──────────────────────────────────────────
 
-  it('renders bankroll field with loaded value', async () => {
+  it('1 レースに使う上限を円で持つ（資金比率ではない）', async () => {
     renderSettings();
-    const input = await screen.findByLabelText('バンクロール (円)');
-    expect(input).toBeInTheDocument();
-    expect((input as HTMLInputElement).value).toBe('100000');
+    const input = await screen.findByLabelText('1 レースに使う上限');
+    expect((input as HTMLInputElement).value).toBe('5000');
   });
 
-  it('renders kelly_fraction field with loaded value', async () => {
+  it('1 点あたりの賭け金を出す', async () => {
     renderSettings();
-    const input = await screen.findByLabelText('Kelly 分率');
-    expect(input).toBeInTheDocument();
-    expect((input as HTMLInputElement).value).toBe('0.25');
+    const input = await screen.findByLabelText('1 点あたりの賭け金');
+    expect((input as HTMLInputElement).value).toBe('100');
   });
 
-  it('renders max_stake_per_race_pct field with loaded value', async () => {
+  it('Kelly / 軍資金の入力は無くなっている', async () => {
     renderSettings();
-    const input = await screen.findByLabelText('1 レース最大賭け率');
-    expect(input).toBeInTheDocument();
-    expect((input as HTMLInputElement).value).toBe('0.05');
+    await screen.findByDisplayValue('TestAgent/1.0');
+    // 賭け金は「1 レースの上限」と「1 点あたり」の 2 つだけで決まる
+    expect(screen.queryByLabelText('軍資金（全体）')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('賭け金の思い切り')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('1 レースに使う割合')).not.toBeInTheDocument();
   });
 
   it('renders enabled_bet_types toggles for all 8 bet types', async () => {
@@ -185,13 +195,13 @@ describe('Settings', () => {
 
   // ── バリデーション ────────────────────────────────────────────────────
 
-  it('shows validation error when bankroll is below 100', async () => {
+  it('shows validation error when race_budget is below 100', async () => {
     const user = userEvent.setup();
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
 
-    const bankrollInput = screen.getByLabelText('バンクロール (円)');
-    fireEvent.change(bankrollInput, { target: { value: '50' } });
+    const budgetInput = screen.getByLabelText('1 レースに使う上限');
+    fireEvent.change(budgetInput, { target: { value: '50' } });
 
     // user_agent を編集して isDirty にする
     const userAgentInput = screen.getByDisplayValue('TestAgent/1.0');
@@ -206,13 +216,13 @@ describe('Settings', () => {
     });
   });
 
-  it('shows validation error when kelly_fraction is 0', async () => {
+  it('shows validation error when stake_unit is not a multiple of 100', async () => {
     const user = userEvent.setup();
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
 
-    const kellyInput = screen.getByLabelText('Kelly 分率');
-    fireEvent.change(kellyInput, { target: { value: '0' } });
+    const unitInput = screen.getByLabelText('1 点あたりの賭け金');
+    fireEvent.change(unitInput, { target: { value: '150' } });
 
     const userAgentInput = screen.getByDisplayValue('TestAgent/1.0');
     await user.tripleClick(userAgentInput);
@@ -222,7 +232,7 @@ describe('Settings', () => {
     await waitFor(() => expect(saveBtn).not.toBeDisabled());
     await user.click(saveBtn);
     await waitFor(() => {
-      expect(screen.getByText('0 より大きい値を入力してください')).toBeInTheDocument();
+      expect(screen.getByText('100 円単位で入力してください')).toBeInTheDocument();
     });
   });
 
@@ -268,13 +278,13 @@ describe('Settings', () => {
     });
   });
 
-  it('submits correct bankroll value after editing', async () => {
+  it('submits the per-race budget after editing', async () => {
     const user = userEvent.setup();
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
 
-    const bankrollInput = screen.getByLabelText('バンクロール (円)');
-    fireEvent.change(bankrollInput, { target: { value: '200000' } });
+    const budgetInput = screen.getByLabelText('1 レースに使う上限');
+    fireEvent.change(budgetInput, { target: { value: '20000' } });
 
     const saveBtn = screen.getByRole('button', { name: '変更を保存' });
     await waitFor(() => expect(saveBtn).not.toBeDisabled());
@@ -282,7 +292,7 @@ describe('Settings', () => {
 
     await waitFor(() => {
       const call = vi.mocked(updateSettings).mock.calls[0][0];
-      expect(call.bankroll).toBe(200000);
+      expect(call.race_budget).toBe(20000);
     });
   });
 });

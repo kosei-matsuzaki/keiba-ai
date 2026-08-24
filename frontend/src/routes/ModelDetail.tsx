@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Brain } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 import { fetchModel } from '@/lib/api';
 import { useActivateModel } from '@/hooks/useActivateModel';
@@ -69,8 +69,8 @@ export function ModelDetail() {
   const title = model?.name?.trim() ? model.name : `モデル ${modelId}`;
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <PageHeader icon={Brain} title={title} description="モデル詳細とバックテスト">
+    <div className="flex flex-col gap-8 p-6">
+      <PageHeader eyebrow="Model Detail" title={title} description="モデル詳細とバックテスト">
         <Button variant="outline" size="sm" asChild>
           <Link to="/models">
             <ArrowLeft className="mr-1.5 h-4 w-4" />
@@ -81,7 +81,7 @@ export function ModelDetail() {
 
       {/* モデルメタ */}
       {modelQuery.isPending ? (
-        <Skeleton className="h-32 w-full rounded-lg" />
+        <Skeleton className="h-32 w-full rounded-sm" />
       ) : modelQuery.isError || !model ? (
         <EmptyState
           message="モデルが見つかりません"
@@ -89,12 +89,12 @@ export function ModelDetail() {
         />
       ) : (
         <>
-          <Card>
+          <Card className="border-t border-border pt-6">
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
               <CardTitle className="flex items-center gap-3 text-base">
                 {title}
                 {model.is_active ? (
-                  <Badge variant="success">Active</Badge>
+                  <Badge tone="success">Active</Badge>
                 ) : (
                   <Badge variant="outline">非アクティブ</Badge>
                 )}

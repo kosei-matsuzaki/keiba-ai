@@ -254,115 +254,31 @@ def test_evaluate_persist_merges_into_model_run(trained_scenario):
 
 
 # ---------------------------------------------------------------------------
-# kelly_bet_size tests
+# Bet sizing — 定額のみ (Kelly は賭け金決定から廃止済み)
 # ---------------------------------------------------------------------------
 
 
-class TestKellyBetSize:
-    def test_positive_edge_returns_nonzero(self):
-        from ai.evaluation.backtest import kelly_bet_size
+def test_evaluate_flat_bet_sizing_recorded(trained_scenario):
+    """賭け金は 1 点定額のみ。Kelly 系のキーは metrics から消えている。
 
-        # win_prob=0.5, odds=3.0 → edge = 0.5*3.0 - 1 = 0.5 > 0
-        bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000)
-        assert bet > 0
-
-    def test_zero_edge_returns_zero(self):
-        from ai.evaluation.backtest import kelly_bet_size
-
-        # win_prob=1/3, odds=3.0 → edge = 0 exactly
-        bet = kelly_bet_size(win_prob=1 / 3, odds=3.0, bankroll=100_000)
-        assert bet == 0
-
-    def test_negative_edge_returns_zero(self):
-        from ai.evaluation.backtest import kelly_bet_size
-
-        # win_prob=0.1, odds=2.0 → edge = 0.1*2 - 1 = -0.8 < 0
-        bet = kelly_bet_size(win_prob=0.1, odds=2.0, bankroll=100_000)
-        assert bet == 0
-
-    def test_odds_one_returns_zero(self):
-        from ai.evaluation.backtest import kelly_bet_size
-
-        # b = odds - 1 = 0 → zero division guard
-        bet = kelly_bet_size(win_prob=0.9, odds=1.0, bankroll=100_000)
-        assert bet == 0
-
-    def test_rounding_to_min_bet(self):
-        from ai.evaluation.backtest import kelly_bet_size
-
-        # Choose params that result in a known bet size
-        # kappa=0.25, edge=1.0, b=1.0 → fraction=0.25, raw=25000 → rounded to 25000
-        bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.25, min_bet=100)
-        assert bet % 100 == 0
-
-    def test_below_min_bet_returns_zero(self):
-        from ai.evaluation.backtest import kelly_bet_size
-
-        # Very small bankroll → raw_size < min_bet → 0
-        bet = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=10, kappa=0.25, min_bet=100)
-        assert bet == 0
-
-    def test_larger_kappa_gives_larger_bet(self):
-        from ai.evaluation.backtest import kelly_bet_size
-
-        bet_small_kappa = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.1)
-        bet_large_kappa = kelly_bet_size(win_prob=0.5, odds=3.0, bankroll=100_000, kappa=0.5)
-        assert bet_large_kappa >= bet_small_kappa
-
-
-# ---------------------------------------------------------------------------
-# Kelly vs fixed bet sizing integration tests
-# ---------------------------------------------------------------------------
-
-
-def test_evaluate_kelly_vs_fixed_invested_differs(trained_scenario):
-    """Kelly sizing should produce a different win_invested than fixed unless
-    all bet sizes are exactly 100 (unlikely for a real model output)."""
-    db_file, model_dir = trained_scenario
-
-    fixed_metrics = evaluate(
-        model_path=model_dir, db=db_file,
-        bet_sizing="fixed",
-    )
-    kelly_metrics = evaluate(
-        model_path=model_dir, db=db_file,
-        bet_sizing="kelly",
-        kelly_kappa=0.25,
-        bankroll=100_000,
-    )
-
-    # Both should complete without error and have the same keys
-    assert "win_bets" in fixed_metrics
-    assert "win_bets" in kelly_metrics
-
-    # bet_sizing recorded in output
-    assert fixed_metrics["bet_sizing"] == "fixed"
-    assert kelly_metrics["bet_sizing"] == "kelly"
-
-    # Kelly-specific params recorded only for kelly mode
-    assert fixed_metrics["kelly_kappa"] is None
-    assert fixed_metrics["bankroll"] is None
-    assert kelly_metrics["kelly_kappa"] == 0.25
-    assert kelly_metrics["bankroll"] == 100_000
-
-
-def test_evaluate_kelly_returns_required_keys(trained_scenario):
-    db_file, model_dir = trained_scenario
-    metrics = evaluate(
-        model_path=model_dir, db=db_file,
-        bet_sizing="kelly", kelly_kappa=0.5, bankroll=50_000,
-    )
-    for key in ("win_bets", "win_invested", "win_gross_payout", "payback_win",
-                "place_bets", "place_invested", "place_gross_payout", "payback_place"):
-        assert key in metrics
-
-
-def test_evaluate_fixed_bet_sizing_recorded(trained_scenario):
+    デプロイ側 (ai.betting.strategy.assign_flat_stakes) が定額配分に変わった以上、
+    評価器に Kelly を残すと「アプリが実行できない戦略」を測れてしまうため撤去した。
+    """
     db_file, model_dir = trained_scenario
     metrics = evaluate(model_path=model_dir, db=db_file)
-    assert metrics["bet_sizing"] == "fixed"
-    assert metrics["kelly_kappa"] is None
-    assert metrics["bankroll"] is None
+    assert metrics["bet_sizing"] == "flat"
+    assert "kelly_kappa" not in metrics
+    assert "bankroll" not in metrics
+
+
+def test_kelly_bet_sizing_is_gone(trained_scenario):
+    """Kelly の賭け金 API が復活していないことを固定する。"""
+    import ai.evaluation.backtest as bt
+
+    assert not hasattr(bt, "kelly_bet_size")
+    db_file, model_dir = trained_scenario
+    with pytest.raises(TypeError):
+        evaluate(model_path=model_dir, db=db_file, bet_sizing="kelly")
 
 
 # ---------------------------------------------------------------------------

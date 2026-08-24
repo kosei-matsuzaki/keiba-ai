@@ -16,6 +16,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { EmptyState } from '@/components/EmptyState';
+import { Umaban } from '@/components/Umaban';
+import {
+  RecommendationParamsBar,
+  type RecommendationOverrides,
+} from '@/components/RecommendationParamsBar';
 import { formatErrorMessageSync, isNotFoundError, isServiceUnavailableError } from '@/lib/api';
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { useCreateBet } from '@/hooks/useCreateBet';
@@ -25,16 +30,17 @@ import type { RecommendationCandidate, RecommendationsResponse, BetType } from '
 
 /**
  * est_odds の出所を視覚的に区別するためのバッジ。
- * - confirmed (確定): 緑系の控えめなアウトラインバッジ
- * - implied  (推定): 黄系で「推」表記。tooltip に詳細
- * - unknown  : なし（— が表示されている前提）
+ *
+ * 出所は「外から取ってきた事実」のメタ情報なので色相を使わない
+ * (緑は「買い」、赤は「マイナス」、青は「AI の出力」に予約している)。
+ * 確定 / 実 は無彩色の実体バッジ、推定だけ枠線バッジで弱める。
  */
 function OddsSourceBadge({ source }: { source: 'confirmed' | 'scraped' | 'implied' | 'unknown' }) {
   if (source === 'confirmed') {
     return (
       <Badge
         variant="outline"
-        className="ml-1 border-emerald-300 px-1 text-[10px] font-normal text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
+        className="ml-1 px-1"
         title="確定オッズ（payouts / entries.odds_win 由来）"
       >
         確定
@@ -45,7 +51,7 @@ function OddsSourceBadge({ source }: { source: 'confirmed' | 'scraped' | 'implie
     return (
       <Badge
         variant="outline"
-        className="ml-1 border-sky-300 px-1 text-[10px] font-normal text-sky-700 dark:border-sky-700 dark:text-sky-400"
+        className="ml-1 px-1"
         title="実市場オッズ（odds.db に取り込んだ全 combo 確定オッズ）"
       >
         実
@@ -56,7 +62,7 @@ function OddsSourceBadge({ source }: { source: 'confirmed' | 'scraped' | 'implie
     return (
       <Badge
         variant="outline"
-        className="ml-1 border-amber-300 px-1 text-[10px] font-normal text-amber-700 dark:border-amber-700 dark:text-amber-400"
+        className="ml-1 px-1 text-subtle-foreground"
         title="単勝オッズから Plackett-Luce で推定したオッズ"
       >
         推定
@@ -66,12 +72,34 @@ function OddsSourceBadge({ source }: { source: 'confirmed' | 'scraped' | 'implie
   return null;
 }
 
+/**
+ * 買い目 (`3-7` `1-5-8` `4` など) を枠色の馬番チップで並べる。
+ * 区切り記号はそのまま残し、数字だけをチップにする。
+ */
+function ComboMarks({ combo, runners }: { combo: string; runners: number }) {
+  const parts = combo.split(/([^0-9]+)/).filter((t) => t !== '');
+  return (
+    <span className="inline-flex items-center gap-0.5" title={combo}>
+      {parts.map((part, i) =>
+        /^[0-9]+$/.test(part) ? (
+          <Umaban key={i} n={Number(part)} runners={runners} size="sm" />
+        ) : (
+          <span key={i} className="px-0.5 font-mono text-[11px] text-subtle-foreground">
+            {part.trim() === '' ? '\u00a0' : part}
+          </span>
+        )
+      )}
+    </span>
+  );
+}
+
 // ── EV coloring ───────────────────────────────────────────────────────────────
 
 function evClass(ev: number | null): string {
   if (ev === null) return 'text-muted-foreground';
-  if (ev >= 1.5) return 'text-green-600 font-semibold';
-  if (ev >= 1.2) return 'text-yellow-600';
+  // 緑 = 「買い」推奨。強弱は色相ではなくウェイトで付ける。
+  if (ev >= 1.5) return 'font-medium text-success';
+  if (ev >= 1.2) return 'text-success';
   return 'text-muted-foreground';
 }
 
@@ -165,6 +193,11 @@ interface RecommendationsCardProps {
   isPending: boolean;
   isError: boolean;
   error: unknown;
+  /** 枠色の導出に使う出走頭数。0 なら枠色なしの素のチップになる。 */
+  runners?: number;
+  /** このレースだけの上書き条件 (券種・予算)。 */
+  overrides?: RecommendationOverrides;
+  onOverridesChange?: (next: RecommendationOverrides) => void;
 }
 
 export function RecommendationsCard({
@@ -173,13 +206,19 @@ export function RecommendationsCard({
   isPending,
   isError,
   error,
+  runners = 0,
+  overrides,
+  onOverridesChange,
 }: RecommendationsCardProps) {
   return (
-    <Card>
+    <Card className="border-t border-border pt-6">
       <CardHeader>
-        <CardTitle className="text-base">推奨買目</CardTitle>
+        <CardTitle className="text-label-ja">推奨買目</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
+        {overrides != null && onOverridesChange != null && (
+          <RecommendationParamsBar value={overrides} onChange={onOverridesChange} />
+        )}
         {isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : isError ? (
@@ -203,9 +242,12 @@ export function RecommendationsCard({
           <>
             <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
               <p className="text-sm text-muted-foreground">
-                判断時バンクロール:{' '}
+                このレースの予算:{' '}
                 <span className="font-medium text-foreground">
-                  {formatYen(data.bankroll_at_decision)}
+                  {formatYen(data.race_budget)}
+                </span>
+                <span className="ml-2 text-xs">
+                  （実際の合計 {formatYen(data.candidates.reduce((n, c) => n + c.stake, 0))}）
                 </span>
               </p>
               <p className="text-xs text-muted-foreground">
@@ -232,7 +274,9 @@ export function RecommendationsCard({
                   return (
                     <TableRow key={`${c.bet_type}-${c.combo}-${idx}`} className={rowClass}>
                       <TableCell className="font-medium">{c.bet_type}</TableCell>
-                      <TableCell className="font-mono text-xs">{c.combo}</TableCell>
+                      <TableCell>
+                        <ComboMarks combo={c.combo} runners={runners} />
+                      </TableCell>
                       <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
                       <TableCell className="text-right">
                         {c.est_odds === null ? (

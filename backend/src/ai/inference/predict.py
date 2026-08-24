@@ -286,7 +286,7 @@ def predict_race_with_combinations(
     Args:
         bundle:    ModelBundle loaded via registry.load_model_full().
         frame:     Feature DataFrame for one race.
-        session:   Unused; retained for API compatibility.
+        session:   履歴エンコーダ (nn_history_feat_dim>0) 用。None なら履歴 zero。
         n_samples: Number of Plackett-Luce Monte Carlo samples.
         rng:       Optional Generator for reproducibility.
         top_k_combinations: Truncate each bet type list to top-K by EV.
@@ -313,6 +313,7 @@ def predict_race_with_combinations(
 def predict_race_with_shap(
     bundle: ModelBundle,
     frame: pd.DataFrame,
+    session: Session | None = None,
     top_n: int = 3,
 ) -> pd.DataFrame:
     """Predict + (NN) empty top_features.
@@ -320,10 +321,12 @@ def predict_race_with_shap(
     SHAP による特徴量寄与は廃止済み。top_features には空リストを入れて返す
     (UI 側で「説明なし」表示にできる)。``top_n`` はシグネチャ互換のため残すが未使用。
 
+    ``session`` は履歴エンコーダ用で :func:`predict_race` にそのまま渡す。
+
     Returns:
         DataFrame with columns: horse_id, score, win_prob, place_prob, top_features.
     """
-    result_df = predict_race(bundle, frame)
+    result_df = predict_race(bundle, frame, session=session)
     result_df["top_features"] = [[] for _ in range(len(result_df))]
     return result_df
 

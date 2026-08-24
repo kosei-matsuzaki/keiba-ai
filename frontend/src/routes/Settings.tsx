@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Settings2 } from 'lucide-react';
 
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings';
 import { SettingsForm, type SettingsSection } from '@/components/SettingsForm';
@@ -9,17 +8,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { formatErrorMessage } from '@/lib/api';
-import { Ingest } from '@/routes/Ingest';
 import type { SettingsUpdate } from '@/types/api';
 
-type TabKey = SettingsSection | 'ingest';
+type TabKey = SettingsSection;
 
+// 等幅で並べるので英字に揃える。
+// INGEST はレース画面 (Race > 過去のレース) の取込パネルへ、
+// OPS の緊急停止はスクレイパー状態カードへ移設したため、ここには置かない。
 const TABS: { value: TabKey; label: string }[] = [
-  { value: 'scraper', label: 'スクレイパー' },
-  { value: 'betting', label: 'ベッティング' },
-  { value: 'bet_types', label: '馬券種' },
-  { value: 'ops', label: '運用' },
-  { value: 'ingest', label: 'Ingest' },
+  { value: 'scraper', label: 'SCRAPER' },
+  { value: 'betting', label: 'BETTING' },
+  { value: 'bet_types', label: 'BET TYPES' },
 ];
 
 export function Settings() {
@@ -33,22 +32,20 @@ export function Settings() {
         toast.success('設定を保存しました');
       },
       onError: async (err) => {
-        toast.error(`保存に失敗しました: ${await formatErrorMessage(err)}`);
+        toast.error('保存に失敗しました', {
+          description: await formatErrorMessage(err),
+          action: { label: '再試行', onClick: () => handleSubmit(values) },
+        });
       },
     });
   }
 
-  // 注: SettingsForm と Ingest は両方常時マウントしておき、CSS で hidden 切替する。
-  // これにより活発な form state や Ingest の polling 状態が tab 切替で失われない。
-  const isIngest = activeTab === 'ingest';
-  const formActiveSection = !isIngest ? (activeTab as SettingsSection) : undefined;
-
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-12 p-6">
       <PageHeader
-        icon={Settings2}
-        title="Settings"
-        description="アプリ設定とスクレイパー実行をまとめて管理"
+        eyebrow="Settings"
+        title="設定"
+        description="全レース共通の予想パラメータとスクレイパーの動作設定"
       />
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
@@ -61,29 +58,28 @@ export function Settings() {
         </TabsList>
       </Tabs>
 
-      {/* 一般設定: 4 セクション。SettingsForm は activeSection で 1 つだけ表示。 */}
+      {/* SettingsForm は activeSection で 1 セクションだけ表示する
+          (マウントは維持されるので、タブを切り替えても入力中の値は消えない)。 */}
       {settingsQuery.isPending ? (
-        <Skeleton className={isIngest ? 'hidden' : 'h-96 w-full rounded-lg'} />
+        <Skeleton className="h-96 w-full rounded-sm" />
       ) : settingsQuery.isError ? (
         <EmptyState
           message="設定の取得に失敗しました"
           description="バックエンドが起動しているか確認してください。"
         />
       ) : (
-        <div className={isIngest ? 'hidden' : 'block'}>
-          <SettingsForm
-            defaults={settingsQuery.data}
-            onSubmit={handleSubmit}
-            isPending={updateMutation.isPending}
-            activeSection={formActiveSection}
-          />
-        </div>
+        <SettingsForm
+          defaults={settingsQuery.data}
+          onSubmit={handleSubmit}
+          isPending={updateMutation.isPending}
+          activeSection={activeTab}
+        />
       )}
 
-      {/* Ingest: scrape ジョブ操作 / 状態。tab 切替時もマウント維持 */}
-      <div className={isIngest ? 'block' : 'hidden'}>
-        <Ingest embedded />
-      </div>
+      <p className="text-xs leading-relaxed text-subtle-foreground">
+        券種・予算・EV 閾値はここが既定値です。レースごとに変えたいときは、
+        レース詳細の「推奨買目」で上書きできます。
+      </p>
     </div>
   );
 }

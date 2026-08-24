@@ -1,69 +1,67 @@
-import type { ComponentType } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  CalendarDays,
-  Brain,
-  Settings,
-  Wallet,
-  Sun,
-  Moon,
-} from 'lucide-react';
+import { Sun, Moon } from 'lucide-react';
 
+import { BrandMark } from '@/components/BrandMark';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/hooks/useTheme';
 import { cn } from '@/lib/cn';
 
 interface NavItem {
   to: string;
+  /** PageHeader の §NN と揃える章番号。 */
+  index: string;
   label: string;
-  icon: ComponentType<{ className?: string }>;
   /** RaceDetail (/races/:id) も Race tab を active にする */
   activeMatch?: (pathname: string) => boolean;
 }
 
 const navItems: NavItem[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/', index: '01', label: 'DASHBOARD' },
   {
     to: '/races',
-    label: 'Race',
-    icon: CalendarDays,
+    index: '02',
+    label: 'RACE',
     activeMatch: (p) => p.startsWith('/races') || p.startsWith('/upcoming') || p.startsWith('/past'),
   },
-  { to: '/ledger', label: 'Ledger', icon: Wallet },
+  { to: '/ledger', index: '03', label: 'LEDGER' },
   {
     to: '/models',
-    label: 'Models',
-    icon: Brain,
+    index: '04',
+    label: 'MODELS',
     activeMatch: (p) => p.startsWith('/models'),
   },
   {
     to: '/settings',
-    label: 'Settings',
-    icon: Settings,
+    index: '05',
+    label: 'SETTINGS',
     activeMatch: (p) => p.startsWith('/settings') || p.startsWith('/ingest'),
   },
 ];
 
+/**
+ * ナビは等幅の英字 + 章番号だけにする (アイコンは外す)。番号は PageHeader の
+ * §NN と一致させ、「いまどの章にいるか」がヘッダと見出しの両方で読めるようにする。
+ * 選択中は面ではなく色 (primary) で示す。
+ */
 export function Topbar() {
   const { pathname } = useLocation();
   const [theme, , toggleTheme] = useTheme();
   return (
     <header
       aria-label="トップナビゲーション"
-      className="sticky top-0 z-30 flex h-14 items-center gap-6 border-b border-border bg-background/80 px-6 backdrop-blur-md"
+      className="sticky top-0 z-30 flex h-16 items-center gap-8 border-b border-border bg-background/80 px-8 backdrop-blur-md"
     >
       {/* Logo */}
       <div className="flex items-center gap-2.5">
-        <img src="/logo.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
-        <span className="text-base font-bold tracking-wide text-foreground">
+        <BrandMark className="h-[18px] w-[18px] text-primary" />
+        <span className="font-mono text-[13px] tracking-[0.2em] text-foreground">
           KEIBA <span className="text-primary">AI</span>
         </span>
       </div>
 
       {/* Nav links */}
-      <nav aria-label="主要画面" className="flex flex-1 items-center gap-1">
-        {navItems.map(({ to, label, icon: Icon, activeMatch }) => (
+      <nav aria-label="主要画面" className="flex flex-1 items-center gap-6">
+        {navItems.map(({ to, index, label, activeMatch }) => (
           <NavLink
             key={to}
             to={to}
@@ -71,15 +69,27 @@ export function Topbar() {
             className={({ isActive }) => {
               const active = activeMatch ? activeMatch(pathname) : isActive;
               return cn(
-                'flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                active
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:bg-card-elevated hover:text-foreground',
+                'font-mono text-[12px] tracking-[0.12em] transition-colors',
+                active ? 'text-primary' : 'text-subtle-foreground hover:text-foreground'
               );
             }}
           >
-            <Icon className="h-4 w-4 shrink-0" />
-            {label}
+            {({ isActive }) => {
+              const active = activeMatch ? activeMatch(pathname) : isActive;
+              return (
+                <>
+                  <span
+                    className={cn(
+                      'mr-1.5 hidden md:inline',
+                      active ? 'text-primary' : 'text-subtle-foreground/60'
+                    )}
+                  >
+                    {index}
+                  </span>
+                  {label}
+                </>
+              );
+            }}
           </NavLink>
         ))}
       </nav>
@@ -92,11 +102,7 @@ export function Topbar() {
         aria-label={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
         title={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
       >
-        {theme === 'dark' ? (
-          <Sun className="h-4 w-4" />
-        ) : (
-          <Moon className="h-4 w-4" />
-        )}
+        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </Button>
     </header>
   );

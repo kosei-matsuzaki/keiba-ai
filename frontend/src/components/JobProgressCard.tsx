@@ -19,13 +19,13 @@ const TERMINAL_STATUSES = new Set(['success', 'failed', 'cancelled']);
 function statusBadge(status: string) {
   switch (status) {
     case 'running':
-      return <Badge variant="info">実行中</Badge>;
+      return <Badge>実行中</Badge>;
     case 'success':
-      return <Badge variant="success">完了</Badge>;
+      return <Badge tone="success">完了</Badge>;
     case 'failed':
-      return <Badge variant="destructive">失敗</Badge>;
+      return <Badge tone="destructive">失敗</Badge>;
     case 'cancelled':
-      return <Badge variant="secondary">中断</Badge>;
+      return <Badge variant="outline">中断</Badge>;
     case 'pending':
       return <Badge variant="outline">待機中</Badge>;
     default:
@@ -58,7 +58,7 @@ export function JobProgressCard({ jobId, onDismiss, title = 'ジョブ進捗' }:
   const isTerminal = job ? TERMINAL_STATUSES.has(job.status) : false;
 
   return (
-    <Card>
+    <Card className="border-t border-border pt-6">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-3 text-base">
           {title}
@@ -75,9 +75,16 @@ export function JobProgressCard({ jobId, onDismiss, title = 'ジョブ進捗' }:
           <p className="text-muted-foreground">ジョブ情報を取得中…</p>
         )}
         {query.isError && !job && (
-          <p className="text-muted-foreground">
-            ジョブが見つかりませんでした (id: <span className="font-mono text-xs">{jobId}</span>)
-          </p>
+          <div className="space-y-2">
+            <p className="text-muted-foreground">
+              ジョブの状態を取得できませんでした (id:{' '}
+              <span className="font-mono text-xs">{jobId}</span>)。
+              バックエンドが再起動された可能性があります。
+            </p>
+            <Button size="sm" variant="outline" onClick={() => query.refetch()}>
+              再確認
+            </Button>
+          </div>
         )}
         {job && (
           <>
@@ -88,6 +95,14 @@ export function JobProgressCard({ jobId, onDismiss, title = 'ジョブ進捗' }:
               <Row label="終了時刻" value={formatDateTime(job.finished_at)} />
             )}
             <Row label="経過時間" value={formatElapsed(elapsedSeconds(job))} />
+            {!isTerminal && (
+              // ジョブ状態はインメモリ管理 (api/jobs.py の JobRegistry)。
+              // 黙って回り続けると「固まった」と受け取られるので先に伝える。
+              <p className="pt-1 text-xs leading-relaxed text-subtle-foreground">
+                この実行はバックエンドを再起動すると追跡できなくなります（処理自体は
+                中断されますが、状態表示も失われます）。
+              </p>
+            )}
             {job.error && (
               <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
                 {job.error}

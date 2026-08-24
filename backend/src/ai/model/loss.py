@@ -73,39 +73,47 @@ def log_growth_loss(
     finish_positions: torch.Tensor,
     odds_win: torch.Tensor,
     mask: torch.Tensor,
-    kelly_fraction: float = 0.25,
+    cash_fraction: float = 0.25,
 ) -> torch.Tensor:
-    """Fractional-Kelly log-growth (decision-focused) loss for 単勝 betting.
+    """Log-growth (decision-focused) loss for 単勝 betting.
 
     Each race is treated as a 単勝 portfolio.  A softmax over the model scores
-    gives per-horse allocation weights ``p_i``; we stake a fraction
-    ``kelly_fraction`` of bankroll spread by ``p_i`` and keep the rest in cash.
-    The realised wealth multiple of the race is::
+    gives per-horse allocation weights ``p_i``; a fraction ``cash_fraction`` of
+    the notional is spread by ``p_i`` and the rest is held as cash.  The
+    realised wealth multiple of the race is::
 
-        W = 1 + kelly_fraction * (p_winner * odds_winner - 1)
+        W = 1 + cash_fraction * (p_winner * odds_winner - 1)
 
     and the loss is ``-mean(log W)`` over races.  Maximising this maximises
-    expected log-growth of bankroll (the Kelly objective) using **real odds**,
+    expected log-growth of the staked notional using **real odds**,
     so the model is rewarded for concentrating mass where ``p * odds > 1`` and
     penalised when it does not — i.e. it optimises betting return directly
     rather than ranking accuracy.
 
-    The cash term (``kelly_fraction < 1``) is what keeps ``odds_winner`` in the
-    gradient; with full-Kelly (kf=1, no cash) the odds factor degenerates to a
-    constant and the objective collapses to plain winner cross-entropy.
+    **``cash_fraction`` is a gradient device, not a staking policy.**  It used to
+    be called ``kelly_fraction``, but betting Kelly (staking a fraction of
+    bankroll) was removed from deployment — ``ai.betting.strategy`` stakes a flat
+    amount per 買い目.  What this constant actually does is keep the cash term
+    alive: with ``cash_fraction = 1`` (no cash) ``W`` degenerates to
+    ``p_winner · odds_winner``, so ``log W = log p_winner + log odds_winner`` and
+    the odds term is a constant — **the gradient becomes exactly plain winner
+    cross-entropy and the loss stops optimising ROI at all** (verified
+    numerically: gradients agree to 1e-8).  Values in (0, 1) are what make this a
+    betting-return objective rather than a ranking one.
 
     Args:
         scores:           [B, N]
         finish_positions: [B, N]  NaN = exclude; winner is position == 1
         odds_win:         [B, N]  **raw** 単勝 odds (NaN = unknown)
         mask:             [B, N]  bool
-        kelly_fraction:   fraction of bankroll staked per race, in (0, 1).
+        cash_fraction:    weight on the staked leg vs cash, in (0, 1).  Must be
+                          < 1 or the objective collapses to cross-entropy.
 
     Returns:
         Scalar loss (mean over races with a known, odds-carrying winner).
     """
     device = scores.device
-    kf = float(kelly_fraction)
+    kf = float(cash_fraction)
     total_loss = torch.zeros(1, device=device)
     n_valid = 0
 
@@ -174,7 +182,10 @@ def kelly_deploy_loss(
         finish_positions: [B, N]  NaN = exclude; winner is position == 1
         odds_win:         [B, N]  **raw** 単勝 odds (NaN = unknown → no stake)
         mask:             [B, N]  bool
-        kelly_fraction:   Kelly multiplier on edge (same as strategy.py).
+        kelly_fraction:   Kelly multiplier on edge.  Genuinely Kelly here (unlike
+                          :func:`log_growth_loss`'s cash term) — this loss models
+                          edge-proportional staking, which deployment no longer
+                          does (see :func:`flat_ev_loss` for the current rule).
         max_total_stake:  cap on per-race staked fraction (cash floor = 1 - cap).
 
     Returns:
@@ -220,6 +231,109 @@ def kelly_deploy_loss(
 
         wealth = (1.0 - total_stake) + stake[w] * o_w
         total_loss = total_loss - torch.log(wealth)
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
+def flat_ev_loss(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    odds_win: torch.Tensor,
+    mask: torch.Tensor,
+    ev_threshold: float = 1.1,
+    gate_temp: float = 0.05,
+    max_bets: float = 0.0,
+) -> torch.Tensor:
+    """Flat-stake expected-profit loss — matches the *deployed* 単勝 betting rule.
+
+    ``ai.betting.strategy.assign_flat_stakes`` bets a **fixed amount per 買い目**
+    on every horse whose ``EV = p·o`` clears a threshold, highest EV first, up to
+    a per-race budget.  Kelly (staking a *fraction of bankroll*) was removed from
+    deployment, so :func:`log_growth_loss` / :func:`kelly_deploy_loss` — both of
+    which optimise bankroll log-growth under edge-proportional staking — now
+    optimise a decision the app never makes.  This loss closes that gap.
+
+    Per race, with ``p_i = softmax(scores)_i`` and raw odds ``o_i``::
+
+        ev_i     = p_i * o_i
+        g_i      = sigmoid((ev_i - ev_threshold) / gate_temp)   # soft 買う/買わない
+        (g scaled down so sum_i g_i <= max_bets, when max_bets > 0)
+        profit_b = g_winner * o_winner - sum_i g_i              # 1 点 = 1 単位
+
+    and the loss is ``-mean(profit_b)`` over races.  ``profit`` is denominated in
+    *stake units*, not bankroll multiples: with flat stakes there is no
+    compounding, so expected profit — not log-growth — is the quantity a flat
+    bettor maximises.
+
+    The sigmoid is the abstention: horses below the threshold contribute almost
+    no stake and almost no loss.  Betting nothing scores exactly 0, which is the
+    honest optimum when no +EV bet exists — so this loss will happily collapse to
+    "buy nothing" and stops teaching the ranking.  Use it as a **fine-tune stage
+    on top of a ``plackett_luce`` pretrain** (``--init-from``), and select
+    checkpoints on ``--monitor valid_tansho_roi``.
+
+    Unlike :func:`log_growth_loss` there is no log to tame the payoff, so a single
+    100:1 winner contributes ~+100 to one race's profit and dominates the batch
+    mean.  That heavy tail is inherent to the quantity being optimised (realised
+    flat-stake profit); rely on ``--gradient-clip-val`` (default 1.0) rather than
+    removing it, since clipping the odds would optimise a different bet.
+
+    Args:
+        scores:           [B, N]
+        finish_positions: [B, N]  NaN = exclude; winner is position == 1
+        odds_win:         [B, N]  **raw** 単勝 odds (NaN / <=0 → never staked)
+        mask:             [B, N]  bool
+        ev_threshold:     EV above which a horse is bought (deploy 側 min_ev)
+        gate_temp:        sigmoid temperature; smaller = harder 買う/買わない境界
+        max_bets:         per-race cap on total staked units (0 = 無制限)。
+                          deploy の race_budget / stake_unit に相当。
+
+    Returns:
+        Scalar loss (mean over races with a clean, odds-carrying winner).
+    """
+    device = scores.device
+    tau = float(ev_threshold)
+    temp = max(float(gate_temp), 1e-6)
+    cap = float(max_bets)
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(finish_positions[b])
+        if valid.sum() < 2:
+            continue
+
+        s = scores[b][valid]                 # [K]
+        pos = finish_positions[b][valid]     # [K]
+        o = odds_win[b][valid]               # [K]
+
+        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
+        if winner_idx.numel() == 0:
+            continue
+        w = winner_idx[0]
+        o_w = o[w]
+        if torch.isnan(o_w) or o_w <= 0:
+            continue
+
+        p = torch.softmax(s, dim=0)          # [K] win probabilities
+
+        # オッズ不明 / 非正の馬は買えない → gate 0
+        o_ok = torch.nan_to_num(o, nan=0.0)
+        bettable = o_ok > 0
+        ev = p * o_ok
+        gate = torch.sigmoid((ev - tau) / temp)
+        gate = torch.where(bettable, gate, torch.zeros_like(gate))
+
+        if cap > 0:
+            staked = gate.sum()
+            scale = torch.clamp(cap / torch.clamp(staked, min=1e-6), max=1.0)
+            gate = gate * scale
+
+        profit = gate[w] * o_w - gate.sum()
+        total_loss = total_loss - profit
         n_valid += 1
 
     if n_valid == 0:
@@ -350,7 +464,7 @@ def multi_objective_loss(
     odds_win: torch.Tensor,
     mask: torch.Tensor,
     combo_weight: float = 0.01,
-    kelly_fraction: float = 0.25,
+    cash_fraction: float = 0.25,
     combo_bet_type: str = "馬連",
 ) -> torch.Tensor:
     """Production all-markets objective: 単複 betting + 連系 calibration.
@@ -377,13 +491,13 @@ def multi_objective_loss(
         scores / finish_positions / mask: [B, N].
         odds_win:     [B, N] raw 単勝 odds (for the log_growth term).
         combo_weight: weight on the combo-calibration NLL term.
-        kelly_fraction: for the log_growth term.
+        cash_fraction: for the log_growth term (see :func:`log_growth_loss`).
         combo_bet_type: 連系 type (or "all") for the calibration term.
 
     Returns:
         Scalar loss.  NaN only when *both* terms are NaN for the batch.
     """
-    lg = log_growth_loss(scores, finish_positions, odds_win, mask, kelly_fraction)
+    lg = log_growth_loss(scores, finish_positions, odds_win, mask, cash_fraction)
     cn = combo_nll_loss(scores, finish_positions, mask, bet_type=combo_bet_type)
 
     terms = []

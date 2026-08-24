@@ -14,7 +14,7 @@ export const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <Dashboard /> },
-      // Race tab: Upcoming + Past を 1 ページに統合
+      // Race: カレンダーで日を選ぶ 1 画面 (今週末/Past のタブは廃止)
       { path: 'races', element: <Races /> },
       { path: 'races/:race_id', element: <RaceDetail /> },
       // 既存ブックマーク互換: 旧 /upcoming /past は /races へ redirect
@@ -23,10 +23,10 @@ export const router = createBrowserRouter([
       // Models: 一覧。各モデルの詳細 (/models/:id) でバックテストを実行する。
       { path: 'models', element: <Models /> },
       { path: 'models/:model_id', element: <ModelDetail /> },
-      // Settings: 一般 + Ingest を内部タブで統合
+      // Settings: 全レース共通の予想パラメータ + スクレイパー動作設定
       { path: 'settings', element: <Settings /> },
-      // 旧 /ingest は /settings (Ingest タブ) へ redirect
-      { path: 'ingest', element: <Navigate to="/settings" replace /> },
+      // 取込は Race > 過去のレース (カレンダー横) へ移設したので、旧 /ingest はそこへ
+      { path: 'ingest', element: <Navigate to="/races?tab=past" replace /> },
       { path: 'ledger', element: <Ledger /> },
     ],
   },

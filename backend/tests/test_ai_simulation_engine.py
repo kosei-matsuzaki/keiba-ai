@@ -38,12 +38,16 @@ def test_strategy_presets_present():
     assert {"conservative", "balanced", "aggressive"} <= set(STRATEGY_PRESETS)
 
 
-def test_strategy_presets_kelly_ascending():
-    """積極的になるほど Kelly が大きく min_ev が小さくなる。"""
+def test_strategy_presets_get_looser_as_they_get_aggressive():
+    """積極的になるほど 1 点の賭け金が大きく、買う基準 (min_ev) が下がる。
+
+    定額配分なので戦略の違いは Kelly 係数ではなく
+    「1 点いくら賭けるか (stake_ratio)」と「どこから買うか (min_ev)」で表す。
+    """
     c = STRATEGY_PRESETS["conservative"]
     b = STRATEGY_PRESETS["balanced"]
     a = STRATEGY_PRESETS["aggressive"]
-    assert c["kelly_fraction"] < b["kelly_fraction"] < a["kelly_fraction"]
+    assert c["stake_ratio"] <= b["stake_ratio"] < a["stake_ratio"]
     assert c["min_ev"] > b["min_ev"] > a["min_ev"]
 
 
@@ -217,8 +221,9 @@ def test_compounding_initial_bankroll_equals_budget(monkeypatch):
 
     bankrolls_seen: list[int] = []
 
-    def _fake(*, bankroll, **_kw):
-        bankrolls_seen.append(bankroll)
+    def _fake(*, race_budget, **_kw):
+        # race_budget = 残資産 × 0.05 なので、残資産は逆算して記録する
+        bankrolls_seen.append(round(race_budget / 0.05))
         return SimpleNamespace(candidates=[])
     monkeypatch.setattr(sim_mod, "recommend_for_race", _fake)
 
@@ -247,7 +252,8 @@ def test_compounding_bankroll_grows_with_payouts(monkeypatch):
     bankrolls_seen: list[int] = []
 
     # 各 race で 100 円を winning combo "1" に賭ける → odds 4.0 で payout 400
-    def _winning_recommend(*, bankroll, **_kw):
+    def _winning_recommend(*, race_budget, **_kw):
+        bankroll = round(race_budget / 0.05)
         bankrolls_seen.append(bankroll)
         if bankroll < 100:
             return SimpleNamespace(candidates=[])
@@ -282,7 +288,8 @@ def test_compounding_bankroll_shrinks_on_loss(monkeypatch):
     bankrolls_seen: list[int] = []
 
     # 各 race で combo "2" (= 2 着、winner ではない) に 100 円賭け → payout 0
-    def _losing_recommend(*, bankroll, **_kw):
+    def _losing_recommend(*, race_budget, **_kw):
+        bankroll = round(race_budget / 0.05)
         bankrolls_seen.append(bankroll)
         if bankroll < 100:
             return SimpleNamespace(candidates=[])
@@ -315,7 +322,8 @@ def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
 
     bankrolls_seen: list[int] = []
 
-    def _greedy_losing(*, bankroll, **_kw):
+    def _greedy_losing(*, race_budget, **_kw):
+        bankroll = round(race_budget / 0.05)
         bankrolls_seen.append(bankroll)
         # bankroll の全額を負け combo に賭ける
         stake = bankroll // 100 * 100
@@ -350,21 +358,14 @@ def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
-    seen_bankrolls: list[int] = []
     seen_max_yen: list[int | None] = []
 
     # recommend_for_race を stub。max_stake_per_race_yen が渡ってくることを観測。
-    def _fake(*, bankroll, max_stake_per_race_yen=None, **_kw):
-        seen_bankrolls.append(bankroll)
-        seen_max_yen.append(max_stake_per_race_yen)
-        # cap = min(bankroll * 0.05, max_stake_per_race_yen) を再現
-        pct_cap = bankroll * 0.05
-        cap = (
-            min(pct_cap, max_stake_per_race_yen)
-            if max_stake_per_race_yen
-            else pct_cap
-        )
-        stake = int(cap) // 100 * 100
+    def _fake(*, race_budget, **_kw):
+        # engine 側で race_budget = min(残資産 × 0.05, max_stake_per_race_yen)
+        # まで計算済みなので、stub はその予算をそのまま賭ける。
+        seen_max_yen.append(race_budget)
+        stake = int(race_budget) // 100 * 100
         if stake == 0:
             return SimpleNamespace(candidates=[])
         cand = SimpleNamespace(bet_type="単勝", combo="1", stake=stake)
@@ -381,7 +382,8 @@ def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
             max_stake_per_race_yen=2_000,  # 1 race max 2,000 円
         )
 
-    # 全ての race で max_stake_per_race_yen が下流に届いている
+    # 1 race の予算が max_stake_per_race_yen で頭打ちになっている
+    # (残資産 100 万 × 5% = 5 万 だが、2,000 円が優先される)
     assert all(v == 2_000 for v in seen_max_yen)
     # 各 race の stake が 2000 円を超えない (recommend_for_race 内でも capping)
     # bankroll は 1_000_000 → 1_000_000 * 0.05 = 50000 が pct cap だが
@@ -389,7 +391,6 @@ def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
     # 1 race ごとの invested は 2000 で頭打ち。
     # winning combo "1" odds=4.0 → payout=8000、profit=+6000/race
     # bankroll: 1000000 → 1006000 → 1012000 → 1018000
-    assert seen_bankrolls == [1_000_000, 1_006_000, 1_012_000]
     assert result.final_bankroll == 1_018_000
 
 
@@ -404,7 +405,8 @@ def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
-    def _const_winning(*, bankroll, **_kw):
+    def _const_winning(*, race_budget, **_kw):
+        bankroll = round(race_budget / 0.05)
         if bankroll < 100:
             return SimpleNamespace(candidates=[])
         cand = SimpleNamespace(bet_type="単勝", combo="1", stake=100)

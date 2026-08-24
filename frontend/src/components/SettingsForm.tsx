@@ -6,20 +6,9 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/cn';
+import { ALL_BET_TYPES } from '@/lib/betTypes';
 import type { BetType, SettingsResponse, SettingsUpdate } from '@/types/api';
-
-const ALL_BET_TYPES: BetType[] = [
-  '単勝',
-  '複勝',
-  '枠連',
-  '馬連',
-  'ワイド',
-  '馬単',
-  '三連複',
-  '三連単',
-];
 
 const betTypeEnum = z.enum(['単勝', '複勝', '枠連', '馬連', 'ワイド', '馬単', '三連複', '三連単']);
 
@@ -29,21 +18,19 @@ const schema = z
     rate_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     rate_max_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     night_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
+    win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     win_ev_threshold: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
-    place_ev_threshold: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     scraper_stopped: z.boolean(),
-    bankroll: z.coerce
+    // 賭け金は「1 レースにいくらまで」と「1 点いくら」の 2 つだけ
+    race_budget: z.coerce
       .number()
       .int('整数で入力してください')
       .min(100, '100 以上の値を入力してください'),
-    kelly_fraction: z.coerce
+    stake_unit: z.coerce
       .number()
-      .gt(0, '0 より大きい値を入力してください')
-      .max(1, '1 以下の値を入力してください'),
-    max_stake_per_race_pct: z.coerce
-      .number()
-      .gt(0, '0 より大きい値を入力してください')
-      .max(1, '1 以下の値を入力してください'),
+      .int('整数で入力してください')
+      .min(100, '100 以上の値を入力してください')
+      .refine((v) => v % 100 === 0, '100 円単位で入力してください'),
     enabled_bet_types: z
       .array(betTypeEnum)
       .min(1, '1 つ以上の馬券種を選択してください'),
@@ -55,7 +42,7 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
-export type SettingsSection = 'scraper' | 'betting' | 'bet_types' | 'ops';
+export type SettingsSection = 'scraper' | 'betting' | 'bet_types';
 
 interface SettingsFormProps {
   defaults: SettingsResponse;
@@ -71,6 +58,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
     handleSubmit,
     reset,
     control,
+    watch,
     formState: { errors, isDirty, dirtyFields },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -92,10 +80,13 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
     control,
   });
 
-  const { field: scraperStoppedField } = useController({
-    name: 'scraper_stopped',
-    control,
-  });
+  // 予算と 1 点あたりの額から「最大何点買えるか」を出す
+  const watchedBudget = watch('race_budget');
+  const watchedUnit = watch('stake_unit');
+  const maxPoints =
+    Number.isFinite(Number(watchedBudget)) && Number(watchedUnit) > 0
+      ? Math.floor(Number(watchedBudget) / Number(watchedUnit))
+      : null;
 
   function toggleBetType(betType: BetType) {
     const current = enabledBetTypesField.value;
@@ -176,14 +167,14 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
         </Section>
 
         <Section
-          description="evaluate.py で「賭ける / 賭けない」を判定する閾値と Kelly 資金配分。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。"
+          description="連系（馬連・三連複など）を「賭ける / 賭けない」判定する期待値の閾値。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。単勝・複勝は期待値ではなく AI の本命を買うルールなので、ここでは設定しません。"
           hidden={!visible('betting')}
         >
               <div className="flex flex-col gap-4">
                 <FieldRow
-                  label="単勝 EV 閾値"
+                  label="連系を買う基準"
                   id="win_ev_threshold"
-                  help="win_prob × odds_win がこの値超で賭け"
+                  help="「賭けた額の何倍が期待できるか」の下限。1.00 が損益トントンで、1.10 なら 1 割の取り分が見込めるときだけ買います（的中確率 × オッズ で計算）。上げるほど買う回数は減ります。単勝・複勝には適用されません。"
                   error={errors.win_ev_threshold?.message}
                 >
                   <Input
@@ -194,69 +185,67 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   />
                 </FieldRow>
                 <FieldRow
-                  label="複勝 EV 閾値"
-                  id="place_ev_threshold"
-                  help="place_prob × min_payout/100 がこの値超で賭け"
-                  error={errors.place_ev_threshold?.message}
+                  label="単勝のオッズ下限"
+                  id="win_min_odds"
+                  help="単勝は AI の本命（予想 1 位）を買うルールです。ここを下回るオッズのときだけ見送ります。期待値で絞ると大穴に寄って回収率が落ちるため、期待値条件は使いません。"
+                  error={errors.win_min_odds?.message}
                 >
                   <Input
-                    id="place_ev_threshold"
+                    id="win_min_odds"
                     type="number"
                     step="0.01"
-                    {...register('place_ev_threshold')}
+                    {...register('win_min_odds')}
                   />
                 </FieldRow>
               </div>
 
               <div className="flex flex-col gap-4">
+                {/* 賭け金は「1 レースにいくらまで」と「1 点いくら」の 2 つだけ。
+                    資金比率 (Kelly) は廃止した。 */}
                 <FieldRow
-                  label="バンクロール (円)"
-                  id="bankroll"
-                  help="運用資金の総額。Kelly 計算の基準となる"
-                  error={errors.bankroll?.message}
+                  label="1 レースに使う上限"
+                  id="race_budget"
+                  help="1 レースに使ってよい金額の上限です。買う買い目が少なければ、ここまで使わずに終わります（1 点も買わないこともあります）。"
+                  error={errors.race_budget?.message}
                 >
-                  <Input
-                    id="bankroll"
-                    type="number"
-                    step="100"
-                    {...register('bankroll')}
-                  />
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm text-subtle-foreground">¥</span>
+                    <Input
+                      id="race_budget"
+                      type="number"
+                      step="500"
+                      min="100"
+                      className="text-right font-mono tabular-nums"
+                      {...register('race_budget')}
+                    />
+                  </div>
                 </FieldRow>
+
                 <FieldRow
-                  label="Kelly 分率"
-                  id="kelly_fraction"
-                  help="Kelly 配分の割合 (0.25 = 1/4 Kelly)"
-                  error={errors.kelly_fraction?.message}
+                  label="1 点あたりの賭け金"
+                  id="stake_unit"
+                  help={`買い目 1 点あたりの金額です。馬券は 100 円単位でしか買えません。${
+                    maxPoints != null ? `いまの設定なら 1 レース最大 ${maxPoints} 点まで。` : ''
+                  }`}
+                  error={errors.stake_unit?.message}
                 >
-                  <Input
-                    id="kelly_fraction"
-                    type="number"
-                    step="0.05"
-                    min="0.01"
-                    max="1"
-                    {...register('kelly_fraction')}
-                  />
-                </FieldRow>
-                <FieldRow
-                  label="1 レース最大賭け率"
-                  id="max_stake_per_race_pct"
-                  help="バンクロールに対する 1 レースあたりの上限比率 (0.05 = 5%)"
-                  error={errors.max_stake_per_race_pct?.message}
-                >
-                  <Input
-                    id="max_stake_per_race_pct"
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max="1"
-                    {...register('max_stake_per_race_pct')}
-                  />
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm text-subtle-foreground">¥</span>
+                    <Input
+                      id="stake_unit"
+                      type="number"
+                      step="100"
+                      min="100"
+                      className="text-right font-mono tabular-nums"
+                      {...register('stake_unit')}
+                    />
+                  </div>
                 </FieldRow>
               </div>
         </Section>
 
         <Section
-          description="推奨買目と evaluate.py の賭け判定で対象とする馬券種。チェックを外した券種は賭け対象から除外される。"
+          description="ふだん買う馬券の種類。ここで外した券種は推奨買目に出ません（レースごとに変えたいときは、レース詳細の「この予想の条件」で切り替えられます）。"
           hidden={!visible('bet_types')}
         >
               <div>
@@ -270,10 +259,10 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                         onClick={() => toggleBetType(betType)}
                         aria-pressed={isSelected}
                         className={cn(
-                          'flex h-9 items-center justify-center rounded-full border text-sm font-medium transition-all active:scale-[0.97]',
+                          'flex h-9 items-center justify-center rounded-sm border text-sm transition-colors',
                           isSelected
-                            ? 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
-                            : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground',
                         )}
                       >
                         {betType}
@@ -289,38 +278,20 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
               </div>
         </Section>
 
-        <Section
-          description="緊急停止フラグ。ON にすると進行中ジョブが ScraperStopped 例外で中断される。"
-          hidden={!visible('ops')}
-        >
-          <label
-            htmlFor="scraper_stopped"
-            className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 text-sm transition-colors hover:bg-card-elevated/40"
-          >
-            <div className="min-w-0">
-              <div className="font-medium">スクレイパーを停止する</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                KEIBA_SCRAPER_STOP=1 と同等。CLI 経由で実行中のジョブにも反映される
-              </div>
-            </div>
-            <Switch
-              id="scraper_stopped"
-              checked={scraperStoppedField.value}
-              onCheckedChange={scraperStoppedField.onChange}
-            />
-          </label>
-        </Section>
       </div>
 
-      {/* Sticky footer */}
-      <div className="sticky bottom-0 z-10 -mx-6 flex items-center justify-end gap-3 border-t bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <span className="text-sm text-muted-foreground">
-          {dirtyCount > 0 ? `${dirtyCount} 件の変更があります` : '変更なし'}
-        </span>
-        <Button type="submit" disabled={!isDirty || isPending}>
-          {isPending ? '保存中…' : '変更を保存'}
-        </Button>
-      </div>
+      {/* Sticky footer — 変更があるときだけ出す。
+          常時出ていると「未保存かどうか」という情報そのものが失われる。 */}
+      {(isDirty || isPending) && (
+        <div className="sticky bottom-0 z-10 -mx-6 flex items-center justify-end gap-3 border-t border-border bg-background px-6 py-3">
+          <span className="text-sm text-muted-foreground">
+            {dirtyCount} 件の変更があります
+          </span>
+          <Button type="submit" disabled={!isDirty || isPending}>
+            {isPending ? '保存中…' : '変更を保存'}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
@@ -349,11 +320,12 @@ interface SectionProps {
 
 function Section({ description, children, hidden = false }: SectionProps) {
   return (
-    <div className={cn('flex flex-col gap-5', hidden && 'hidden')}>
+    <div className={cn('flex flex-col gap-4', hidden && 'hidden')}>
       {description && (
-        <p className="text-sm text-muted-foreground">{description}</p>
+        <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
       )}
-      <div className="space-y-5">{children}</div>
+      {/* 行の区切りは FieldRow 側の border-b が持つので、ここでは間隔を空けない */}
+      <div>{children}</div>
     </div>
   );
 }
@@ -368,15 +340,25 @@ interface FieldRowProps {
   children: ReactNode;
 }
 
+/**
+ * 設定 1 項目。縦積みではなくラベルを左段に置いた 2 カラムにして、
+ * 「フォーム」ではなく「仕様書」に見せる。行の区切りは罫線。
+ */
 function FieldRow({ label, id, help, error, children }: FieldRowProps) {
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-sm font-medium">
-        {label}
-      </Label>
-      {children}
-      {help && !error && <p className="text-xs text-muted-foreground">{help}</p>}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+    <div className="grid gap-1.5 border-b border-border py-4 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-6">
+      <div>
+        <Label htmlFor={id} className="text-[13px] font-medium">
+          {label}
+        </Label>
+        {help && !error && (
+          <p className="mt-1 text-xs leading-relaxed text-subtle-foreground">{help}</p>
+        )}
+      </div>
+      <div className="max-w-md">
+        {children}
+        {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+      </div>
     </div>
   );
 }

@@ -123,7 +123,9 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
     --baseline favorite
 ```
 
-> **`--persist` を使う理由**: `train.py` が出力する `model_runs.metrics_json` には NDCG 系指標のみが含まれる。`top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` は `evaluate.py` が計算するため、`--persist` なしでは Dashboard の MetricCard がこれらを「—」と表示する。学習直後に `--persist` 付きで評価を実行することを推奨する。
+> **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は **top-1 に賭け続けた場合**の指標で、アプリが実際に使う賭けルール（EV>閾値の馬すべてに1点定額）の成績ではない。`--persist` を回すと backtest がアプリと同じルールで測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、同じレース集合の `ndcg*` を上書き保存し、Dashboard が**利用者が実際に得る数字**を表示するようになる。
+>
+> 数字は変わる（実測: 単勝回収率 0.930 → 0.912、複勝的中率 0.503 → 0.885）。後者は**定義が違う**（予想1位が3着以内 → 上位3頭のうち1頭以上が3着以内）ためで、改善ではない。**学習直後に必ず `--persist` 付きで評価すること。**
 
 評価指標は API からも確認できます。
 

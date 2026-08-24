@@ -2,14 +2,18 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Chrome は favicon を URL 単位でかなり長く握り続けるため、意匠を変えたら
+         ?v= を上げて差し替えを強制する (ファイル名は変えない)。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Web fonts: Inter (sans), JetBrains Mono (mono). display=swap で fallback first paint -->
+    <!-- Web fonts: Inter (欧文 sans), Noto Sans JP (和文 sans), JetBrains Mono (mono)。
+         display=swap で fallback first paint。ウェイトは 400/500/700 の 3 段のみ
+         (Inter 600 と Noto Sans JP 600 は見た目の太さが揃わないので混ぜない)。 -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
     />
     <title>KEIBA AI</title>
   </head>
