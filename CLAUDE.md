@@ -32,7 +32,7 @@ cd frontend && pnpm build          # tsc -b && vite build
 
 ### CLI エントリ (backend/)
 ```bash
-uv run python -m ai.training.train_nn --train-end 2025-04-30 --valid-months 6 --test-months 6  # NN 学習
+uv run python -m ai.training.train_nn --train-end 2025-04-30 --valid-months 6 --test-months 6  # NN 学習 (train-end は分割の基準日。学習終了は その日 - test - valid = 2024-04-30)
 uv run python -m ai.evaluation.backtest --model data/models/<ts>-nn --persist    # 評価 + metrics_json 書き戻し
 uv run keiba-ingest --date 2024-12-28                                       # 単日 ingest
 uv run python -m jobs.ingest_range --start ... --end ...           # 期間 ingest（中断後の resume 対応）

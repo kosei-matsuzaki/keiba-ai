@@ -643,7 +643,8 @@ cd backend
 # モデル学習（DB から全データを読み込み、時系列分割して学習）
 uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi
 
-# 学習終了日を指定（学習データの上限を固定する）
+# 分割の基準日を指定する（**学習終了日ではない**。学習が終わるのは
+#   基準日 - test_months - valid_months。詳細は docs/ai-model.md「時系列分割」）
 uv run python -m ai.training.train_nn --loss multi --train-end 2025-12-31
 
 # バックテスト評価（学習済みモデルディレクトリを指定）
