@@ -22,6 +22,8 @@ data/cache/
 data/logs/
 data/backups/
 data/reports/
+data/analysis/
+data/analysis/
 data/models/
 data/*.db
 data/*.db-journal
