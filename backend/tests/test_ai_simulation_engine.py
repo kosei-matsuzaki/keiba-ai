@@ -35,7 +35,7 @@ def _cand(bet_type: str, combo: str, stake: int = 100) -> _FakeCandidate:
 
 
 def test_strategy_presets_present():
-    assert {"conservative", "balanced", "aggressive"} <= set(STRATEGY_PRESETS)
+    assert {"conservative", "balanced", "aggressive", "selective"} <= set(STRATEGY_PRESETS)
 
 
 def test_strategy_presets_get_looser_as_they_get_aggressive():
@@ -152,7 +152,7 @@ def test_settle_handles_missing_winner():
 # ---------------------------------------------------------------------------
 
 
-def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4):
+def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4, odds_win: float = 2.0):
     """compounding wealth テスト用の synthetic DB + stub セット。
 
     各 race の finish_position[i] = i (1-index)、つまり post 1 が常に 1 着。
@@ -188,7 +188,7 @@ def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4):
             for hi in range(1, n_horses + 1):
                 session.add(Entry(
                     race_id=f"R{ri}", horse_id=f"H{hi}", post_position=hi,
-                    finish_position=hi, odds_win=2.0, popularity=hi,
+                    finish_position=hi, odds_win=odds_win, popularity=hi,
                 ))
         session.commit()
 
@@ -432,3 +432,91 @@ def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
         assert p.n_bets == 1
         assert p.invested == 100
         assert p.payout == 400
+
+# ---------------------------------------------------------------------------
+# 本命のオッズ帯フィルタ (strategy="selective")
+# ---------------------------------------------------------------------------
+
+
+def test_selective_preset_has_an_odds_band():
+    """厳選だけが帯を持ち、他の 3 つは無制限 (= 従来どおり全レースで単複を買う)。"""
+    s = STRATEGY_PRESETS["selective"]
+    assert s["win_odds_min"] == 10.0
+    assert s["win_odds_max"] == 25.0
+    for key in ("conservative", "balanced", "aggressive"):
+        assert STRATEGY_PRESETS[key]["win_odds_min"] is None
+        assert STRATEGY_PRESETS[key]["win_odds_max"] is None
+
+
+def test_top_pick_odds_reads_the_model_favourite():
+    import pandas as pd
+
+    from ai.simulation.engine import _top_pick_odds
+
+    frame = pd.DataFrame({"horse_id": ["A", "B"], "odds_win": [3.0, 18.0]})
+    preds = pd.DataFrame({"horse_id": ["B", "A"]})
+    assert _top_pick_odds(frame, preds) == 18.0
+
+
+def test_top_pick_odds_returns_none_when_unavailable():
+    """オッズが取れないレースを「帯の中」と誤判定しないこと。"""
+    import pandas as pd
+
+    from ai.simulation.engine import _top_pick_odds
+
+    frame = pd.DataFrame({"horse_id": ["A"], "odds_win": [None]})
+    assert _top_pick_odds(frame, pd.DataFrame({"horse_id": ["A"]})) is None
+    assert _top_pick_odds(frame, pd.DataFrame({"horse_id": []})) is None
+    assert _top_pick_odds(frame, pd.DataFrame({"horse_id": ["Z"]})) is None
+
+
+def _bet_types_seen(monkeypatch, odds_win: float, strategy: str) -> list[str]:
+    """指定オッズのレースで recommend_for_race に渡された券種を拾う。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy.orm import Session
+
+    import ai.simulation.engine as sim_mod
+
+    engine = _compounding_setup(monkeypatch, n_races=1, odds_win=odds_win)
+    seen: list[str] = []
+
+    def _fake(*, enabled_bet_types, **_kw):
+        seen.extend(enabled_bet_types)
+        return SimpleNamespace(candidates=[])
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _fake)
+
+    with Session(engine) as session:
+        sim_mod.simulate_active_model(
+            session=session, model_path=Path("/tmp/dummy"),
+            start=None, end=None, budget=10_000, strategy=strategy,
+        )
+    return seen
+
+
+def test_selective_skips_win_and_place_outside_the_band(monkeypatch):
+    """本命が 2.0 倍 (帯の外) なら単勝・複勝は買わない。連系は残す。"""
+    seen = _bet_types_seen(monkeypatch, odds_win=2.0, strategy="selective")
+    assert "単勝" not in seen
+    assert "複勝" not in seen
+    assert "三連単" in seen
+
+
+def test_selective_keeps_win_and_place_inside_the_band(monkeypatch):
+    seen = _bet_types_seen(monkeypatch, odds_win=18.0, strategy="selective")
+    assert "単勝" in seen
+    assert "複勝" in seen
+
+
+def test_selective_excludes_the_upper_bound(monkeypatch):
+    """上限は含めない。25 倍以上の帯は実測で 0.78 と回収率が落ちるため。"""
+    seen = _bet_types_seen(monkeypatch, odds_win=25.0, strategy="selective")
+    assert "単勝" not in seen
+
+
+def test_other_strategies_ignore_the_odds_band(monkeypatch):
+    """既定 (balanced) の挙動は変えない — 帯の外でも単複を買う。"""
+    seen = _bet_types_seen(monkeypatch, odds_win=2.0, strategy="balanced")
+    assert "単勝" in seen
+    assert "複勝" in seen

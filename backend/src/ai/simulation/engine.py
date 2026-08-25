@@ -9,9 +9,11 @@ This is the engine behind the Ledger 「シミュレーション」 tab.
 Strategy presets translate user-friendly choices to internal stake-ratio /
 EV-threshold parameters (賭け金は 1 点定額。Kelly は廃止済み):
 
-  conservative:  1 点 = 予算の 20%, min_ev=1.30  (高 EV 案件のみ)
+  conservative:  1 点 = 予算の 20%, min_ev=1.30  (連系を高 EV 案件のみに絞る)
   balanced:      1 点 = 予算の 20%, min_ev=1.10  (現行 default)
-  aggressive:    1 点 = 予算の 50%, min_ev=1.00  (positive edge ならどれも賭ける)
+  aggressive:    1 点 = 予算の 50%, min_ev=1.00  (連系は positive edge なら買う)
+  selective:     balanced に加えて、**本命のオッズが 10〜25 倍のレースでだけ**
+                 単勝・複勝を買う (実測の根拠は STRATEGY_PRESETS のコメント)
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from ai.betting.odds import (
@@ -40,16 +43,44 @@ from features.race_info import race_info_coverage
 log = get_logger(__name__)
 
 
-StrategyName = Literal["conservative", "balanced", "aggressive"]
+StrategyName = Literal["conservative", "balanced", "aggressive", "selective"]
 
-# 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「どこから買うか」の 2 つ。
-# stake_ratio は 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)。
-# min_ev は **連系にのみ**効く (単勝・複勝は本命買いで EV 条件を持たない)。
-STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
-    "conservative": {"stake_ratio": 0.20, "min_ev": 1.30},
-    "balanced":     {"stake_ratio": 0.20, "min_ev": 1.10},
-    "aggressive":   {"stake_ratio": 0.50, "min_ev": 1.00},
+# 定額賭けなので、戦略の違いは「1 点いくら賭けるか」「どこから買うか」
+# 「そもそも買うか」の 3 つ。
+#
+#   stake_ratio  … 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)
+#   min_ev       … **連系にのみ**効く (単勝・複勝は本命買いで EV 条件を持たない)
+#   win_odds_min / win_odds_max
+#                … **モデルの本命のオッズ**がこの範囲のときだけ単勝・複勝を買う。
+#                  None は「制限なし」。
+#
+# selective の 10〜25 倍という帯は実測から来ている (test 19ヶ月 5,390 レース、
+# dev/holdout に前後半で分割して検証)。本命が中穴のときだけモデルの edge が残る:
+#
+#   本命のオッズ    レース数   単勝回収率   95%CI        dev / holdout
+#   全レース         5,390     0.933      [0.86,1.01]   0.97 / 0.90
+#   10〜25 倍          792     1.414      [1.10,1.74]   1.42 / 1.41
+#   25 倍以上          276     0.78       —             0.76 / 0.80
+#
+# 同じ 15〜25 倍帯の全出走馬 (8,761 頭) の市場全体の勝率は 4.60% なのに対し、
+# モデルの本命がこの帯に来たときの勝率は 9.7% と倍あり、edge の所在が
+# 「市場と食い違うレース」であることが説明できる。逆に本命が 1 番人気のレース
+# (全体の 36%) は 0.855 で控除率に負ける。
+#
+# **注意**: この帯は確定オッズ (= 払戻) で切っている。実際には締切前オッズで
+# 判定することになるので、境界のレースは実運用とズレる。この理由で既定は
+# balanced のままにしてあり、AI 予想 (ai/betting/strategy.py) には入れていない。
+STRATEGY_PRESETS: dict[StrategyName, dict[str, float | None]] = {
+    "conservative": {"stake_ratio": 0.20, "min_ev": 1.30,
+                     "win_odds_min": None, "win_odds_max": None},
+    "balanced":     {"stake_ratio": 0.20, "min_ev": 1.10,
+                     "win_odds_min": None, "win_odds_max": None},
+    "aggressive":   {"stake_ratio": 0.50, "min_ev": 1.00,
+                     "win_odds_min": None, "win_odds_max": None},
+    "selective":    {"stake_ratio": 0.20, "min_ev": 1.10,
+                     "win_odds_min": 10.0, "win_odds_max": 25.0},
 }
+
 
 # 単勝 / 複勝 / 連系 すべての券種を simulation 対象とする
 DEFAULT_BET_TYPES: list[str] = list(COMBINATION_BET_TYPES)
@@ -252,6 +283,21 @@ def _settle_candidates(
     return settlements
 
 
+def _top_pick_odds(race_frame: pd.DataFrame, preds: pd.DataFrame) -> float | None:
+    """モデルの本命 (予測 1 位) の単勝オッズ。取れなければ None。"""
+    if preds.empty:
+        return None
+    row = race_frame[race_frame["horse_id"] == preds.iloc[0]["horse_id"]]
+    if row.empty:
+        return None
+    odds = row.iloc[0].get("odds_win")
+    try:
+        value = float(odds)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
 # ---------------------------------------------------------------------------
 # Main simulation entrypoint
 # ---------------------------------------------------------------------------
@@ -304,6 +350,8 @@ def simulate_active_model(
     """
     preset = STRATEGY_PRESETS[strategy]
     types = enabled_bet_types or DEFAULT_BET_TYPES
+    win_odds_min = preset["win_odds_min"]
+    win_odds_max = preset["win_odds_max"]
 
     # Allow callers (notably ad-hoc experiments) to pass a pre-built bundle
     # so they can attach ensemble fields or override calibrators without
@@ -351,6 +399,7 @@ def simulate_active_model(
     # bankroll が最小 stake (100 円) を下回ると recommend_for_race 内の
     # cap × 5% も 100 円未満となり実質賭け不可 (= 破産)。
     n_skipped_low_info = 0
+    n_skipped_odds_band = 0
     current_bankroll = budget
     peak_bankroll = budget
     # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
@@ -383,6 +432,21 @@ def simulate_active_model(
         # Attach post_position (recommend_for_race needs it)
         pp_map = dict(zip(race_frame["horse_id"].values, race_frame["post_position"].values, strict=True))
         preds["post_position"] = preds["horse_id"].map(pp_map)
+
+        # 本命のオッズ帯フィルタ (strategy preset)。範囲外なら単勝・複勝は買わない。
+        # 連系は自前の EV 条件を持つのでここでは触らない。
+        race_types = types
+        if win_odds_min is not None or win_odds_max is not None:
+            top_odds = _top_pick_odds(race_frame, preds)
+            in_band = top_odds is not None and (
+                (win_odds_min is None or top_odds >= win_odds_min)
+                and (win_odds_max is None or top_odds < win_odds_max)
+            )
+            if not in_band:
+                race_types = [t for t in types if t not in ("単勝", "複勝")]
+                n_skipped_odds_band += 1
+                if not race_types:
+                    continue
 
         # Combination predictions + odds (with implied fill)
         race_odds, race_odds_sources = compute_race_odds_with_sources(
@@ -439,7 +503,7 @@ def simulate_active_model(
             stake_unit_by_bet_type=units,
             min_ev=float(preset["min_ev"]),
             top_n_horses=top_n_horses,
-            enabled_bet_types=types,
+            enabled_bet_types=race_types,
         )
 
         # Determine finish_position map (only finished races settle)
@@ -516,6 +580,7 @@ def simulate_active_model(
             if bet_sink is not None:
                 bet_sink.append({
                     "race_id": race_id,
+                    "date": race_date_str,
                     "bet_type": s["bet_type"],
                     "stake": int(s["stake"]),
                     "payout": s_payout,
@@ -556,6 +621,12 @@ def simulate_active_model(
 
     if n_skipped_low_info:
         log.info("skipped %d low-information races (no past-run history)", n_skipped_low_info)
+    if n_skipped_odds_band:
+        # レース自体は集計対象に残す (単複を見送っただけで、連系は買っている)。
+        log.info(
+            "skipped 単勝/複勝 in %d races (本命のオッズが %s〜%s の外)",
+            n_skipped_odds_band, win_odds_min, win_odds_max,
+        )
     result.n_races = max(0, result.n_races - n_skipped_low_info)
     result.n_settled_races = n_settled
     result.final_bankroll = current_bankroll

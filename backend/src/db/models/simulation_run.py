@@ -40,7 +40,7 @@ class SimulationRun(Base):
 
     # Input parameters
     budget: Mapped[int] = mapped_column(Integer, nullable=False)
-    strategy: Mapped[str] = mapped_column(String, nullable=False)      # conservative|balanced|aggressive
+    strategy: Mapped[str] = mapped_column(String, nullable=False)      # conservative|balanced|aggressive|selective
     window_start: Mapped[str | None] = mapped_column(String)           # YYYY-MM-DD
     window_end: Mapped[str | None] = mapped_column(String)
     # 表示用フォールバック (モデル名やパスを後から引けるよう保持)。

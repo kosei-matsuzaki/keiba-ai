@@ -280,7 +280,7 @@ def run_simulation(
         ),
     ] = 100_000,
     strategy: Annotated[
-        Literal["conservative", "balanced", "aggressive"],
+        Literal["conservative", "balanced", "aggressive", "selective"],
         Query(description="戦略プリセット"),
     ] = "balanced",
     exclude_low_information: Annotated[
@@ -471,7 +471,7 @@ async def start_simulation_job(
         Query(ge=1000, le=100_000_000, description="初期資産 (円)"),
     ] = 100_000,
     strategy: Annotated[
-        Literal["conservative", "balanced", "aggressive"],
+        Literal["conservative", "balanced", "aggressive", "selective"],
         Query(description="戦略プリセット"),
     ] = "balanced",
     exclude_low_information: Annotated[

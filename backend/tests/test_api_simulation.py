@@ -119,6 +119,22 @@ def test_simulation_start_rejects_invalid_strategy(api_client: TestClient):
     assert response.status_code in (400, 422)
 
 
+def test_simulation_start_accepts_selective_strategy(api_client: TestClient):
+    """厳選 (本命のオッズ帯で絞る) が API の選択肢として通ること。
+
+    active model 不在なので 503 まで進めば Literal 検証は通過している。
+    """
+    response = api_client.post(
+        "/api/simulation/start",
+        params={
+            "start": "2024-01-01",
+            "end": "2024-03-01",
+            "budget": 100_000,
+            "strategy": "selective",
+        },
+    )
+    assert response.status_code == 503
+
 def test_simulation_start_accepts_full_year_window(api_client: TestClient):
     """sync 版は 6 か月止まりだが、background 版は 1 年まで OK (active model 不在で 503 になる)。"""
     response = api_client.post(
