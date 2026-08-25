@@ -267,6 +267,9 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ├─────────────────────────────────────────┤
 │  ModelSimulationPanel                   │
 │    期間 / 予算 / 戦略 / 1 レースの上限  │
+│    戦略: 安定 / 標準 / 積極的 / 厳選    │
+│      厳選 = 本命が 10〜25 倍のレースで  │
+│      だけ単複を買う (ai-model.md)       │
 │    「履歴の無いレースを除外」チェック   │
 │      → exclude_low_information          │
 │    実行は POST /simulation/start（非同期）

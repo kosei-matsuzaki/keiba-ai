@@ -511,7 +511,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | GET | `/api/simulation/runs/{run_id}` | 200 / 404 | run 詳細（資産推移・券種別内訳）|
 | DELETE | `/api/simulation/runs/{run_id}` | 200 / 404 | run 削除 |
 
-主なクエリ: `start` / `end` / `budget` / `strategy`（conservative / balanced / aggressive）/
+主なクエリ: `start` / `end` / `budget` / `strategy`（conservative / balanced / aggressive / selective）/
 `model_id` / `max_stake_per_race_yen` / `exclude_low_information`。
 `exclude_low_information=true` で、出走馬全員が初出走のレース（新馬戦など）を集計から外す。
 買い方・賭け金配分は推奨買目 API と同じ経路（`ai/simulation/engine.py` → `strategy.py`）を通る。
