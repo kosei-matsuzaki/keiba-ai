@@ -250,6 +250,8 @@ class SettingsResponse(BaseModel):
     stake_unit: int
     stake_units: dict[str, int]
     enabled_bet_types: list[str]
+    probability_model_path: str | None = None
+    place_min_confidence: float = 0.30
 
 
 class SettingsUpdate(BaseModel):
@@ -264,6 +266,16 @@ class SettingsUpdate(BaseModel):
     stake_unit: int | None = None
     stake_units: dict[str, int] | None = None
     enabled_bet_types: list[str] | None = None
+    probability_model_path: str | None = None
+    place_min_confidence: float | None = None
+
+    @field_validator("place_min_confidence")
+    @classmethod
+    def place_conf_in_range(cls, v: float | None) -> float | None:
+        # 確率なので 0〜1。0 なら実質フィルタ無効。
+        if v is not None and not (0.0 <= v <= 1.0):
+            raise ValueError("place_min_confidence は 0.0〜1.0 の範囲で指定してください")
+        return v
 
     @field_validator("race_budget")
     @classmethod

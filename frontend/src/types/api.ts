@@ -443,7 +443,7 @@ export interface BetBreakdown {
 // ── Simulation (Ledger 「シミュレーション」 タブ) ─────────────────────────────
 
 /** 戦略プリセット (= kelly_fraction + min_ev のラッパー) */
-export type SimulationStrategy = 'conservative' | 'balanced' | 'aggressive' | 'selective';
+export type SimulationStrategy = 'conservative' | 'balanced' | 'aggressive';
 
 export interface SimulationGroupStats {
   /** 表示用ラベル: bet_type / race_class / course のいずれか */

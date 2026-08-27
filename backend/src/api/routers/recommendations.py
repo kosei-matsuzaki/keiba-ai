@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ai.betting.odds import compute_race_odds_with_sources
 from ai.betting.strategy import recommend_for_race
+from ai.inference.confidence import is_place_worth_buying, pick_confidence
 from ai.inference.predict import predict_race, predict_race_with_combinations
 from ai.model.registry import get_active, load_model_full
 from api.deps import (
@@ -206,6 +208,30 @@ def get_recommendations(
         eff_bet_types = supported_bet_types(
             settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)
         )
+
+    # 複勝の確信度フィルタ。確率専用モデル (proper scoring rule で学習) が設定されて
+    # いれば、AI の本命に対するその確率がしきい値未満のレースでは複勝を見送る。
+    # 買う馬は変えない — 確率モデルに馬を選ばせると人気馬に寄って回収率が落ちる。
+    # 実測 (前進検証 4.5 年): しきい値 0.30 で複勝回収率 0.866 → 0.907
+    # (ai/inference/confidence.py に根拠)。未設定なら何もしない。
+    confidence: float | None = None
+    prob_model_path = settings.get("probability_model_path")
+    if prob_model_path and "複勝" in eff_bet_types and not predictions.empty:
+        try:
+            prob_bundle = load_model_full(Path(prob_model_path))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("probability model load failed (%s): %s", prob_model_path, exc)
+        else:
+            confidence = pick_confidence(
+                prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
+            )
+            threshold = float(settings.get("place_min_confidence", 0.30))
+            if not is_place_worth_buying(confidence, threshold):
+                eff_bet_types = [b for b in eff_bet_types if b != "複勝"]
+                logger.info(
+                    "race %s: 複勝 skipped (confidence %.3f < %.2f)",
+                    race_id, confidence, threshold,
+                )
 
     result = recommend_for_race(
         predictions=predictions,

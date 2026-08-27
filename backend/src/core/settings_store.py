@@ -24,8 +24,8 @@ _DEFAULTS: dict = {
     # 賭け金の設定 (定額)。1 レースに使う上限と 1 点あたりの額だけで決まる。
     "race_budget": 5_000,
     "stake_unit": 100,
-    # 券種ごとの 1 点あたり金額。回収率の推定が確かな単複を厚く、信頼区間が
-    # 0.01〜2.6 と測定不能な連系を薄く。総合回収率は券種別回収率の賭け金加重平均
+    # 券種ごとの 1 点あたり金額。実測の回収率が高い単複 (0.931 / 0.885) を厚く、
+    # 低い連系 (ワイド 0.880 〜 三連単 0.797) を薄く。総合回収率は券種別回収率の賭け金加重平均
     # なので、配分はモデルを変えずに効く (docs/ai-model.md「推奨ベットルール」)。
     "stake_units": {
         "単勝": 500,
@@ -37,6 +37,14 @@ _DEFAULTS: dict = {
         "三連単": 100,
     },
     "enabled_bet_types": list(DEFAULT_ENABLED_BET_TYPES),
+    # 複勝の確信度フィルタ。proper scoring rule で学習した「確率専用モデル」の
+    # ディレクトリを指定すると、AI の本命に対するそのモデルの単勝確率が
+    # place_min_confidence 未満のレースでは複勝を買わなくなる。
+    # 未設定 (None) なら従来どおり全レースで複勝を買う。
+    # 実測 (前進検証 4.5 年・15,073 点): しきい値 0.30 で複勝回収率 0.866 → 0.907、
+    # 的中率 0.501 → 0.744。詳細は ai/inference/confidence.py と docs/ai-model.md。
+    "probability_model_path": None,
+    "place_min_confidence": 0.30,
 }
 
 # 旧 Kelly 設定 (bankroll × max_stake_per_race_pct) から race_budget を復元する。

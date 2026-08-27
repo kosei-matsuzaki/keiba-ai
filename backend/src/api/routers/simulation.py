@@ -280,7 +280,7 @@ def run_simulation(
         ),
     ] = 100_000,
     strategy: Annotated[
-        Literal["conservative", "balanced", "aggressive", "selective"],
+        Literal["conservative", "balanced", "aggressive"],
         Query(description="戦略プリセット"),
     ] = "balanced",
     exclude_low_information: Annotated[
@@ -326,6 +326,10 @@ def run_simulation(
     # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
+    # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
+    _prob_path = settings.get("probability_model_path")
+    prob_model_path = Path(_prob_path) if _prob_path else None
+    place_min_confidence = float(settings.get("place_min_confidence", 0.30))
 
     logger.info(
         "Simulation request: model_run_id=%d, window=%s..%s, budget=%d, "
@@ -342,6 +346,8 @@ def run_simulation(
         strategy=strategy,  # type: ignore[arg-type]
         max_stake_per_race_yen=max_stake_per_race_yen,
         stake_unit_by_bet_type=stake_units,
+            probability_model_path=prob_model_path,
+            place_min_confidence=place_min_confidence,
         exclude_low_information=exclude_low_information,
         enabled_bet_types=enabled_bet_types,
     )
@@ -471,7 +477,7 @@ async def start_simulation_job(
         Query(ge=1000, le=100_000_000, description="初期資産 (円)"),
     ] = 100_000,
     strategy: Annotated[
-        Literal["conservative", "balanced", "aggressive", "selective"],
+        Literal["conservative", "balanced", "aggressive"],
         Query(description="戦略プリセット"),
     ] = "balanced",
     exclude_low_information: Annotated[
@@ -513,6 +519,10 @@ async def start_simulation_job(
     # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
+    # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
+    _prob_path = settings.get("probability_model_path")
+    prob_model_path = Path(_prob_path) if _prob_path else None
+    place_min_confidence = float(settings.get("place_min_confidence", 0.30))
 
     logger.info(
         "Simulation job submit: model_run_id=%d, window=%s..%s, budget=%d, "
@@ -539,6 +549,8 @@ async def start_simulation_job(
                 strategy=strategy,  # type: ignore[arg-type]
                 max_stake_per_race_yen=max_stake_per_race_yen,
                 stake_unit_by_bet_type=stake_units,
+            probability_model_path=prob_model_path,
+            place_min_confidence=place_min_confidence,
                 exclude_low_information=exclude_low_information,
                 enabled_bet_types=captured_bet_types,
             )
