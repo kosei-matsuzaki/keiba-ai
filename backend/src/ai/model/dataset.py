@@ -39,6 +39,7 @@ class RaceDataset(Dataset):
         label_col: str = "finish_position",
         time_col: str = "finish_time",
         odds_col: str = "odds_win_raw",
+        place_ret_col: str = "place_ret_raw",
         history_cache: HistorySequenceCache | None = None,
         history_norm: tuple[np.ndarray, np.ndarray] | None = None,
         odds_feature_cols: list[str] | None = None,
@@ -54,6 +55,9 @@ class RaceDataset(Dataset):
         # Raw (un-standardised) 単勝 odds for the betting-return losses.  Kept as
         # a separate non-feature column so NNPreprocessor never standardises it.
         self.odds_col = odds_col
+        # 複勝の実現リターン (払戻/100、3 着圏外は 0.0)。単勝と同じく **標準化しない**
+        # 非特徴列として通す。複勝の回収率損失 (place_growth) が使う。
+        self.place_ret_col = place_ret_col
         # per-race 履歴エンコーダ用の系列キャッシュ。None なら履歴系列を付与しない。
         self.history_cache = history_cache
         self.history_norm = history_norm
@@ -87,6 +91,7 @@ class RaceDataset(Dataset):
         finish_positions = _col_to_tensor(self.label_col)
         finish_times = _col_to_tensor(self.time_col)
         odds_win = _col_to_tensor(self.odds_col)
+        place_ret = _col_to_tensor(self.place_ret_col)
 
         out: dict[str, Any] = {
             "horse_features": horse_features,
@@ -94,6 +99,7 @@ class RaceDataset(Dataset):
             "finish_positions": finish_positions,
             "finish_times": finish_times,
             "odds_win": odds_win,
+            "place_ret": place_ret,
             "n_horses": len(race),
         }
 
@@ -168,6 +174,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     finish_positions_out = torch.full((B, max_n_horses), float("nan"))
     finish_times_out = torch.full((B, max_n_horses), float("nan"))
     odds_win_out = torch.full((B, max_n_horses), float("nan"))
+    place_ret_out = torch.full((B, max_n_horses), float("nan"))
     mask_out = torch.zeros(B, max_n_horses, dtype=torch.bool)
 
     for i, sample in enumerate(batch):
@@ -177,6 +184,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         finish_positions_out[i, :n] = sample["finish_positions"]
         finish_times_out[i, :n] = sample["finish_times"]
         odds_win_out[i, :n] = sample["odds_win"]
+        place_ret_out[i, :n] = sample["place_ret"]
         mask_out[i, :n] = True
 
     out = {
@@ -185,6 +193,7 @@ def collate_fn(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         "finish_positions": finish_positions_out,
         "finish_times": finish_times_out,
         "odds_win": odds_win_out,
+        "place_ret": place_ret_out,
         "mask": mask_out,
     }
 

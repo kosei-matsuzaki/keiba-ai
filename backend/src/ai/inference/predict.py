@@ -331,6 +331,30 @@ def predict_race_with_shap(
     return result_df
 
 
+def merge_combination_sources(
+    from_bet_model: dict[str, list],
+    from_probability_model: dict[str, list],
+) -> dict[str, list]:
+    """単勝・複勝は **買うモデル (active)** の候補、連系は確率モデルの候補を使う。
+
+    **なぜ要るか**: `_combinations_from_base` は渡された base_df から連系だけでなく
+    単勝・複勝の候補も作る。連系確率を確率モデルから出すつもりで base_df を丸ごと
+    差し替えると、`recommend_for_race` が選ぶ**本命まで確率モデルのものに変わる**。
+    確率モデルは勝ち馬をよく当てるが人気馬に寄るため回収率は落ちる
+    (単勝 0.824 / active 0.933、複勝 0.881 / active 0.893)。買う馬は active のまま
+    にしないと、黙って悪い方に切り替わる。
+
+    連系だけ確率モデルにするのは、連系確率が `compute_all_combination_probs(scores)`
+    で解析的 PL から導出されており、スコアが PL の強度パラメータであることを
+    前提にしているため (active は回収率で学習しておりその保証が無い)。
+    """
+    merged = dict(from_probability_model)
+    for bet_type in ("単勝", "複勝"):
+        if bet_type in from_bet_model:
+            merged[bet_type] = from_bet_model[bet_type]
+    return merged
+
+
 def _combinations_from_base(
     base_df: pd.DataFrame,
     frame: pd.DataFrame,

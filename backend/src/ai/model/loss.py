@@ -21,17 +21,25 @@ def plackett_luce_loss(
     scores: torch.Tensor,
     finish_positions: torch.Tensor,
     mask: torch.Tensor,
+    top_k: int | None = None,
 ) -> torch.Tensor:
-    """Plackett-Luce log-likelihood loss.
+    """Plackett-Luce log-likelihood loss (optionally truncated to the top-k).
 
     Minimising this is equivalent to maximising the probability of observing
     the ground-truth permutation under a Plackett-Luce model where choice
     probabilities are proportional to exp(score).
 
+    **``top_k`` の意味**: 既定 (None) は全順列を当てにいく。しかし払戻が発生するのは
+    3 着までで、**6 着と 7 着のどちらが上かを当てても 1 円も生まない**。平均出走頭数
+    14.0 のこのデータでは、上位 3 着だけが重要なら **段の 75.3% が payout と無関係**
+    (上位 5 着基準でも 58.9%)。``top_k`` を指定すると先頭 k 段だけを尤度に含め、
+    残りの順序を無視する (learning-to-rank の truncated ranking loss)。
+
     Args:
         scores:           [B, N]
         finish_positions: [B, N]  NaN = exclude
         mask:             [B, N]  bool
+        top_k:            先頭何着までを尤度に含めるか。None で全段。
 
     Returns:
         Scalar loss (mean over valid races).
@@ -57,7 +65,8 @@ def plackett_luce_loss(
         # Use logsumexp over remaining horses at each stage
         K = s_sorted.size(0)
         log_prob = torch.zeros(1, device=device)
-        for k in range(K - 1):  # last stage has no choice
+        n_stages = K - 1 if top_k is None else min(int(top_k), K - 1)
+        for k in range(n_stages):  # last stage has no choice
             log_prob = log_prob + s_sorted[k] - torch.logsumexp(s_sorted[k:], dim=0)
 
         total_loss = total_loss - log_prob
@@ -140,6 +149,79 @@ def log_growth_loss(
         p_w = p[w]
 
         wealth = 1.0 + kf * (p_w * o_w - 1.0)  # > 1 - kf > 0 for kf < 1
+        total_loss = total_loss - torch.log(wealth)
+        n_valid += 1
+
+    if n_valid == 0:
+        return torch.tensor(float("nan"), device=device)
+    return (total_loss / n_valid).squeeze()
+
+
+def place_growth_loss(
+    scores: torch.Tensor,
+    place_ret: torch.Tensor,
+    mask: torch.Tensor,
+    cash_fraction: float = 0.25,
+    temp: float = 0.5,
+) -> torch.Tensor:
+    """Log-growth (decision-focused) loss for 複勝 betting.
+
+    `log_growth_loss` の複勝版。**なぜ要るか**: 複勝はこれまで自前の目的関数を持たず、
+    単勝向けに学習したスコアの Plackett-Luce 変換で選んでいた。レース内では
+    ``place_prob`` は ``score`` の単調変換なので、**複勝で買う馬は単勝と必ず同じ 1 頭**に
+    なる。「1 着は苦しいが 3 着内は堅い馬」を選ぶ手段が無い。
+
+    実測でも、自前の目的を持つ単勝は市場ベースラインに対し +0.139 (0.931 vs 0.792)
+    なのに、派生の複勝は +0.036 (0.886 vs 0.850) しかない。
+
+    単勝との違いは**払戻が 3 頭に発生する**こと。1 着だけが的中の単勝と違い、
+    3 着以内の馬すべてが払戻を持つので、``place_ret`` は「その馬に賭けたときの
+    実現倍率」(3 着圏外は 0.0) を全馬について持つ。したがって実現富は
+
+        W = 1 + cash_fraction * (Σ_i p_i * place_ret_i - 1)
+
+    となり、単勝のように勝ち馬 1 頭を取り出す形にはならない。配分 ``p`` を
+    払戻の出る馬に寄せるほど ``W`` が大きくなる。
+
+    **``temp`` は実運用との整合のためにある。** 実運用は score 最大の **1 頭**に賭ける
+    のに、温度 1.0 の softmax は配分を全馬に散らす (実測で 1 位に乗るのは 0.69)。
+    複勝は 3 頭に払戻が出るので、散らしたままだと「掲示板に載りそうな馬に薄く広げる」
+    のが有利になり、**argmax を当てにいく圧力がかからない**。実際、温度 1.0 で学習した
+    最初の版は 3 着内率が上がり平均オッズが下がった (= 堅い方に広がった) だけで、
+    本命 1 頭の回収率は active と差が出なかった。温度を下げると配分が 1 位に集中し
+    ``Σ p_i r_i → r_argmax`` に近づく。既定 0.5 はレース内スコアの実測分布から選んだ
+    (σ=2.31 / 1-2 位差 1.57 に対し 1 位への配分が 0.94。0.2 以下では 0.9995 で
+    飽和して勾配が消える)。1.0 は最初の版の再現用。
+
+    ``cash_fraction`` の役割は `log_growth_loss` と同じ (1.0 にすると odds 項が
+    勾配から消える) なので、そちらの docstring を参照。
+
+    Args:
+        scores:    [B, N]
+        place_ret: [B, N]  **生の**複勝実現倍率 (払戻/100、3 着圏外 0.0、不明は NaN)
+        mask:      [B, N]  bool
+        cash_fraction: 賭ける側の比重、(0, 1)。
+
+    Returns:
+        Scalar loss (払戻の分かるレースについての平均)。
+    """
+    device = scores.device
+    kf = float(cash_fraction)
+    total_loss = torch.zeros(1, device=device)
+    n_valid = 0
+
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(place_ret[b])
+        if valid.sum() < 2:
+            continue
+        r = place_ret[b][valid]
+        # 払戻がまったく無いレース (payout_place を取れていない) は学習に使えない
+        if not torch.any(r > 0):
+            continue
+
+        p = torch.softmax(scores[b][valid] / temp, dim=0)
+        expected = (p * r).sum()
+        wealth = 1.0 + kf * (expected - 1.0)   # > 1 - kf > 0 for kf < 1
         total_loss = total_loss - torch.log(wealth)
         n_valid += 1
 

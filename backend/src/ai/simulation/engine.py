@@ -9,9 +9,9 @@ This is the engine behind the Ledger 「シミュレーション」 tab.
 Strategy presets translate user-friendly choices to internal stake-ratio /
 EV-threshold parameters (賭け金は 1 点定額。Kelly は廃止済み):
 
-  conservative:  1 点 = 予算の 20%, min_ev=1.30  (連系を高 EV 案件のみに絞る)
-  balanced:      1 点 = 予算の 20%, min_ev=1.10  (現行 default)
-  aggressive:    1 点 = 予算の 50%, min_ev=1.00  (連系は positive edge なら買う)
+  conservative:  1 点 = 予算の 20%, 上位 2 頭から買い目を組む (点数少なめ)
+  balanced:      1 点 = 予算の 20%, 上位 3 頭 (現行 default)
+  aggressive:    1 点 = 予算の 50%, 上位 4 頭 (点数多め)
 """
 
 from __future__ import annotations
@@ -30,7 +30,13 @@ from ai.betting.odds import (
 )
 from ai.betting.strategy import recommend_for_race
 from ai.inference.confidence import is_place_worth_buying, pick_confidence
-from ai.inference.predict import predict_race, predict_race_with_combinations
+from ai.inference.predict import (
+    _combinations_from_base,
+    _predict_race_nn,
+    merge_combination_sources,
+    predict_race,
+    predict_race_with_combinations,
+)
 from ai.model.registry import ModelBundle, load_model_full
 from core.bet_types import COMBINATION_BET_TYPES
 from core.logging import get_logger
@@ -43,19 +49,21 @@ log = get_logger(__name__)
 
 StrategyName = Literal["conservative", "balanced", "aggressive"]
 
-# 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「どこから買うか」の 2 つ。
-# stake_ratio は 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)。
-# min_ev は **連系にのみ**効く (単勝・複勝は本命買いで EV 条件を持たない)。
+# 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「何頭から買い目を組むか」。
 #
-# **「本命のオッズ帯で単複を絞る」戦略 (selective) は削除済み** (2026-08-27)。
-# test 窓 19ヶ月では帯 10〜25 倍が単勝 1.41 と再現するように見えたが、前進検証で
-# 作った 4.5 年分の out-of-sample 出力で測ると 0.789 (CI [0.65, 0.93]) と消えた。
-# dev/holdout で「再現」したのは、両者が同じ 19ヶ月の前半と後半にすぎず、
-# 期間に固有の効果はどちらにも現れるため。詳細は docs/ai-model.md。
+#   stake_ratio   … 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)
+#   top_n_horses  … 連系の買い目を組む上位何頭か。広げるほど点数が増える
+#
+# **EV 閾値 (min_ev) は 2026-08-28 に廃止した。** 連系だけ `combo確率 × 推定オッズ
+# > 1.1` で選んでいたが、(a) 閾値 1.1 に根拠が無く、(b) 入力の確率が壊れており
+# (active の本命の確率と勝敗の相関 0.073)、EV は実質「推定オッズの高い順」に
+# 退化していた。単勝・複勝では同じ EV 条件を捨てて 0.698→0.931 / 0.654→0.887 と
+# 改善している。連系も確率順に変えて 0.849 → 0.865、確率を top-k 学習の PL から
+# 出すと 0.877 (詳細 docs/ai-model.md)。
 STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
-    "conservative": {"stake_ratio": 0.20, "min_ev": 1.30},
-    "balanced":     {"stake_ratio": 0.20, "min_ev": 1.10},
-    "aggressive":   {"stake_ratio": 0.50, "min_ev": 1.00},
+    "conservative": {"stake_ratio": 0.20, "top_n_horses": 2},
+    "balanced":     {"stake_ratio": 0.20, "top_n_horses": 3},
+    "aggressive":   {"stake_ratio": 0.50, "top_n_horses": 4},
 }
 
 
@@ -309,6 +317,10 @@ def simulate_active_model(
             place_min_confidence 未満のレースでは**複勝を買わない**。買う馬は
             変えない (`ai/inference/confidence.py` に実測の根拠)。None で無効。
         place_min_confidence: 上のしきい値 (既定 0.30)。
+            確率モデルを渡すと、**連系の確率もそこから導出する**。連系確率は
+            `compute_all_combination_probs(scores)` で解析的 PL から出しており、
+            スコアが PL の強度パラメータであることを前提にしているが、active は
+            回収率で学習しておりその保証が無い。買う馬・買い目の脚は active のまま。
         max_stake_per_race_yen: 1 race の累計 stake の絶対上限 (円)。
             compounding wealth で bankroll が膨らんでも 1 race の bet 額が
             無限にインフレしないようにする。None で無効 (pct cap のみ)。
@@ -430,22 +442,23 @@ def simulate_active_model(
                 race_odds=race_odds,
                 race_odds_sources=race_odds_sources,
             )
+            if prob_bundle is not None:
+                # 連系だけ確率モデル由来に差し替える (単勝・複勝の候補は active のまま)
+                combos_by_type = merge_combination_sources(
+                    combos_by_type,
+                    _combinations_from_base(
+                        base_df=_predict_race_nn(prob_bundle, race_frame, session=session),
+                        frame=race_frame,
+                        n_samples=10_000,
+                        rng=None,
+                        top_k_combinations=None,
+                        race_odds=race_odds,
+                        race_odds_sources=race_odds_sources,
+                    ),
+                )
         except Exception as exc:  # noqa: BLE001
             log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
             continue
-
-        # Apply min_ev filter (strategy preset)
-        min_ev = preset["min_ev"]
-        # EV 閾値で絞るのは **連系だけ**。単勝・複勝はモデルの本命を買うルールで
-        # EV 条件を持たない (recommend_for_race が担当) ので、ここで落とすと
-        # 本命の EV が 1.0 未満のときにシミュレーションだけ単複を買わなくなる。
-        for bt in list(combos_by_type.keys()):
-            if bt in ("単勝", "複勝"):
-                continue
-            combos_by_type[bt] = [
-                c for c in combos_by_type[bt]
-                if c.ev is not None and c.ev >= min_ev
-            ]
 
         # 1 レースの予算は「残資産 × max_stake_per_race_pct」を上限とし、
         # max_stake_per_race_yen が指定されていればそれとの小さい方を採る。
@@ -471,8 +484,7 @@ def simulate_active_model(
             race_budget=race_budget,
             stake_unit=stake_unit,
             stake_unit_by_bet_type=units,
-            min_ev=float(preset["min_ev"]),
-            top_n_horses=top_n_horses,
+            top_n_horses=int(preset["top_n_horses"]),
             enabled_bet_types=race_types,
         )
 

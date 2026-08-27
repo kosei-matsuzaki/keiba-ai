@@ -271,7 +271,6 @@ export interface SettingsResponse {
   rate_min_seconds: number;
   rate_max_seconds: number;
   night_min_seconds: number;
-  win_ev_threshold: number;
   win_min_odds: number;
   scraper_stopped: boolean;
   /** 1 レースに使ってよい上限 (円)。使い切らなくてよい。 */
@@ -287,7 +286,6 @@ export interface SettingsUpdate {
   rate_min_seconds?: number;
   rate_max_seconds?: number;
   night_min_seconds?: number;
-  win_ev_threshold?: number;
   win_min_odds?: number;
   scraper_stopped?: boolean;
   race_budget?: number;

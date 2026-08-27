@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,7 +12,13 @@ from sqlalchemy.orm import Session
 from ai.betting.odds import compute_race_odds_with_sources
 from ai.betting.strategy import recommend_for_race
 from ai.inference.confidence import is_place_worth_buying, pick_confidence
-from ai.inference.predict import predict_race, predict_race_with_combinations
+from ai.inference.predict import (
+    _combinations_from_base,
+    _predict_race_nn,
+    merge_combination_sources,
+    predict_race,
+    predict_race_with_combinations,
+)
 from ai.model.registry import get_active, load_model_full
 from api.deps import (
     build_inference_frame_or_404,
@@ -23,7 +28,7 @@ from api.deps import (
 )
 from core.bet_types import DEFAULT_ENABLED_BET_TYPES, supported_bet_types
 from core.logging import get_logger
-from core.settings_store import SettingsStore
+from core.settings_store import SettingsStore, resolve_model_path
 
 logger = get_logger(__name__)
 
@@ -156,7 +161,19 @@ def get_recommendations(
             "No confirmed odds available for race %s — est_odds will be null", race_id
         )
 
-    # Step 5: combination EVs (capped by top_k for performance)
+    # Step 5: combination probabilities (capped by top_k for performance)
+    # 確率専用モデルが設定されていれば、**連系の確率はそちらから出す**。
+    # 連系確率はスコアから解析的 PL で導出するので、スコアが PL の強度パラメータで
+    # あることを前提にしている。active は回収率で学習しており その保証が無い。
+    # 買う馬・買い目の脚は active のまま (predictions がそれを決める)。
+    settings_early = store.load()
+    prob_model_path = resolve_model_path(settings_early.get("probability_model_path"))
+    prob_bundle = None
+    if prob_model_path is not None:
+        try:
+            prob_bundle = load_model_full(prob_model_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("probability model load failed (%s): %s", prob_model_path, exc)
     combinations_by_type = predict_race_with_combinations(
         bundle,
         frame,
@@ -165,6 +182,20 @@ def get_recommendations(
         race_odds=race_odds,
         race_odds_sources=race_odds_sources,
     )
+    if prob_bundle is not None:
+        # 連系だけ確率モデル由来に差し替える (単勝・複勝の候補は active のまま)
+        combinations_by_type = merge_combination_sources(
+            combinations_by_type,
+            _combinations_from_base(
+                base_df=_predict_race_nn(prob_bundle, frame, session=session),
+                frame=frame,
+                n_samples=10_000,
+                rng=None,
+                top_k_combinations=top_k,
+                race_odds=race_odds,
+                race_odds_sources=race_odds_sources,
+            ),
+        )
 
     # Step 6: load settings and run recommendation logic
     # クエリで渡された分だけ、このレースに限って設定を上書きする。
@@ -175,9 +206,6 @@ def get_recommendations(
     eff_unit: int = (
         stake_unit if stake_unit is not None else int(settings.get("stake_unit", 100))
     )
-    # EV 条件を使うのは **連系だけ**。単勝・複勝はモデルの本命 (1 位) を買うルール
-    # なので閾値を持たない (strategy.recommend_for_race / docs/ai-model.md)。
-    eff_min_ev: float = float(settings.get("win_ev_threshold", 1.1))
     # 単勝のオッズ下限
     eff_win_min_odds: float = float(settings.get("win_min_odds", 1.1))
     # 券種ごとの 1 点あたり金額 (無い券種は stake_unit にフォールバック)。
@@ -215,23 +243,17 @@ def get_recommendations(
     # 実測 (前進検証 4.5 年): しきい値 0.30 で複勝回収率 0.866 → 0.907
     # (ai/inference/confidence.py に根拠)。未設定なら何もしない。
     confidence: float | None = None
-    prob_model_path = settings.get("probability_model_path")
-    if prob_model_path and "複勝" in eff_bet_types and not predictions.empty:
-        try:
-            prob_bundle = load_model_full(Path(prob_model_path))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("probability model load failed (%s): %s", prob_model_path, exc)
-        else:
-            confidence = pick_confidence(
-                prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
+    if prob_bundle is not None and "複勝" in eff_bet_types and not predictions.empty:
+        confidence = pick_confidence(
+            prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
+        )
+        threshold = float(settings.get("place_min_confidence", 0.30))
+        if not is_place_worth_buying(confidence, threshold):
+            eff_bet_types = [b for b in eff_bet_types if b != "複勝"]
+            logger.info(
+                "race %s: 複勝 skipped (confidence %.3f < %.2f)",
+                race_id, confidence, threshold,
             )
-            threshold = float(settings.get("place_min_confidence", 0.30))
-            if not is_place_worth_buying(confidence, threshold):
-                eff_bet_types = [b for b in eff_bet_types if b != "複勝"]
-                logger.info(
-                    "race %s: 複勝 skipped (confidence %.3f < %.2f)",
-                    race_id, confidence, threshold,
-                )
 
     result = recommend_for_race(
         predictions=predictions,
@@ -240,7 +262,6 @@ def get_recommendations(
         race_budget=eff_budget,
         stake_unit=eff_unit,
         stake_unit_by_bet_type=eff_stake_units,
-        min_ev=eff_min_ev,
         win_min_odds=eff_win_min_odds,
         top_n_horses=top_n_horses,
         enabled_bet_types=eff_bet_types,

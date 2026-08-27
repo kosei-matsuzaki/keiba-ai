@@ -39,16 +39,18 @@ def test_strategy_presets_present():
 
 
 def test_strategy_presets_get_looser_as_they_get_aggressive():
-    """積極的になるほど 1 点の賭け金が大きく、買う基準 (min_ev) が下がる。
+    """積極的になるほど 1 点の賭け金が大きく、買い目を組む頭数が増える。
 
-    定額配分なので戦略の違いは Kelly 係数ではなく
-    「1 点いくら賭けるか (stake_ratio)」と「どこから買うか (min_ev)」で表す。
+    **EV 閾値 (min_ev) は 2026-08-28 に廃止した**ので、戦略の違いは
+    「1 点いくら賭けるか (stake_ratio)」と「上位何頭から買い目を組むか
+    (top_n_horses)」で表す。
     """
     c = STRATEGY_PRESETS["conservative"]
     b = STRATEGY_PRESETS["balanced"]
     a = STRATEGY_PRESETS["aggressive"]
     assert c["stake_ratio"] <= b["stake_ratio"] < a["stake_ratio"]
-    assert c["min_ev"] > b["min_ev"] > a["min_ev"]
+    assert c["top_n_horses"] < b["top_n_horses"] < a["top_n_horses"]
+    assert all("min_ev" not in p for p in (c, b, a))
 
 
 # ---------------------------------------------------------------------------

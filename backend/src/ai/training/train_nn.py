@@ -46,6 +46,7 @@ from ai.model.loss import (
     kelly_deploy_loss,
     log_growth_loss,
     multi_objective_loss,
+    place_growth_loss,
     plackett_luce_loss,
 )
 from ai.model.net import RaceTransformerModel
@@ -233,6 +234,32 @@ def _parse_payout_place_cell(raw: object) -> dict[int, int] | None:
         return {int(k): int(v) for k, v in d.items()}
     except (ValueError, TypeError):
         return None
+
+
+def _attach_place_returns(df: pd.DataFrame) -> None:
+    """複勝の実現倍率を非特徴列 ``place_ret_raw`` として付ける (in-place)。
+
+    払戻 JSON (`payout_place`) は「1〜3 着の馬番 → 払戻額」なので、着順から
+    その馬の倍率を引く。3 着圏外は 0.0 (賭けても戻らない)、払戻や着順が
+    取れない行は NaN にして損失側で除外する。
+
+    **標準化の前に**呼ぶこと。NNPreprocessor は feature_cols しか触らないので
+    非特徴列として素通しされ、`place_growth` 損失が生の倍率を受け取れる。
+    """
+    if df.empty or "payout_place" not in df.columns:
+        return
+    values = np.full(len(df), np.nan, dtype=np.float64)
+    fins = df["finish_position"].to_numpy()
+    for i, (raw, fin) in enumerate(zip(df["payout_place"].to_numpy(), fins, strict=True)):
+        payouts = _parse_payout_place_cell(raw)
+        if payouts is None or fin is None or (isinstance(fin, float) and math.isnan(fin)):
+            continue
+        pos = int(fin)
+        if pos in payouts:
+            values[i] = payouts[pos] / 100.0
+        elif pos > 3:
+            values[i] = 0.0
+    df["place_ret_raw"] = values
 
 
 def _compute_winplace_roi_nn(
@@ -495,6 +522,8 @@ def _compute_loss_on_dataset(
 def _build_loss_fn(
     loss_name: str,
     cash_fraction: float = 0.25,
+    pl_top_k: int | None = None,
+    place_temp: float = 0.5,
     combo_bet_type: str = "馬連",
     combo_weight: float = 0.01,
     flat_ev_threshold: float = 1.1,
@@ -511,9 +540,17 @@ def _build_loss_fn(
     gate 温度 / 1 レースの最大点数)。All are ignored by plackett_luce.
     """
     if loss_name == "plackett_luce":
-        return plackett_luce_loss
+        # top_k を指定すると先頭 k 着だけを尤度に含める (払戻に無関係な下位の
+        # 順序を無視する)。None なら従来どおり全順列。
+        return functools.partial(plackett_luce_loss, top_k=pl_top_k)
     if loss_name == "log_growth":
         return functools.partial(log_growth_loss, cash_fraction=cash_fraction)
+    if loss_name == "place_growth":
+        # 複勝専用の回収率損失。複勝はこれまで単勝スコアからの派生だった
+        # (レース内で place_prob は score の単調変換なので、買う馬が単勝と必ず同じ)。
+        return functools.partial(
+            place_growth_loss, cash_fraction=cash_fraction, temp=place_temp
+        )
     if loss_name == "kelly_deploy":
         # kelly_deploy は本物の Kelly 係数。同じ定数を流用する (実験用・本番非採用)。
         return functools.partial(kelly_deploy_loss, kelly_fraction=cash_fraction)
@@ -535,7 +572,8 @@ def _build_loss_fn(
         )
     raise ValueError(
         f"Unknown loss: {loss_name!r}. "
-        "Choose from multi, log_growth, flat_ev, kelly_deploy, combo_nll, plackett_luce"
+        "Choose from multi, log_growth, place_growth, flat_ev, kelly_deploy, "
+        "combo_nll, plackett_luce"
     )
 
 
@@ -562,6 +600,8 @@ class RaceLitModule(pl.LightningModule):
         flat_ev_threshold: float = 1.1,
         flat_ev_temp: float = 0.05,
         flat_ev_max_bets: float = 0.0,
+        pl_top_k: int | None = None,
+        place_temp: float = 0.5,
     ) -> None:
         super().__init__()
         self.model = model
@@ -573,6 +613,8 @@ class RaceLitModule(pl.LightningModule):
             flat_ev_threshold=flat_ev_threshold,
             flat_ev_temp=flat_ev_temp,
             flat_ev_max_bets=flat_ev_max_bets,
+            pl_top_k=pl_top_k,
+            place_temp=place_temp,
         )
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -589,7 +631,9 @@ class RaceLitModule(pl.LightningModule):
             history_lengths=batch.get("history_lengths"),
             odds_features=batch.get("odds_features"),
         )
-        if self.loss_fn_name in ("log_growth", "multi", "kelly_deploy", "flat_ev"):
+        if self.loss_fn_name == "place_growth":
+            loss = self.loss_fn(scores, batch["place_ret"], batch["mask"])
+        elif self.loss_fn_name in ("log_growth", "multi", "kelly_deploy", "flat_ev"):
             loss = self.loss_fn(
                 scores,
                 batch["finish_positions"],
@@ -751,6 +795,8 @@ def train_nn(
     flat_ev_threshold: float = 1.1,
     flat_ev_temp: float = 0.05,
     flat_ev_max_bets: float = 0.0,
+    pl_top_k: int | None = None,
+    place_temp: float = 0.5,
     persist: bool = True,
     history_seq_len: int = 15,
     prebuilt_history=None,
@@ -838,6 +884,8 @@ def train_nn(
     for _df in (train_df, valid_df, test_df):
         if not _df.empty and "odds_win" in _df.columns:
             _df["odds_win_raw"] = _df["odds_win"]
+        # 複勝の回収率損失 (place_growth) 用。同じく標準化前に付ける。
+        _attach_place_returns(_df)
     train_df = preprocessor.transform(train_df)
     if not valid_df.empty:
         valid_df = preprocessor.transform(valid_df)
@@ -973,6 +1021,8 @@ def train_nn(
         flat_ev_threshold=flat_ev_threshold,
         flat_ev_temp=flat_ev_temp,
         flat_ev_max_bets=flat_ev_max_bets,
+        pl_top_k=pl_top_k,
+        place_temp=place_temp,
     )
 
     # Trainer callbacks
@@ -1293,13 +1343,14 @@ def _cli() -> None:
     parser.add_argument(
         "--loss",
         choices=[
-            "multi", "log_growth", "flat_ev", "kelly_deploy", "combo_nll", "plackett_luce",
+            "multi", "log_growth", "place_growth", "flat_ev", "kelly_deploy",
+            "combo_nll", "plackett_luce",
         ],
         default="multi",
         help=(
             "Loss function (default: multi = production all-markets objective: "
             "log_growth(単複 betting) + --combo-weight·combo_nll(連系 calibration)). "
-            "log_growth = 単勝 log-growth betting return; flat_ev = 定額配分 (デプロイ整合); "
+            "log_growth = 単勝 log-growth betting return; place_growth = 複勝の回収率 (複勝は従来 単勝スコアからの派生だった); flat_ev = 定額配分 (デプロイ整合); "
             "combo_nll = 連系 calibration "
             "(proper scoring rule on the analytic-PL combo prob, folds combo "
             "calibration into the NN); plackett_luce = ranking (two-stage pretrain)."
@@ -1345,6 +1396,21 @@ def _cli() -> None:
         help=(
             "--loss flat_ev: 1 レースの最大点数 (deploy の race_budget/stake_unit 相当)。"
             "0 = 無制限。"
+        ),
+    )
+    parser.add_argument(
+        "--pl-top-k", type=int, default=None,
+        help=(
+            "--loss plackett_luce: 先頭何着までを尤度に含めるか (既定 None = 全順列)。"
+            "払戻は 3 着までしか発生しないので、平均 14 頭のこのデータでは全順列だと"
+            "段の 75%% が payout と無関係になる。"
+        ),
+    )
+    parser.add_argument(
+        "--place-temp", type=float, default=0.5,
+        help=(
+            "--loss place_growth: softmax の温度 (既定 0.5)。実運用は score 最大の 1 頭に"
+            "賭けるので、低いほど argmax に整合する。1.0 は配分を全馬に散らす旧挙動。"
         ),
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
@@ -1463,6 +1529,8 @@ def _cli() -> None:
         flat_ev_threshold=args.flat_ev_threshold,
         flat_ev_temp=args.flat_ev_temp,
         flat_ev_max_bets=args.flat_ev_max_bets,
+        pl_top_k=args.pl_top_k,
+        place_temp=args.place_temp,
         history_seq_len=args.history_seq_len,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

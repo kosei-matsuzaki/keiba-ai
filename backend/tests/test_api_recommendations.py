@@ -301,7 +301,7 @@ def test_recommendations_enabled_bet_types_filter(
               return_value=_fake_combinations()),
         patch("api.routers.recommendations.recommend_for_race",
               side_effect=lambda predictions, combinations_by_type, race_id, race_budget,
-              stake_unit, stake_unit_by_bet_type, min_ev, win_min_odds,
+              stake_unit, stake_unit_by_bet_type, win_min_odds,
               top_n_horses, enabled_bet_types:
               _spy_recommend(
                   enabled_bet_types=enabled_bet_types,
@@ -335,7 +335,7 @@ def test_recommendations_top_n_horses_param(
     captured_args: dict = {}
 
     def _capture_recommend(predictions, combinations_by_type, race_id,
-                           race_budget, stake_unit, stake_unit_by_bet_type, min_ev,
+                           race_budget, stake_unit, stake_unit_by_bet_type,
                            win_min_odds, top_n_horses, enabled_bet_types):
         captured_args["top_n_horses"] = top_n_horses
         return RecommendationResult(
@@ -809,16 +809,17 @@ def test_recommendations_stake_unit_override(
     assert captured["stake_unit"] == 500
 
 
-def test_recommendations_min_ev_comes_from_settings(
+def test_recommendations_no_longer_takes_an_ev_threshold(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """買う基準は設定の単勝 EV 閾値をそのまま使う。"""
+    """**EV 閾値はもう推奨に渡らない** (2026-08-28 に全券種で廃止)。"""
     captured: dict = {}
     resp = _run_with_query(app_with_temp_db, tmp_path, "REC_OVR8", "", captured)
 
     assert resp.status_code == 200
-    assert captured["min_ev"] == 1.1
+    assert "min_ev" not in captured
+    assert "min_ev_by_bet_type" not in captured
 
 
 def test_recommendations_unknown_bet_type_returns_422(
@@ -853,16 +854,15 @@ def test_recommendations_race_budget_below_minimum_returns_422(
     assert resp.status_code == 422
 
 
-def test_recommendations_win_and_place_do_not_use_ev_threshold(
+def test_recommendations_do_not_use_any_ev_threshold(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """EV 閾値が渡るのは連系だけ。単勝はオッズ下限、複勝は無条件で本命 1 頭。
+    """**どの券種にも EV 閾値は渡らない。** 単勝だけオッズ下限を持つ。
 
-    以前は win_ev_threshold を全券種に適用しており、Settings にあった
-    place_ev_threshold は推奨へ一切反映されない死に設定だった。今は単勝・複勝とも
-    「モデルの本命を買う」ルールなので EV 閾値を持たない (較正済み確率で EV 条件に
-    すると大穴を買い込み、単勝 0.931→0.698 / 複勝 0.887→0.654 に落ちる)。
+    単勝・複勝は較正済み確率で EV 条件にすると大穴を買い込み 0.931→0.698 /
+    0.887→0.654 に落ちるため先に廃止した。連系も 2026-08-28 に廃止 (閾値 1.1 に
+    根拠が無く、確率順に変えて 0.849 → 0.877)。
     """
     race_id = "REC_RACE_NO_EV"
     from api.deps import get_settings_store
@@ -876,7 +876,7 @@ def test_recommendations_win_and_place_do_not_use_ev_threshold(
         _seed_active_model(session, str(tmp_path / "fake_model_no_ev"))
 
     store = SettingsStore(tmp_path / "settings.json")
-    store.save({"win_ev_threshold": 1.30, "win_min_odds": 1.5})
+    store.save({"win_min_odds": 1.5})
 
     fake_df = _fake_predictions_df(race_id, n=4)
     captured: dict = {}
@@ -902,8 +902,7 @@ def test_recommendations_win_and_place_do_not_use_ev_threshold(
         app_with_temp_db.dependency_overrides.pop(get_settings_store, None)
 
     assert resp.status_code == 200
-    # 連系用の EV 閾値と単勝のオッズ下限だけが渡る
-    assert captured["min_ev"] == 1.30
+    # 渡るのは単勝のオッズ下限だけ。EV 閾値は全券種で廃止済み。
     assert captured["win_min_odds"] == 1.5
-    # 券種別の EV 上書きはルーターからは渡さない (strategy 側が単複を素通しにする)
+    assert "min_ev" not in captured
     assert "min_ev_by_bet_type" not in captured

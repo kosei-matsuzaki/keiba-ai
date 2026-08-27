@@ -16,8 +16,8 @@ _DEFAULTS: dict = {
     "rate_min_seconds": 3.0,
     "rate_max_seconds": 6.0,
     "night_min_seconds": 5.0,
-    "win_ev_threshold": 1.1,
-    # 単勝は EV 条件ではなく「モデル 1 位を買う」ルール。これはそのオッズ下限。
+    # 買い方に EV 条件は無い (2026-08-28 に連系の EV 閾値も廃止し、全券種で
+    # 「確率の高い買い目から予算の限り買う」に統一)。これは単勝のオッズ下限。
     # (較正済み確率のもとでは EV フィルタが回収率を 0.931 → 0.698 まで落とすため)
     "win_min_odds": 1.1,
     "scraper_stopped": False,
@@ -71,6 +71,19 @@ def _migrate_legacy(data: dict) -> dict:
     return out
 
 
+def resolve_model_path(value: str | None) -> Path | None:
+    """設定に入っているモデルパスを解決する。
+
+    絶対パスならそのまま、相対パスなら ``data_dir()`` 基準。相対で保存できると
+    設定ファイルが環境非依存になる (この repo は Windows と WSL の両方から
+    使われるので、絶対パスを持たせると片方で壊れる)。
+    """
+    if not value:
+        return None
+    p = Path(value)
+    return p if p.is_absolute() else (data_dir() / p)
+
+
 class SettingsStore:
     """Load and persist user-editable settings as JSON."""
 
@@ -85,7 +98,10 @@ class SettingsStore:
             # Fill any missing keys from defaults (forward-compatibility)
             merged = dict(_DEFAULTS)
             merged.update(_migrate_legacy(data))
-            return merged
+            # **廃止したキーは落とす。** 設定を削除しても保存済み JSON には残り続け、
+            # 「まだ効いていそうに見えるが実際は無視される」死に設定になる
+            # (win_ev_threshold / place_ev_threshold で実際に起きた)。
+            return {k: v for k, v in merged.items() if k in _DEFAULTS}
         except (json.JSONDecodeError, OSError):
             return dict(_DEFAULTS)
 

@@ -42,7 +42,7 @@ from api.jobs import JobRegistry
 from api.schemas import JobAccepted
 from core.bet_types import supported_bet_types
 from core.logging import get_logger
-from core.settings_store import SettingsStore
+from core.settings_store import SettingsStore, resolve_model_path
 from db.models.model_run import ModelRun
 from db.models.simulation_run import SimulationRun
 from db.session import session_scope
@@ -327,8 +327,7 @@ def run_simulation(
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
     # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
-    _prob_path = settings.get("probability_model_path")
-    prob_model_path = Path(_prob_path) if _prob_path else None
+    prob_model_path = resolve_model_path(settings.get("probability_model_path"))
     place_min_confidence = float(settings.get("place_min_confidence", 0.30))
 
     logger.info(
@@ -520,8 +519,7 @@ async def start_simulation_job(
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
     # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
-    _prob_path = settings.get("probability_model_path")
-    prob_model_path = Path(_prob_path) if _prob_path else None
+    prob_model_path = resolve_model_path(settings.get("probability_model_path"))
     place_min_confidence = float(settings.get("place_min_confidence", 0.30))
 
     logger.info(

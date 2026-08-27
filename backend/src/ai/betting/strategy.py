@@ -247,8 +247,6 @@ def assign_flat_stakes(
     race_budget: int,
     stake_unit: int = 100,
     stake_unit_by_bet_type: dict[str, int] | None = None,
-    min_ev: float = 1.0,
-    min_ev_by_bet_type: dict[str, float] | None = None,
     keep_zero_stake: bool = False,
 ) -> list[BetCandidate]:
     """券種ごとに定額で、単複を優先して予算の範囲で賭ける。
@@ -272,10 +270,6 @@ def assign_flat_stakes(
         stake_unit: 1 点あたりの賭け金 (円)。券種別指定が無いときの既定。
         stake_unit_by_bet_type: 券種ごとの 1 点あたり金額。単勝を厚く、連系を
             薄く、といった配分に使う。無い券種は ``stake_unit`` にフォールバック。
-        min_ev: この値を超える ev の買い目だけを対象にする (1.0 = 収支トントン)。
-        min_ev_by_bet_type: 券種ごとに min_ev を上書きする dict。単勝・複勝は
-            EV 条件を使わない (本命買い) ので -inf を入れて素通しにするのに使う。
-            無い券種は ``min_ev`` にフォールバック。
         keep_zero_stake: True なら賭けない買い目も stake=0 で返す。
 
     Returns:
@@ -291,13 +285,11 @@ def assign_flat_stakes(
         # どの券種の 1 点分にも満たないなら何も買えない
         return [c.model_copy(update={"stake": 0}) for c in candidates] if keep_zero_stake else []
 
-    by_type = min_ev_by_bet_type or {}
-
-    def _threshold(c: BetCandidate) -> float:
-        return by_type.get(c.bet_type, min_ev)
-
     def _passes(c: BetCandidate) -> bool:
-        return _unit(c) > 0 and c.ev is not None and c.ev > _threshold(c)
+        # **EV 閾値は使わない。** est_odds が取れない買い目だけを落とす (値段が
+        # 分からないものは買えないため)。並び順は assign_flat_stakes が
+        # 券種の優先度 → 的中確率の順で決める。
+        return _unit(c) > 0 and c.est_odds is not None
 
     def _sort_key(c: BetCandidate) -> tuple[int, float]:
         # 単勝 → 複勝 → 連系。同じ券種内は的中確率の高い順 (EV 順にはしない)
@@ -332,8 +324,6 @@ def recommend_for_race(
     race_budget: int,
     stake_unit: int = 100,
     stake_unit_by_bet_type: dict[str, int] | None = None,
-    min_ev: float = 1.0,
-    min_ev_by_bet_type: dict[str, float] | None = None,
     win_min_odds: float = 1.1,
     top_n_horses: int = 3,
     enabled_bet_types: list[str] | None = None,
@@ -358,8 +348,6 @@ def recommend_for_race(
         stake_unit: 1 点あたりの賭け金 (円、既定 100)。券種別指定が無いときの既定。
         stake_unit_by_bet_type: 券種ごとの 1 点あたり金額。回収率の推定が確かな
             単複を厚く、測定不能な連系を薄く、といった配分ができる。
-        min_ev: この値を超える期待値の買い目だけを賭ける (1.0 = 収支トントン)。
-        min_ev_by_bet_type: 券種ごとの min_ev 上書き (単複は -inf = 素通し)。
         win_min_odds: **単勝・複勝は EV 条件を使わず「モデルの本命 (1 位) を買う」**。
             単勝はこのオッズ下限を下回る場合だけ見送る (複勝に下限は無い)。
             理由は較正済み確率での実測 (test 19ヶ月・5,404 レース):
@@ -491,13 +479,6 @@ def recommend_for_race(
         race_budget=race_budget,
         stake_unit=stake_unit,
         stake_unit_by_bet_type=stake_unit_by_bet_type,
-        min_ev=min_ev,
-        # 単勝は上で 1 位 1 点に絞り済みなので EV 閾値は通す (負の EV でも「本命」として出す)
-        min_ev_by_bet_type={
-            **(min_ev_by_bet_type or {}),
-            "単勝": float("-inf"),
-            "複勝": float("-inf"),
-        },
         keep_zero_stake=True,
     )
 

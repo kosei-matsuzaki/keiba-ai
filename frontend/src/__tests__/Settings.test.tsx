@@ -40,7 +40,6 @@ const mockSettings: SettingsResponse = {
   rate_min_seconds: 3,
   rate_max_seconds: 10,
   night_min_seconds: 30,
-  win_ev_threshold: 1.1,
   win_min_odds: 1.1,
   scraper_stopped: false,
     race_budget: 5000,

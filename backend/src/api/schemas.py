@@ -243,7 +243,6 @@ class SettingsResponse(BaseModel):
     rate_min_seconds: float
     rate_max_seconds: float
     night_min_seconds: float
-    win_ev_threshold: float
     win_min_odds: float
     scraper_stopped: bool
     race_budget: int
@@ -259,7 +258,6 @@ class SettingsUpdate(BaseModel):
     rate_min_seconds: float | None = None
     rate_max_seconds: float | None = None
     night_min_seconds: float | None = None
-    win_ev_threshold: float | None = None
     win_min_odds: float | None = None
     scraper_stopped: bool | None = None
     race_budget: int | None = None

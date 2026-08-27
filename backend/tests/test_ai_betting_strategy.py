@@ -137,7 +137,6 @@ class TestAssignFlatStakes:
         ]
         out = assign_flat_stakes(
             cands, race_budget=200, stake_unit=100,
-            min_ev_by_bet_type={"単勝": float("-inf"), "複勝": float("-inf")},
         )
         assert [c.bet_type for c in out] == ["単勝", "複勝"]
 
@@ -150,7 +149,6 @@ class TestAssignFlatStakes:
         out = assign_flat_stakes(
             cands, race_budget=5000, stake_unit=100,
             stake_unit_by_bet_type={"単勝": 500, "三連単": 100},
-            min_ev_by_bet_type={"単勝": float("-inf")},
         )
         assert {(c.bet_type, c.stake) for c in out} == {("単勝", 500), ("三連単", 100)}
 
@@ -164,16 +162,24 @@ class TestAssignFlatStakes:
         """対象が少なければ使い切らない (これが定額運用の要点)。"""
         cands = [self._c("1", 1.5), self._c("2", 0.9)]
         out = assign_flat_stakes(cands, race_budget=10_000, stake_unit=100)
-        assert sum(c.stake for c in out) == 100
+        assert sum(c.stake for c in out) == 200
 
-    def test_below_min_ev_is_not_bet(self):
-        cands = [self._c("1", 1.05), self._c("2", 1.5)]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100, min_ev=1.1)
+    def test_ev_no_longer_filters(self):
+        """**EV は買う / 買わないの判定に使わない** (2026-08-28)。
+
+        単勝・複勝では EV 条件を捨てて回収率が 0.698→0.931 / 0.654→0.887 と改善し、
+        連系だけ残っていた閾値 1.1 にも根拠が無かった。EV が 1.0 を割る買い目も
+        確率順で予算に収まる限り買う。
+        """
+        cands = [self._c("1", 0.6, prob=0.30), self._c("2", 0.5, prob=0.20)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        assert [c.combo for c in out] == ["1", "2"]  # 確率の高い順
+
+    def test_candidates_without_odds_are_still_excluded(self):
+        """値段が分からない買い目は買えない (EV 条件とは別の理由)。"""
+        cands = [self._c("1", None), self._c("2", 0.5)]
+        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
         assert [c.combo for c in out] == ["2"]
-
-    def test_ev_exactly_at_threshold_is_excluded(self):
-        cands = [self._c("1", 1.0)]
-        assert assign_flat_stakes(cands, race_budget=1000, stake_unit=100) == []
 
     def test_none_ev_is_not_bet(self):
         cands = [self._c("1", None), self._c("2", 1.5)]

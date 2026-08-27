@@ -26,7 +26,6 @@ const schema = z
     rate_max_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     night_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
-    win_ev_threshold: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     scraper_stopped: z.boolean(),
     // 賭け金は「1 レースにいくらまで」と「1 点いくら（券種ごと）」
     race_budget: z.coerce
@@ -182,23 +181,10 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
         </Section>
 
         <Section
-          description="連系（馬連・三連複など）を「賭ける / 賭けない」判定する期待値の閾値。1.0 が損益分岐、上げると厳選、下げると幅広く賭ける。単勝・複勝は期待値ではなく AI の本命を買うルールなので、ここでは設定しません。"
+          description="1 レースに使う金額と、単勝を見送るオッズの下限。買い目は期待値ではなく「的中確率の高い順」に選びます（期待値で絞ると大穴に寄って回収率が落ちることが実測で分かっているため）。"
           hidden={!visible('betting')}
         >
               <div className="flex flex-col gap-4">
-                <FieldRow
-                  label="連系を買う基準"
-                  id="win_ev_threshold"
-                  help="「賭けた額の何倍が期待できるか」の下限。1.00 が損益トントンで、1.10 なら 1 割の取り分が見込めるときだけ買います（的中確率 × オッズ で計算）。上げるほど買う回数は減ります。単勝・複勝には適用されません。"
-                  error={errors.win_ev_threshold?.message}
-                >
-                  <Input
-                    id="win_ev_threshold"
-                    type="number"
-                    step="0.01"
-                    {...register('win_ev_threshold')}
-                  />
-                </FieldRow>
                 <FieldRow
                   label="単勝のオッズ下限"
                   id="win_min_odds"

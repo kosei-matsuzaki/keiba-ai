@@ -12,18 +12,17 @@ def test_get_settings_defaults(api_client: TestClient) -> None:
     assert "user_agent" in data
     assert "rate_min_seconds" in data
     assert data["rate_min_seconds"] == 3.0
-    assert data["win_ev_threshold"] == 1.1
 
 
 def test_put_settings_partial_update(api_client: TestClient) -> None:
     resp = api_client.put(
         "/api/settings",
-        json={"rate_min_seconds": 5.0, "win_ev_threshold": 1.2},
+        json={"rate_min_seconds": 5.0, "win_min_odds": 1.2},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["rate_min_seconds"] == 5.0
-    assert data["win_ev_threshold"] == 1.2
+    assert data["win_min_odds"] == 1.2
     # Unchanged fields should still be defaults
     assert data["rate_max_seconds"] == 6.0
 

@@ -20,7 +20,6 @@ def _dict_to_response(data: dict) -> SettingsResponse:
         rate_min_seconds=float(data.get("rate_min_seconds", 3.0)),
         rate_max_seconds=float(data.get("rate_max_seconds", 6.0)),
         night_min_seconds=float(data.get("night_min_seconds", 5.0)),
-        win_ev_threshold=float(data.get("win_ev_threshold", 1.1)),
         win_min_odds=float(data.get("win_min_odds", 1.1)),
         scraper_stopped=bool(data.get("scraper_stopped", False)),
         race_budget=int(data.get("race_budget", 5_000)),
