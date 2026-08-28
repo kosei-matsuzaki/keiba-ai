@@ -332,6 +332,7 @@ function ConditionList({ conditions }: { conditions: SimulationConditions | null
   // 確率モデルの有無は結果を最も大きく変えるので、他の条件と同列に並べない。
   const others: [string, string][] = [
     ['履歴の無いレース', conditions.exclude_low_information ? '除外した' : '含めた'],
+    ['賭け金', conditions.staking === 'compound' ? '複利（残資産連動）' : '定額'],
     ['連系を組む頭数', `上位 ${conditions.top_n_horses} 頭`],
     [
       '1 レースの上限',
@@ -394,6 +395,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   const [strategy, setStrategy] = useState<SimulationStrategy>('balanced');
   // 1 race 絶対上限 (円)。0 で無効。default 5000 円 (= 100k 元手の 5%)。
   const [maxStakePerRaceYen, setMaxStakePerRaceYen] = useState(5_000);
+  // 既定は flat。compound は払戻 1.0 未満の券種を数百レース買うと破産し、
+  // 以降を実質評価しなくなるので、回収率を測るのが目的の画面では既定にしない。
+  const [staking, setStaking] = useState<'flat' | 'compound'>('flat');
   // 履歴の無いレース (新馬戦など) を除外するか。既定 off — 実測では単勝が +0.006 と
   // ほぼ変わらず、複勝はむしろ悪化する (下の説明文参照) ため、既定で切るほどの根拠が無い。
   const [excludeLowInfo, setExcludeLowInfo] = useState(false);
@@ -477,6 +481,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         strategy,
         max_stake_per_race_yen: maxStakePerRaceYen,
         exclude_low_information: excludeLowInfo,
+        staking,
         model_id: modelId,
       }),
     onSuccess: (data) => {
@@ -621,6 +626,28 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
             </div>
 
             <div className="flex flex-col gap-1.5">
+              <label className="text-sm" htmlFor="staking">
+                賭け金の決め方
+              </label>
+              <select
+                id="staking"
+                className="h-9 w-full rounded-sm border border-border bg-background px-3 text-sm"
+                value={staking}
+                onChange={(e) => setStaking(e.target.value as 'flat' | 'compound')}
+              >
+                <option value="flat">定額（1 レースの予算を固定）</option>
+                <option value="compound">複利（残資産の一定割合）</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                回収率を測るなら<strong>定額</strong>です。複利は資産の増減が賭け金に
+                跳ね返るため、払戻 1.0 未満の券種を数百レース買うと資産が尽き、
+                <strong>以降のレースを実質評価しなくなります</strong>。
+                そのうえ回収率は賭け金の重み付き平均なので、破産すると
+                「早い時期の大きい賭け金」に偏った数字になります。
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -730,6 +757,14 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         <>
           {/* この結果がどの条件で出たか。設定を変えれば同じボタンでも別条件で走るので、
               結果と条件を必ず並べて見せる。 */}
+          {result.n_races_broke > 0 && (
+            <p className="rounded-sm border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+              ⚠ 資金不足で 1 点も買えなかったレースが {result.n_races_broke.toLocaleString()} 件
+              あります。この回収率は<strong>破産するまでの期間しか測っていません</strong>。
+              賭け金の決め方を「定額」にするか、初期資産を増やして測り直してください。
+            </p>
+          )}
+
           <section className="border-y border-border">
             <h4 className={labelClass('mb-0 px-4 pt-3 sm:px-6')}>この実行の条件</h4>
             <ConditionList conditions={result.conditions} />

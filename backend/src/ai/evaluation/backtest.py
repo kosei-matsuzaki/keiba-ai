@@ -38,9 +38,11 @@ from sqlalchemy import select
 
 from ai.core.labels import assign_relevance
 from ai.core.probabilities import plackett_luce_place_prob
+from ai.inference.confidence import is_place_worth_buying, pick_confidence
 from ai.inference.predict import predict_race
 from ai.model.registry import load_model_full
 from core.paths import db_path
+from core.settings_store import SettingsStore, resolve_model_path
 from db.models import ModelRun
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
@@ -424,6 +426,8 @@ def evaluate(
     place_bet_rule: str = "topk",
     place_top_k: int = 1,
     place_ev_threshold: float = PLACE_EV_THRESHOLD,
+    probability_model_path: Path | None = None,
+    place_min_confidence: float = 0.30,
     exclude_top_rank: int = 0,
     min_popularity: int | None = None,
     max_popularity: int | None = None,
@@ -460,6 +464,14 @@ def evaluate(
     回収率は 0.0-0.9 帯が 0.832 で最良、2.0 以上が 0.573 で最悪と単調減少しており、
     高 EV = 推定オッズの高い穴馬 = 確率もオッズも最も過大評価される帯、という構造。
     温度・冪 (Harville 補正) のような単調変換では直らない。
+
+    `probability_model_path` は**確率専用モデル** (proper scoring rule で学習)。
+    指定すると、実運用と同じく **AI の本命に対するそのモデルの確率が
+    `place_min_confidence` 未満のレースでは複勝を買わない**。指定しないと
+    複勝を全レースで買う = 実運用が確率モデルを使っている場合、**評価と本番が
+    別物になる**。Dashboard の KPI は `--persist` が書いた値を読むので、
+    ここを揃えないと画面の数字が「利用者が実際に得る数字」でなくなる
+    (2026-08-24 に同じ型のズレを一度直している)。
 
     `persist=True` で評価結果を model_runs.metrics_json に merge する
     (Dashboard 側 metrics endpoint がこの値を読む)。
@@ -511,6 +523,21 @@ def evaluate(
     per_race_win_payout: list[float] = []
     per_race_place_invested: list[float] = []
     per_race_place_payout: list[float] = []
+
+    # 確率専用モデル。指定されていれば、実運用と同じく **AI の本命に対する
+    # そのモデルの確率がしきい値未満のレースでは複勝を買わない**。揃えないと
+    # 「評価と本番が別物」になり、Dashboard の KPI が実際に得る数字でなくなる。
+    prob_bundle = None
+    if probability_model_path is not None:
+        try:
+            prob_bundle = load_model_full(probability_model_path)
+            log.info("Confidence model loaded from %s", probability_model_path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "confidence model load failed (%s): %s — 複勝は全レースで買う",
+                probability_model_path, exc,
+            )
+    n_place_skipped = 0
 
     # Betting simulation — payback rate convention (回収率): gross_payout / invested
     # 1.00 = break-even, 1.10 = 10% profit, 0.80 = 20% loss
@@ -591,6 +618,18 @@ def evaluate(
                     if row.get("finish_position") == 1:
                         win_gross_payout += odds * bet_size
                         race_win_payout += odds * bet_size
+
+            # 複勝の確信度フィルタ (実運用と同じ)。確率モデルが AI の本命に与える
+            # 確率がしきい値未満なら、このレースの複勝は買わない。
+            if prob_bundle is not None and not preds.empty:
+                conf = pick_confidence(
+                    prob_bundle, race_frame, preds.iloc[0]["horse_id"], session=session
+                )
+                if not is_place_worth_buying(conf, place_min_confidence):
+                    n_place_skipped += 1
+                    per_race_place_invested.append(race_place_invested)
+                    per_race_place_payout.append(race_place_payout)
+                    continue
 
             # Place betting (複勝): requires payout_place data on the race frame
             # race_frame may carry payout_place if the training frame includes it.
@@ -683,6 +722,15 @@ def evaluate(
         "win_bet_rule": win_bet_rule,
         "place_ev_threshold": float(place_ev_threshold),
         "place_bet_rule": place_bet_rule,
+        # 確率モデルを使ったか (使うと複勝の対象レースが減るので、後から
+        # 「どの条件で測った数字か」を判別できるようにする)
+        "probability_model": (
+            Path(probability_model_path).name if probability_model_path else None
+        ),
+        "place_min_confidence": (
+            place_min_confidence if probability_model_path else None
+        ),
+        "n_place_skipped": n_place_skipped,
         "place_top_k": int(place_top_k),
         "exclude_top_rank": int(exclude_top_rank),
         "min_popularity": min_popularity,
@@ -766,6 +814,19 @@ def _cli() -> None:
         help=f"EV threshold for place bets (default {PLACE_EV_THRESHOLD}).",
     )
     parser.add_argument(
+        "--probability-model", type=Path, default=None,
+        help=(
+            "確率専用モデルのディレクトリ。指定すると実運用と同じく、AI の本命に対する"
+            "そのモデルの確率が --place-min-confidence 未満のレースで複勝を買わない。"
+            "**未指定なら settings.json の probability_model_path を使う** "
+            "(評価と本番がズレないように既定で揃える)。'none' で明示的に無効化。"
+        ),
+    )
+    parser.add_argument(
+        "--place-min-confidence", type=float, default=None,
+        help="複勝を買う確信度の下限 (既定: settings.json の place_min_confidence)",
+    )
+    parser.add_argument(
         "--exclude-top-rank",
         type=int,
         default=0,
@@ -837,6 +898,24 @@ def _cli() -> None:
     )
     args = parser.parse_args()
 
+    # 既定は settings.json に合わせる。評価だけ別条件で走ると、Dashboard の KPI が
+    # 「利用者が実際に得る数字」でなくなる (2026-08-24 に同じ型のズレを直している)。
+    _settings = SettingsStore().load()
+    if args.probability_model is not None:
+        prob_model_path = (
+            None if str(args.probability_model) == "none"
+            else resolve_model_path(str(args.probability_model))
+        )
+    else:
+        prob_model_path = resolve_model_path(_settings.get("probability_model_path"))
+    place_min_conf = (
+        args.place_min_confidence
+        if args.place_min_confidence is not None
+        else float(_settings.get("place_min_confidence", 0.30))
+    )
+    if prob_model_path is not None:
+        print(f"確率モデル: {prob_model_path.name} (複勝は確信度 {place_min_conf:.2f} 以上)")
+
     metrics = evaluate(
         model_path=args.model,
         db=args.db,
@@ -849,6 +928,8 @@ def _cli() -> None:
         place_bet_rule=args.place_bet_rule,
         place_top_k=args.place_top_k,
         place_ev_threshold=args.place_ev_threshold,
+        probability_model_path=prob_model_path,
+        place_min_confidence=place_min_conf,
         exclude_top_rank=args.exclude_top_rank,
         min_popularity=args.min_popularity,
         max_popularity=args.max_popularity,

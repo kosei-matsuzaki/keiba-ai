@@ -49,6 +49,19 @@ log = get_logger(__name__)
 
 StrategyName = Literal["conservative", "balanced", "aggressive"]
 
+#: 賭け金の決め方。
+#:   flat     … 1 レースの予算を**固定**する (既定)。回収率を測るのが目的の画面なので、
+#:              資産推移のリアリティより測定の正しさを優先する。
+#:   compound … 残資産の一定割合。資産の増減が賭け金に跳ね返る。
+#:
+#: **なぜ flat が既定か**: compound だと払戻 0.85 前後の券種を数百レース買った時点で
+#: 資産が尽き、賭け金が下限 100 円に張り付いて以降を実質評価しなくなる。実際にこれで
+#: 「連系は点数が少なく測定不能」と誤って結論し、docs にもそう書いていた
+#: (定額で測り直したら 21,570 点あり CI [0.83,0.93] と十分測れた)。
+#: そのうえ payback = Σpayout/Σstake は賭け金の重み付き平均なので、破産すると
+#: 「早い時期の大きい賭け金」に偏った数字になる。
+StakingMode = Literal["flat", "compound"]
+
 # 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「何頭から買い目を組むか」。
 #
 #   stake_ratio   … 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)
@@ -66,6 +79,9 @@ STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
     "aggressive":   {"stake_ratio": 0.50, "top_n_horses": 4},
 }
 
+
+#: 馬券の最小単位 (円)。これを下回る予算では 1 点も買えない。
+_MIN_STAKE = 100
 
 # 単勝 / 複勝 / 連系 すべての券種を simulation 対象とする
 DEFAULT_BET_TYPES: list[str] = list(COMBINATION_BET_TYPES)
@@ -150,12 +166,16 @@ class SimulationResult:
     #: 何の条件だったか分からなくなるのを防ぐ (確率モデルの有無・確信度のしきい値・
     #: 履歴の無いレースの除外・券種・1 点あたりの金額は、いずれも結果を大きく変える)。
     conditions: dict = field(default_factory=dict)
+    #: 資金不足で 1 点も買えなかったレース数。0 でなければ、その run の回収率は
+    #: 「破産するまでの期間」しか測っていない。
+    n_races_broke: int = 0
 
     def as_dict(self) -> dict:
         return {
             "window": {"start": self.window_start, "end": self.window_end},
             "model_path": self.model_path,
             "conditions": self.conditions,
+            "n_races_broke": self.n_races_broke,
             "strategy": self.strategy,
             "budget": self.budget,
             "n_races": self.n_races,
@@ -289,6 +309,7 @@ def simulate_active_model(
     enabled_bet_types: list[str] | None = None,
     top_n_horses: int = 3,
     max_stake_per_race_yen: int | None = None,
+    staking: StakingMode = "flat",
     stake_unit_by_bet_type: dict[str, int] | None = None,
     exclude_low_information: bool = False,
     probability_model_path: Path | None = None,
@@ -382,6 +403,7 @@ def simulate_active_model(
             "max_stake_per_race_pct": max_stake_per_race_pct,
             "max_stake_per_race_yen": max_stake_per_race_yen,
             "top_n_horses": int(preset["top_n_horses"]),
+            "staking": staking,
         },
     )
 
@@ -406,6 +428,9 @@ def simulate_active_model(
     # cap × 5% も 100 円未満となり実質賭け不可 (= 破産)。
     n_skipped_low_info = 0
     n_skipped_place = 0
+    # 資金不足で 1 点も買えなかったレース数。0 でないなら、その run の回収率は
+    # 「破産するまでの期間」しか測っていない。
+    n_races_broke = 0
     current_bankroll = budget
     peak_bankroll = budget
     # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
@@ -479,12 +504,19 @@ def simulate_active_model(
             log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
             continue
 
-        # 1 レースの予算は「残資産 × max_stake_per_race_pct」を上限とし、
-        # max_stake_per_race_yen が指定されていればそれとの小さい方を採る。
-        # 残資産が尽きれば予算 0 になり、自然に賭けが止まる。
-        race_budget = int(current_bankroll * max_stake_per_race_pct)
-        if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
-            race_budget = min(race_budget, int(max_stake_per_race_yen))
+        # 1 レースの予算。flat は固定額、compound は残資産に連動 (破産しうる)。
+        if staking == "compound":
+            race_budget = int(current_bankroll * max_stake_per_race_pct)
+            if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
+                race_budget = min(race_budget, int(max_stake_per_race_yen))
+        else:
+            race_budget = int(max_stake_per_race_yen or 0) or int(
+                budget * max_stake_per_race_pct
+            )
+            # 資産が尽きたら賭けられないのは flat でも同じ (借金はしない)
+            race_budget = min(race_budget, max(0, current_bankroll))
+        if race_budget < _MIN_STAKE:
+            n_races_broke += 1
         stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
         # 券種別の 1 点あたり金額。設定は「単勝 500 / 連系 100」のような比率で
         # 持つので、シミュレーションでは stake_unit を基準にその比で割り当てる。
@@ -626,6 +658,13 @@ def simulate_active_model(
         log.info(
             "skipped 複勝 in %d races (confidence < %.2f)", n_skipped_place, place_min_confidence
         )
+    if n_races_broke:
+        log.warning(
+            '資金不足で 1 点も買えなかったレースが %d 件ある。'
+            'この run の回収率は「破産するまでの期間」しか測っていない。',
+            n_races_broke,
+        )
+    result.n_races_broke = n_races_broke
     result.n_races = max(0, result.n_races - n_skipped_low_info)
     result.n_settled_races = n_settled
     result.final_bankroll = current_bankroll

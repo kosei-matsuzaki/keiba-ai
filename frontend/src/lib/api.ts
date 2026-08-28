@@ -385,6 +385,7 @@ export function runSimulation(req: SimulationRequest): Promise<SimulationRespons
   if (req.end) searchParams.end = req.end;
   if (req.model_id != null) searchParams.model_id = req.model_id;
   if (req.exclude_low_information) searchParams.exclude_low_information = 'true';
+  if (req.staking) searchParams.staking = req.staking;
   return getClient().then((c) =>
     c
       .get('simulation/active_model', {
@@ -413,6 +414,7 @@ export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted>
   }
   if (req.model_id != null) searchParams.model_id = req.model_id;
   if (req.exclude_low_information) searchParams.exclude_low_information = 'true';
+  if (req.staking) searchParams.staking = req.staking;
   return getClient().then((c) =>
     c
       .post('simulation/start', { searchParams })

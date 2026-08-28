@@ -490,6 +490,8 @@ export interface SimulationConditions {
   max_stake_per_race_pct: number;
   max_stake_per_race_yen: number | null;
   top_n_horses: number;
+  /** flat=1 レースの予算を固定 / compound=残資産の一定割合（破産しうる） */
+  staking?: 'flat' | 'compound';
 }
 
 export interface SimulationResponse {
@@ -520,6 +522,8 @@ export interface SimulationResponse {
    * 古い run（migration 0013 より前）は null = 「条件の記録なし」。
    */
   conditions: SimulationConditions | null;
+  /** 資金不足で 1 点も買えなかったレース数。0 でなければ回収率は途中までしか測れていない */
+  n_races_broke: number;
   /** バックエンドが自動保存した row の id。null なら未保存 (旧サーバ互換)。 */
   run_id: number | null;
 }
@@ -557,4 +561,10 @@ export interface SimulationRequest {
   model_id?: number;
   /** 履歴の無いレース (新馬戦など) を除外する。 */
   exclude_low_information?: boolean;
+  /**
+   * 賭け金の決め方。flat=1 レースの予算を固定（既定）/ compound=残資産の一定割合。
+   * compound は払戻 1.0 未満の券種を数百レース買うと破産し、以降を実質評価しなく
+   * なるため、回収率を測るのが目的なら flat。
+   */
+  staking?: 'flat' | 'compound';
 }

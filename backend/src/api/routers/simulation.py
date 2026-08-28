@@ -127,6 +127,9 @@ class SimulationResponse(BaseModel):
     #: しきい値・履歴の無いレースの除外・券種・1 点あたりの金額など)。
     #: 0013 より前に保存された run では None = 「条件の記録なし」。
     conditions: dict | None = None
+    #: 資金不足で 1 点も買えなかったレース数。0 でなければ、その run の回収率は
+    #: 「破産するまでの期間」しか測っていない。
+    n_races_broke: int = 0
     # 実行直後にバックエンドが保存した row の id。再呼び出しで詳細を取得可能。
     run_id: int | None = None
 
@@ -173,6 +176,7 @@ def _result_to_response(
         by_race_class=[GroupStatsResponse(**g) for g in d["by_race_class"]],
         by_course=[GroupStatsResponse(**g) for g in d["by_course"]],
         conditions=d.get("conditions") or None,
+        n_races_broke=int(d.get("n_races_broke") or 0),
         bankroll_timeseries=[
             BankrollPointResponse(**p) for p in d["bankroll_timeseries"]
         ],
@@ -307,6 +311,14 @@ def run_simulation(
             "投資額をこの値で頭打ちにできる。",
         ),
     ] = None,
+    staking: Annotated[
+        Literal["flat", "compound"],
+        Query(
+            description="賭け金の決め方。flat=1 レースの予算を固定 (既定)。"
+            "compound=残資産の一定割合。compound は払戻 1.0 未満の券種を数百レース"
+            "買うと破産し、以降を実質評価しなくなるため、回収率の測定には flat を推奨。"
+        ),
+    ] = "flat",
     model_id: Annotated[
         int | None,
         Query(description="対象モデル (model_runs.id)。未指定で active モデル。"),
@@ -353,6 +365,7 @@ def run_simulation(
         stake_unit_by_bet_type=stake_units,
             probability_model_path=prob_model_path,
             place_min_confidence=place_min_confidence,
+            staking=staking,
         exclude_low_information=exclude_low_information,
         enabled_bet_types=enabled_bet_types,
     )
@@ -500,6 +513,14 @@ async def start_simulation_job(
             description="1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効。",
         ),
     ] = None,
+    staking: Annotated[
+        Literal["flat", "compound"],
+        Query(
+            description="賭け金の決め方。flat=1 レースの予算を固定 (既定)。"
+            "compound=残資産の一定割合。compound は払戻 1.0 未満の券種を数百レース"
+            "買うと破産し、以降を実質評価しなくなるため、回収率の測定には flat を推奨。"
+        ),
+    ] = "flat",
     model_id: Annotated[
         int | None,
         Query(description="対象モデル (model_runs.id)。未指定で active モデル。"),
@@ -555,6 +576,7 @@ async def start_simulation_job(
                 stake_unit_by_bet_type=stake_units,
             probability_model_path=prob_model_path,
             place_min_confidence=place_min_confidence,
+            staking=staking,
                 exclude_low_information=exclude_low_information,
                 enabled_bet_types=captured_bet_types,
             )

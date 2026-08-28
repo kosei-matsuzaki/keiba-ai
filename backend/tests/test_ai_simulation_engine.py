@@ -233,6 +233,8 @@ def test_compounding_initial_bankroll_equals_budget(monkeypatch):
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
             start=None, end=None, budget=10_000, strategy="balanced",
+            # 既定は flat。**複利の挙動を検証するテストなので明示する**
+            staking="compound",
         )
 
     assert bankrolls_seen[0] == 10_000
@@ -267,6 +269,8 @@ def test_compounding_bankroll_grows_with_payouts(monkeypatch):
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
             start=None, end=None, budget=10_000, strategy="balanced",
+            # 既定は flat。**複利の挙動を検証するテストなので明示する**
+            staking="compound",
         )
 
     # race 毎: stake=100, payout=400, profit=+300
@@ -303,6 +307,8 @@ def test_compounding_bankroll_shrinks_on_loss(monkeypatch):
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
             start=None, end=None, budget=10_000, strategy="balanced",
+            # 既定は flat。**複利の挙動を検証するテストなので明示する**
+            staking="compound",
         )
 
     # bankroll 推移: 10000 → 9900 → 9800 → 9700 (3 連敗)
@@ -419,6 +425,8 @@ def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
             start=None, end=None, budget=10_000, strategy="balanced",
+            # 既定は flat。**複利の挙動を検証するテストなので明示する**
+            staking="compound",
         )
 
     # _compounding_setup は race 毎に異なる日付を使うので 3 ポイント
