@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
@@ -25,6 +25,7 @@ import {
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
 import { useSettings } from '@/hooks/useSettings';
+import { labelClass } from '@/lib/labels';
 import type {
   SimulationGroupStats,
   SimulationConditions,
@@ -323,26 +324,14 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
 function ConditionList({ conditions }: { conditions: SimulationConditions | null }) {
   if (!conditions) {
     return (
-      <p className="text-xs text-muted-foreground">
-        ※ この run には実行条件が記録されていません（古い run）。
+      <p className="px-4 py-3 text-xs text-muted-foreground sm:px-6">
+        この実行には条件が記録されていません（古い実行）。
       </p>
     );
   }
-  const rows: [string, string][] = [
-    [
-      '確率モデル',
-      conditions.probability_model
-        ? `${conditions.probability_model}（複勝の確信度と連系の確率に使用）`
-        : '未使用（Active モデルだけで実行）',
-    ],
-    [
-      '複勝を買う確信度',
-      conditions.place_min_confidence == null
-        ? '—（確率モデル未使用なので全レースで買う）'
-        : `${(conditions.place_min_confidence * 100).toFixed(0)}% 以上`,
-    ],
+  // 確率モデルの有無は結果を最も大きく変えるので、他の条件と同列に並べない。
+  const others: [string, string][] = [
     ['履歴の無いレース', conditions.exclude_low_information ? '除外した' : '含めた'],
-    ['対象券種', conditions.enabled_bet_types.join(' / ') || '—'],
     ['連系を組む頭数', `上位 ${conditions.top_n_horses} 頭`],
     [
       '1 レースの上限',
@@ -350,16 +339,41 @@ function ConditionList({ conditions }: { conditions: SimulationConditions | null
         ? `${conditions.max_stake_per_race_yen.toLocaleString()} 円`
         : `残資産の ${(conditions.max_stake_per_race_pct * 100).toFixed(0)}%`,
     ],
+    ['対象券種', conditions.enabled_bet_types.join(' / ') || '—'],
   ];
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-      {rows.map(([k, v]) => (
-        <Fragment key={k}>
-          <dt className="text-muted-foreground">{k}</dt>
-          <dd className="tabular-nums">{v}</dd>
-        </Fragment>
-      ))}
-    </dl>
+    <div className="flex flex-col gap-3 px-4 py-3 sm:px-6">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-xs text-muted-foreground">確からしさを出すモデル</span>
+        {conditions.probability_model ? (
+          <>
+            <span className="font-mono text-sm text-foreground">
+              {conditions.probability_model}
+            </span>
+            <span className="text-xs text-subtle-foreground">
+              複勝は確信度{' '}
+              {((conditions.place_min_confidence ?? 0) * 100).toFixed(0)}% 以上のレースだけ /
+              連系の確率もこのモデル由来
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-sm text-muted-foreground">未使用</span>
+            <span className="text-xs text-subtle-foreground">
+              買い目を決めるモデルだけで実行（複勝は全レースで購入）
+            </span>
+          </>
+        )}
+      </div>
+      <dl className="flex flex-wrap gap-x-8 gap-y-1 text-xs">
+        {others.map(([k, v]) => (
+          <div key={k} className="flex gap-2">
+            <dt className="text-muted-foreground">{k}</dt>
+            <dd className="tabular-nums text-foreground">{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
@@ -564,24 +578,45 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               </p>
             </div>
 
-            {/* Settings の値は実行時に読まれる。ここに出さないと「いま何が効いて
-                いるのか」がシミュレーション画面から分からない。 */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-sm">Settings から引き継ぐ条件</span>
-              <p className="text-xs text-muted-foreground">
-                {settings?.probability_model_path ? (
-                  <>
-                    確率モデル <strong>{settings.probability_model_path.split(/[\\/]/).pop()}</strong> を使用します
-                    （複勝は確信度 {((settings.place_min_confidence ?? 0.3) * 100).toFixed(0)}% 以上のレースだけ、
-                    連系の確率もこのモデル由来）。
-                  </>
-                ) : (
-                  <>
-                    確率モデルは<strong>未設定</strong>です（Active モデルだけで実行）。
-                    Settings &gt; MODELS で選ぶと、複勝の絞り込みと連系の確率が変わります。
-                  </>
-                )}
-                {' '}券種と 1 点あたりの金額も Settings の値を使います。
+            {/* このシミュレーションは **2 つのモデル**を使う。片方 (確率モデル) は
+                Settings / Models 画面で決まり、実行時に読まれる。ここに出さないと
+                「同じボタンを押したのに前回と結果が違う」理由が分からない。 */}
+            <div className="flex flex-col gap-2 sm:col-span-2">
+              <span className={labelClass('mb-0')}>使うモデル</span>
+              <div className="grid grid-cols-1 gap-px overflow-hidden rounded-sm border border-border bg-border sm:grid-cols-2">
+                <div className="flex flex-col gap-0.5 bg-background px-3 py-2">
+                  <span className="text-xs text-muted-foreground">買い目を決める</span>
+                  <span className="text-sm text-foreground">この画面のモデル</span>
+                  <span className="text-xs text-subtle-foreground">
+                    どの馬・どの組を買うか
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5 bg-background px-3 py-2">
+                  <span className="text-xs text-muted-foreground">確からしさを出す</span>
+                  {settings?.probability_model_path ? (
+                    <>
+                      <span className="truncate font-mono text-sm text-foreground">
+                        {settings.probability_model_path.split(/[/\\]/).pop()}
+                      </span>
+                      <span className="text-xs text-subtle-foreground">
+                        複勝は確信度{' '}
+                        {((settings.place_min_confidence ?? 0.3) * 100).toFixed(0)}% 以上の
+                        レースだけ / 連系の確率もこのモデル由来
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm text-muted-foreground">未設定</span>
+                      <span className="text-xs text-subtle-foreground">
+                        Models 画面で選ぶと、複勝の絞り込みと連系の確率が変わります
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-subtle-foreground">
+                券種と 1 点あたりの金額も Settings の値を使います。結果には実行時の条件が
+                記録されるので、設定を変えて回し直しても後から見分けられます。
               </p>
             </div>
 
@@ -695,10 +730,8 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         <>
           {/* この結果がどの条件で出たか。設定を変えれば同じボタンでも別条件で走るので、
               結果と条件を必ず並べて見せる。 */}
-          <section className="rounded-sm border border-border p-3">
-            <h4 className="mb-2 font-mono text-[11px] uppercase tracking-[0.12em] text-subtle-foreground">
-              この実行の条件
-            </h4>
+          <section className="border-y border-border">
+            <h4 className={labelClass('mb-0 px-4 pt-3 sm:px-6')}>この実行の条件</h4>
             <ConditionList conditions={result.conditions} />
           </section>
 

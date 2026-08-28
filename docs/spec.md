@@ -103,11 +103,11 @@
 │   │   ├── router.tsx         # createBrowserRouter（7 画面 + 旧 URL の Navigate リダイレクト 3 本）
 │   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
 │   │   ├── routes/            # ページコンポーネント
-│   │   │   ├── Dashboard.tsx        # ActiveModelCard + MetricBand + AccuracyChart
+│   │   │   ├── Dashboard.tsx        # OperatingModelsCard + MetricBand + AccuracyChart
 │   │   │   ├── Races.tsx            # RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
 │   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目 + 答え合わせ
 │   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
-│   │   │   ├── Models.tsx           # ActiveModelCard + ModelTable + Activate + TrainModelDialog
+│   │   │   ├── Models.tsx           # OperatingModelsCard + ModelTable（Activate / 確率に設定）+ TrainModelDialog
 │   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
 │   │   ├── components/        # 共通コンポーネント
@@ -125,7 +125,8 @@
 │   │   │   ├── BankrollChart.tsx    # シミュレーションの資産推移
 │   │   │   ├── AddBetDialog.tsx     # 購入記録の手動登録
 │   │   │   ├── EmptyState.tsx / JobProgressCard.tsx / ScraperStatusCard.tsx
-│   │   │   ├── ActiveModelCard.tsx / ModelTable.tsx
+│   │   │   ├── OperatingModelsCard.tsx  # 予想に使う 2 モデル（買い目を決める / 確からしさを出す）
+│   │   │   ├── ModelTable.tsx
 │   │   │   ├── SettingsForm.tsx     # 設定フォーム（Section / FieldRow ヘルパ）
 │   │   │   ├── TrainModelDialog.tsx / IngestRunDialog.tsx / RunResultsDialog.tsx
 │   │   │   ├── DeleteModelDialog.tsx / EditModelNameDialog.tsx / DateYMDPicker.tsx
@@ -183,7 +184,7 @@
 
 ## DB スキーマ
 
-SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 12 ファイル（`0001`〜`0012`）が定義されている。
+SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 13 ファイル（`0001`〜`0013`）が定義されている。
 
 | ファイル | revision | 内容 |
 |---|---|---|
@@ -199,6 +200,7 @@ SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convent
 | `0010_drop_live_odds.py` | 0010 | `live_odds` テーブル廃止（オッズは odds.db に分離） |
 | `0011_model_type_default_nn.py` | 0011 | `model_type` のデフォルトを `"nn"` に変更（NN 専用化） |
 | `0012_add_horses_sire_dam_index.py` | 0012 | horses の `sire` / `dam` にインデックス追加（血統特徴量の集計高速化） |
+| `0013_simulation_run_conditions.py` | 0013 | simulation_runs に `conditions_json` を追加（実行条件を残し、設定を変えて回し直しても後から見分けられるようにする） |
 
 ### ID 型の方針
 
@@ -489,16 +491,21 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 |---|---|---|---|
 | GET | `/api/recommendations/{race_id}` | 200 / 404 / 503 | 予算内に収まる買い目一覧 |
 
+レスポンスには `place_confidence` / `place_confidence_threshold` が入る（確率モデル未設定なら null）。
+複勝を見送ったレースでは、UI がこの値を使って理由を表示する。
+
 主なクエリ: `top_n_horses`（連系の候補にする上位頭数）/ `top_k`（券種ごとの上限点数）/
 `race_budget` / `stake_unit` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
 
 買い方は券種で異なる（`ai/betting/strategy.py`、根拠は `docs/ai-model.md`）:
 
-- **単勝**: モデル 1 位の 1 頭のみ。EV 条件は使わず、オッズ下限 `win_min_odds` だけ見る
-- **複勝**: モデル 1 位の 1 頭のみ。EV 条件は使わない
-- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: `win_ev_threshold` を超える組み合わせ
+- **単勝**: モデル 1 位の 1 頭のみ。オッズ下限 `win_min_odds` だけ見る
+- **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば確信度 `place_min_confidence` 未満は見送る
+- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 `top_n_horses` 頭から組む
 
-賭け金は EV 順ではなく **単勝 → 複勝 → 連系** の順に、同券種内は的中確率順で
+**EV（期待値）はどの券種でも買う/買わないの判定に使わない。**
+
+買い目は **単勝 → 複勝 → 連系** の順に、同券種内は的中確率順で
 `stake_units`（券種別の 1 点あたり金額）を割り当て、`race_budget` を超えたら打ち切る。
 
 ### シミュレーション
@@ -511,9 +518,11 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | GET | `/api/simulation/runs/{run_id}` | 200 / 404 | run 詳細（資産推移・券種別内訳）|
 | DELETE | `/api/simulation/runs/{run_id}` | 200 / 404 | run 削除 |
 
-主なクエリ: `start` / `end` / `budget` / `strategy`（conservative / balanced / aggressive / selective）/
+主なクエリ: `start` / `end` / `budget` / `strategy`（conservative / balanced / aggressive。変わるのは 1 点あたりの割合と、連系を組む上位頭数）/
 `model_id` / `max_stake_per_race_yen` / `exclude_low_information`。
 `exclude_low_information=true` で、出走馬全員が初出走のレース（新馬戦など）を集計から外す。
+確率モデルが設定されていれば、複勝の確信度フィルタと連系の確率もそれ由来になる。
+**実行条件は結果に記録される**（`conditions`）ので、設定を変えて回し直しても後から見分けられる。
 買い方・賭け金配分は推奨買目 API と同じ経路（`ai/simulation/engine.py` → `strategy.py`）を通る。
 
 ### 購入記録（Ledger）
@@ -545,8 +554,9 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | `rate_min_seconds` / `rate_max_seconds` | リクエスト間隔（秒） | 3.0 / 6.0 |
 | `night_min_seconds` | 深夜帯の最小間隔（秒） | 5.0 |
 | `scraper_stopped` | 緊急停止フラグ | `false` |
-| `win_ev_threshold` | **連系のみ**の EV 閾値 | 1.1 |
 | `win_min_odds` | 単勝で買うオッズ下限（EV 条件の代わり） | 1.1 |
+| `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
+| `place_min_confidence` | 複勝を買う確信度の下限 | 0.30 |
 | `race_budget` | 1 レースに使う上限（円） | 5000 |
 | `stake_unit` | 1 点あたりの既定額（円） | 100 |
 | `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |
@@ -554,7 +564,11 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 
 - 枠連は AI が買い目を生成しないので選択肢に出さない（`core/bet_types.py` の
   `supported_bet_types()` が保存済み設定からも落とす）
-- 複勝の EV 閾値（旧 `place_ev_threshold`）は**廃止**。複勝は EV 条件を使わない
+- **EV 閾値は全券種で廃止**（`win_ev_threshold` / `place_ev_threshold` とも存在しない）。
+  買い目は「オッズが取れるものを、券種の優先度 → 的中確率の順に、予算の限り」選ぶ
+- `probability_model_path` の割り当ては **Models 画面**から行う（Settings には無い）。
+  設定すると複勝の確信度フィルタと連系の確率がそのモデル由来になる
+- 保存済み JSON に廃止済みキーが残っていても、読み込み時に落とす（`SettingsStore.load`）
 - 旧 Kelly 設定（`bankroll` / `kelly_fraction` / `max_stake_per_race_pct`）は読み込み時に
   `race_budget` へ読み替えて破棄する（`_migrate_legacy`）
 

@@ -183,16 +183,20 @@ backend/data/models/
 | `rate_min_seconds` | レート制御の最小待機秒数 | 3.0 |
 | `rate_max_seconds` | レート制御の最大待機秒数 | 6.0 |
 | `night_min_seconds` | 夜間の最小待機秒数 | 5.0 |
-| `win_ev_threshold` | **連系のみ**の EV 閾値（1.0 以上が必須） | 1.1 |
-| `win_min_odds` | 単勝で買うオッズ下限（単勝は EV 条件を使わない） | 1.1 |
+| `win_min_odds` | 単勝で買うオッズ下限 | 1.1 |
+| `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
+| `place_min_confidence` | 複勝を買う確信度の下限 | 0.30 |
 | `race_budget` | 1 レースに使う上限（円） | 5000 |
 | `stake_unit` | 1 点あたりの既定額（円） | 100 |
 | `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |
 | `enabled_bet_types` | 買う券種 | 単勝・複勝・馬連・ワイド・馬単・三連複・三連単 |
 | `scraper_stopped` | スクレイパー停止フラグ | false |
 
-- 単勝・複勝は EV 条件ではなく「AI の本命（モデル 1 位）を買う」ルールなので、
-  複勝の EV 閾値（旧 `place_ev_threshold`）は**廃止**しました（`docs/ai-model.md`）
+- **EV 閾値は全券種で廃止**しました（`place_ev_threshold` 2026-08-24 / `win_ev_threshold`
+  2026-08-28）。買い目は「オッズが取れるものを、券種の優先度 → 的中確率の順に、
+  予算の限り」選びます（`docs/ai-model.md`）
+- `probability_model_path` は **Models 画面**から割り当てます（Settings には項目がありません）。
+  設定すると複勝の確信度フィルタと連系の確率がそのモデル由来になります
 - 枠連は AI が買い目を生成しないため選択肢に出しません。保存済み設定に残っていても
   `core/bet_types.py` の `supported_bet_types()` が読み込み時に落とします
 - 旧 Kelly 設定（`bankroll` / `kelly_fraction` / `max_stake_per_race_pct`）は
@@ -303,7 +307,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 # バックエンド
 cd backend
 uv sync
-uv run alembic upgrade head  # 現在の最新: 0012_add_horses_sire_dam_index
+uv run alembic upgrade head  # 現在の最新: 0013_simulation_run_conditions
 
 # フロントエンド（別ターミナル）
 cd frontend
@@ -317,7 +321,7 @@ pnpm install
 ```bash
 cd backend
 uv run alembic current   # 適用済みリビジョンを確認
-uv run alembic upgrade head  # 未適用のリビジョン（最新: 0012）を差分適用
+uv run alembic upgrade head  # 未適用のリビジョン（最新: 0013）を差分適用
 ```
 
 ### 開発サーバ起動

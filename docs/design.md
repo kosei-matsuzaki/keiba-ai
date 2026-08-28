@@ -179,8 +179,10 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 ```text
 ┌─────────────────────────────────────────┐
-│  ActiveModelCard（Models ページへの Link 付き）
-│    active モデルが null の場合は「未設定」バッジ + train ガイド
+│  OperatingModelsCard（Models ページへの Link 付き）
+│    予想に使う 2 つのモデルを役割ごとに並べる:
+│      買い目を決める (active) / 確からしさを出す (確率モデル)
+│    未設定側は「未設定」バッジ + 設定すると何が変わるかを出す
 ├─────────────────────────────────────────┤
 │  MetricBand（NDCG@3 / Top-1 / 複勝的中率 / 単勝回収率）
 │    カードではなく罫線区切りの帯。値の出所は metrics/summary
@@ -246,13 +248,14 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 ```text
 ┌─────────────────────────────────────────┐
-│  ActiveModelCard（linkToModels=false で自リンク回避）
-│    active モデルが null の場合は「未設定」バッジ + train ガイド
+│  OperatingModelsCard（linkToModels=false で自リンク回避）
 ├─────────────────────────────────────────┤
 │  ModelTable（学習済みモデル一覧）        │
 │    モデル ID / 学習日時 / 評価指標      │
 │    is_active 行をハイライト             │
-│    Activate / 名前変更 / 削除           │
+│    Activate / 確率に設定 / 名前変更 / 削除
+│    役割バッジ: Active（買い目を決める）と        │
+│    確率（確からしさを出す）を併記。兼務も可      │
 ├─────────────────────────────────────────┤
 │  再学習ボタン → TrainModelDialog        │
 │    起動後は JobProgressCard で進捗表示  │
@@ -267,9 +270,12 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ├─────────────────────────────────────────┤
 │  ModelSimulationPanel                   │
 │    期間 / 予算 / 戦略 / 1 レースの上限  │
-│    戦略: 安定 / 標準 / 積極的 / 厳選    │
-│      厳選 = 本命が 10〜25 倍のレースで  │
-│      だけ単複を買う (ai-model.md)       │
+│    戦略: 安定 / 標準 / 積極的           │
+│      変わるのは「1 点いくら」と          │
+│      「連系を上位何頭から組むか」の 2 つ │
+│    使うモデル: 買い目を決める側 (この画面) │
+│      と確からしさを出す側 (Settings 由来) │
+│    結果に「この実行の条件」を併記        │
 │    「履歴の無いレースを除外」チェック   │
 │      → exclude_low_information          │
 │    実行は POST /simulation/start（非同期）
@@ -295,8 +301,8 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 │  │    User-Agent / rate_min / rate_max /│
 │  │    night_min（rate_min ≤ rate_max）  │
 │  ├─ BETTING                             │
-│  │    連系を買う基準（EV 閾値 ≥ 1.0）   │
 │  │    単勝のオッズ下限                  │
+│  │    複勝を買う確信度の下限            │
 │  │    1 レースに使う上限 / 1 点あたり   │
 │  └─ BET TYPES                           │
 │       買う券種のチェックと、その券種の  │
@@ -304,9 +310,14 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 └─────────────────────────────────────────┘
 ```
 
-BETTING に **複勝の EV 閾値は無い**。単勝・複勝は期待値ではなく「AI の本命を買う」ルールで、
-EV 条件を入れると回収率が落ちることが実測で分かっているため（`docs/ai-model.md`）。
-枠連は AI が買い目を生成しないので BET TYPES の選択肢に出さない。
+BETTING に **EV 閾値は無い**。どの券種でも期待値は買う/買わないの判定に使わず、
+「的中確率の高い順に予算まで」買う。EV 条件を入れると回収率が落ちることが実測で
+分かっているため（`docs/ai-model.md`）。枠連は AI が買い目を生成しないので
+BET TYPES の選択肢に出さない。
+
+**確率モデルの割り当ては Settings ではなく Models 画面で行う**（モデルを見比べて
+いる場所で選べないと意味がないため）。Settings に残るのは「複勝を買う確信度」という
+買い方のパラメータだけ。
 
 Card ラッパは撤廃し、SettingsForm を直接配置する。各 Section は description ヘッダを持ち、
 FieldRow には help text を添える。
@@ -433,7 +444,7 @@ Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` �
 #### Card hover
 
 - `ui/card.tsx` に `transition-shadow duration-150` を全 Card 共通で付与し、hover 時の影変化を滑らかにする
-- クリック可能なカード（レース一覧の行 / `ActiveModelCard`）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
+- クリック可能なカード（レース一覧の行 / `OperatingModelsCard`）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
 
 #### Dialog overlay
 
