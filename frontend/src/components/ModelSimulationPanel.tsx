@@ -42,24 +42,28 @@ interface StrategyPreset {
   description: string;
 }
 
+// 戦略が変えるのは 2 つだけ:「1 点いくら賭けるか」と「連系を上位何頭から組むか」。
+// **期待値の閾値は 2026-08-28 に廃止した** (根拠の無い 1.1 で、入力の確率も壊れて
+// いたため実質「推定オッズの高い順」に退化していた)。買い目はどの戦略でも
+// 「的中確率の高い順に、予算の限り」選ぶ。
 const STRATEGY_PRESETS: StrategyPreset[] = [
   {
     key: 'conservative',
     emoji: '🛡',
     label: '安定',
-    description: '1 点 = 予算の 20%。連系は期待値 1.30 超のみ買う（少ない点数）。',
+    description: '1 点 = 予算の 20%。連系は上位 2 頭から組む（点数少なめ・堅め）。',
   },
   {
     key: 'balanced',
     emoji: '⚖',
     label: '標準',
-    description: '1 点 = 予算の 20%。連系は期待値 1.10 超を買う（標準）。',
+    description: '1 点 = 予算の 20%。連系は上位 3 頭から組む（既定）。',
   },
   {
     key: 'aggressive',
     emoji: '🔥',
     label: '積極的',
-    description: '1 点 = 予算の 50%。連系は期待値 1.00 超なら買う（点数多い）。',
+    description: '1 点 = 予算の 50%。連系は上位 4 頭から組む（点数多め）。',
   },
 ];
 

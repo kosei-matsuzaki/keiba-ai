@@ -48,7 +48,10 @@ def put_settings(
     store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> SettingsResponse:
     data = store.load()
-    update = body.model_dump(exclude_none=True)
+    # **exclude_unset**。exclude_none だと「明示的に null を送った」と「そのキーを
+    # 送らなかった」が区別できず、値を **null に戻せない**。実際に
+    # probability_model_path（確率モデルの割り当て解除）がこれで効かなかった。
+    update = body.model_dump(exclude_unset=True)
     data.update(update)
     store.save(data)
     return _dict_to_response(data)

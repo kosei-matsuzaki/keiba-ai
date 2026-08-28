@@ -1,7 +1,6 @@
 import { useState } from 'react';
 
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings';
-import { useModels } from '@/hooks/useModels';
 import { SettingsForm, type SettingsSection } from '@/components/SettingsForm';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -20,13 +19,10 @@ const TABS: { value: TabKey; label: string }[] = [
   { value: 'scraper', label: 'SCRAPER' },
   { value: 'betting', label: 'BETTING' },
   { value: 'bet_types', label: 'BET TYPES' },
-  { value: 'models', label: 'MODELS' },
 ];
 
 export function Settings() {
   const settingsQuery = useSettings();
-  // 確率モデルの選択肢。取得に失敗しても設定画面自体は使えるようにする。
-  const modelsQuery = useModels();
   const updateMutation = useUpdateSettings();
   const [activeTab, setActiveTab] = useState<TabKey>('scraper');
 
@@ -77,7 +73,6 @@ export function Settings() {
           onSubmit={handleSubmit}
           isPending={updateMutation.isPending}
           activeSection={activeTab}
-          models={modelsQuery.data}
         />
       )}
 

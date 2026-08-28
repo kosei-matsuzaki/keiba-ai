@@ -26,8 +26,7 @@ const schema = z
     rate_max_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     night_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
-    // 確率モデル（空文字 = 未設定）と、複勝を買う確信度の下限
-    probability_model_path: z.string(),
+    // 確率モデルの割り当ては Models 画面で行うので、ここでは扱わない。
     place_min_confidence: z.coerce
       .number()
       .min(0, '0 以上の値を入力してください')
@@ -62,23 +61,19 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
-export type SettingsSection = 'scraper' | 'betting' | 'bet_types' | 'models';
+export type SettingsSection = 'scraper' | 'betting' | 'bet_types';
 
 interface SettingsFormProps {
   defaults: SettingsResponse;
-  /** 確率モデルの選択肢。未指定なら選択欄は「現在の値」だけを表示する。 */
-  models?: { id: number; model_path: string; name?: string | null; is_active: boolean }[];
   onSubmit: (values: SettingsUpdate) => void;
   isPending: boolean;
   /** 表示するセクション。指定されなければ全セクションを縦並びで表示する。 */
   activeSection?: SettingsSection;
 }
 
-export function SettingsForm({ defaults, onSubmit, isPending, activeSection, models }: SettingsFormProps) {
-  // probability_model_path は null 可。フォームでは空文字 = 未設定として扱う。
+export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: SettingsFormProps) {
   const toForm = (d: SettingsResponse) => ({
     ...d,
-    probability_model_path: d.probability_model_path ?? '',
     enabled_bet_types: selectableBetTypes(d.enabled_bet_types),
   });
 
@@ -120,8 +115,6 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection, mod
   }
 
   function submit(values: FormValues) {
-    // 空文字は「未設定」。API では null で表す。
-    values = { ...values, probability_model_path: values.probability_model_path || null } as FormValues;
     onSubmit(values);
   }
 
@@ -192,10 +185,23 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection, mod
         </Section>
 
         <Section
-          description="1 レースに使う金額と、単勝を見送るオッズの下限。買い目は期待値ではなく「的中確率の高い順」に選びます（期待値で絞ると大穴に寄って回収率が落ちることが実測で分かっているため）。"
+          description="1 レースに使う金額、単勝を見送るオッズの下限、複勝を買う確信度。買い目は期待値ではなく「的中確率の高い順」に選びます（期待値で絞ると大穴に寄って回収率が落ちることが実測で分かっているため）。"
           hidden={!visible('betting')}
         >
               <div className="flex flex-col gap-4">
+                <FieldRow
+                  label="複勝を買う確信度の下限"
+                  id="place_min_confidence"
+                  help="確率モデル（Models 画面で設定）が AI の本命に与える単勝確率がこの値を下回るレースでは、複勝を見送ります。0 にすると全レースで買います。上げるほど買うレースは減り、的中率は上がります。確率モデル未設定なら効きません。"
+                  error={errors.place_min_confidence?.message}
+                >
+                  <Input
+                    id="place_min_confidence"
+                    type="number"
+                    step="0.05"
+                    {...register('place_min_confidence')}
+                  />
+                </FieldRow>
                 <FieldRow
                   label="単勝のオッズ下限"
                   id="win_min_odds"
@@ -308,47 +314,6 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection, mod
                     {errors.enabled_bet_types.message}
                   </p>
                 )}
-              </div>
-        </Section>
-
-        <Section
-          description="AI の予想には 2 つのモデルを使えます。買う馬・買い目を決めるのは Models 画面で Active にしたモデル。ここで選ぶ「確率モデル」は、その選択をどれくらい信じてよいかを答える役です（複勝を買うかどうかの判定と、連系の確率に使われます）。未設定なら従来どおり Active モデルだけで動きます。"
-          hidden={!visible('models')}
-        >
-              <div className="flex flex-col gap-4">
-                <FieldRow
-                  label="確率モデル"
-                  id="probability_model_path"
-                  help="回収率ではなく「確率の正しさ」を目的に学習したモデルを選びます。買う馬は変わりません（確率モデルに馬を選ばせると人気馬に寄って回収率が落ちるため）。"
-                  error={errors.probability_model_path?.message}
-                >
-                  <select
-                    id="probability_model_path"
-                    className="h-9 w-full rounded-sm border border-border bg-background px-3 text-sm"
-                    {...register('probability_model_path')}
-                  >
-                    <option value="">未設定（Active モデルだけを使う）</option>
-                    {models?.map((m) => (
-                      <option key={m.id} value={m.model_path}>
-                        {m.name?.trim() ? `${m.name}（ID ${m.id}）` : `ID ${m.id}`}
-                        {m.is_active ? ' — Active' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </FieldRow>
-                <FieldRow
-                  label="複勝を買う確信度の下限"
-                  id="place_min_confidence"
-                  help="確率モデルが AI の本命に与える単勝確率がこの値を下回るレースでは、複勝を見送ります。0 にすると全レースで買います。上げるほど買うレースは減り、的中率は上がります。"
-                  error={errors.place_min_confidence?.message}
-                >
-                  <Input
-                    id="place_min_confidence"
-                    type="number"
-                    step="0.05"
-                    {...register('place_min_confidence')}
-                  />
-                </FieldRow>
               </div>
         </Section>
 

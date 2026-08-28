@@ -17,9 +17,12 @@ import type { ModelMeta } from '@/types/api';
 interface ModelTableProps {
   models: ModelMeta[];
   onActivate: (id: number) => void;
+  /** 確率モデルに設定 / 解除する。役割の割り当ては Settings ではなくここで行う */
+  onSetProbability: (model: ModelMeta | null) => void;
   onEdit: (model: ModelMeta) => void;
   onDelete: (model: ModelMeta) => void;
   activatingId: number | null;
+  settingProbability: boolean;
 }
 
 const PLACEHOLDER = '—';
@@ -41,9 +44,11 @@ function extractMetric(
 export function ModelTable({
   models,
   onActivate,
+  onSetProbability,
   onEdit,
   onDelete,
   activatingId,
+  settingProbability,
 }: ModelTableProps) {
   const navigate = useNavigate();
   return (
@@ -106,10 +111,26 @@ export function ModelTable({
                     variant="outline"
                     disabled={activatingId !== null}
                     onClick={() => onActivate(model.id)}
+                    title="このモデルで買い目を決めるようにする"
                   >
                     {activatingId === model.id ? '切り替え中…' : 'Activate'}
                   </Button>
                 )}
+                {/* 役割の割り当ては Settings ではなくこの画面で行う。
+                    モデルを見比べている場所で選べないと意味がないため。 */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={settingProbability}
+                  onClick={() => onSetProbability(model.is_probability_model ? null : model)}
+                  title={
+                    model.is_probability_model
+                      ? '確率モデルの割り当てを解除します'
+                      : '複勝の確信度と連系の確率にこのモデルを使います'
+                  }
+                >
+                  {model.is_probability_model ? '確率を解除' : '確率に設定'}
+                </Button>
                 <Button
                   size="icon"
                   variant="ghost"

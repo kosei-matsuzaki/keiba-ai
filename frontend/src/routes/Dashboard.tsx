@@ -7,7 +7,7 @@ import { useMetricsTimeseries } from '@/hooks/useMetricsTimeseries';
 import { useModels } from '@/hooks/useModels';
 import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
 import { MetricBand, MetricItem } from '@/components/MetricBand';
-import { ActiveModelCard } from '@/components/ActiveModelCard';
+import { OperatingModelsCard } from '@/components/OperatingModelsCard';
 import { AccuracyChart } from '@/components/AccuracyChart';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -112,11 +112,12 @@ export function Dashboard() {
         isLoading={modelsQuery.isPending || weekend.isPending}
       />
 
-      {/* Active model summary — clickable, jumps to Models page */}
+      {/* 予想に使っている 2 つのモデル (買い目を決める / 確からしさを出す) —
+          クリックで Models 画面へ */}
       {modelsQuery.isPending ? (
         <Skeleton className="h-24 w-full rounded-sm" />
       ) : (
-        <ActiveModelCard model={activeModel} />
+        <OperatingModelsCard models={modelsQuery.data} />
       )}
 
       {/* Metric summary cards */}

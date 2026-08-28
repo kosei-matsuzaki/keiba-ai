@@ -1,12 +1,15 @@
 import { useState } from 'react';
 
 import { useModels } from '@/hooks/useModels';
+import { useQueryClient } from '@tanstack/react-query';
+
 import { useActivateModel } from '@/hooks/useActivateModel';
+import { useUpdateSettings } from '@/hooks/useSettings';
 import { useUpdateModel } from '@/hooks/useUpdateModel';
 import { useDeleteModel } from '@/hooks/useDeleteModel';
 import { useCompactModelIds } from '@/hooks/useCompactModelIds';
 import { useTrainModel } from '@/hooks/useTrainModel';
-import { ActiveModelCard } from '@/components/ActiveModelCard';
+import { OperatingModelsCard } from '@/components/OperatingModelsCard';
 import { ModelTable } from '@/components/ModelTable';
 import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { EditModelNameDialog } from '@/components/EditModelNameDialog';
@@ -23,7 +26,10 @@ import type { ModelMeta, TrainRequest } from '@/types/api';
 
 export function Models() {
   const modelsQuery = useModels();
+  const queryClient = useQueryClient();
   const activateMutation = useActivateModel();
+  // 確率モデルの割り当ては settings に持つが、操作はモデルを見比べるこの画面で行う。
+  const updateSettings = useUpdateSettings();
   const updateMutation = useUpdateModel();
   const deleteMutation = useDeleteModel();
   const compactMutation = useCompactModelIds();
@@ -49,6 +55,28 @@ export function Models() {
         setActivatingId(null);
       },
     });
+  }
+
+  /** 確率モデルを割り当てる / 解除する。model=null で未設定に戻す。 */
+  function handleSetProbability(model: ModelMeta | null) {
+    updateSettings.mutate(
+      { probability_model_path: model ? model.model_path : null },
+      {
+        onSuccess: () => {
+          void queryClient.invalidateQueries({ queryKey: ['models'] });
+          toast.success(
+            model
+              ? `ID ${model.id} を確率モデルにしました（複勝の確信度と連系の確率に使われます）`
+              : '確率モデルの割り当てを解除しました'
+          );
+        },
+        onError: async (err) => {
+          toast.error('設定の更新に失敗しました', {
+            description: await formatErrorMessage(err),
+          });
+        },
+      }
+    );
   }
 
   function handleEditSubmit(id: number, name: string | null) {
@@ -127,10 +155,7 @@ export function Models() {
         {modelsQuery.isPending ? (
           <Skeleton className="h-24 w-full rounded-sm" />
         ) : modelsQuery.data ? (
-          <ActiveModelCard
-            model={modelsQuery.data.find((m) => m.is_active) ?? null}
-            linkToModels={false}
-          />
+          <OperatingModelsCard models={modelsQuery.data} linkToModels={false} />
         ) : null}
 
         {trackedJobId && (
@@ -157,9 +182,11 @@ export function Models() {
           <ModelTable
             models={modelsQuery.data}
             onActivate={handleActivate}
+            onSetProbability={handleSetProbability}
             onEdit={setEditTarget}
             onDelete={setDeleteTarget}
             activatingId={activatingId}
+            settingProbability={updateSettings.isPending}
           />
         )}
       </div>
