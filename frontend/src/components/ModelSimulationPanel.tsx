@@ -771,7 +771,13 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
           </section>
 
           {/* Bankroll KPI cards: 資産の絶対値 */}
-          <MetricBand cols={4}>
+          <MetricBand cols={5}>
+            <MetricItem
+              title="必要だった資金"
+              value={result.required_capital}
+              format="yen"
+              description="途中で止まらずに回すのに要した額"
+            />
             <MetricItem
               title="初期資産"
               value={result.budget}

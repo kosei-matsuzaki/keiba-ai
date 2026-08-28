@@ -40,3 +40,30 @@ def test_flat_budget_does_not_depend_on_the_running_bankroll():
     flat_branch = src[src.index("if staking == \"compound\":") : src.index("if race_budget < _MIN_STAKE")]
     else_part = flat_branch[flat_branch.index("else:") :]
     assert "current_bankroll * max_stake_per_race_pct" not in else_part
+
+
+def test_flat_budget_is_independent_of_the_bankroll():
+    """定額の 1 レース予算が残資産を参照しないこと。
+
+    最初の実装は `min(race_budget, current_bankroll)` で頭打ちにしており、
+    初期資産 10 万円 / 1 レース 5,000 円なら 20 レースで尽きて**複利より早く
+    破産していた**（実測: 1,703 レース中 1,612 で買えず）。定額は「戦略の回収率を
+    測る」ための機能なので、賭け金を資金繰りから切り離す。
+    """
+    src = inspect.getsource(sim_mod.simulate_active_model)
+    flat_branch = src[src.index("else:", src.index('if staking == "compound":')) :]
+    flat_branch = flat_branch[: flat_branch.index("if race_budget < _MIN_STAKE")]
+    assert "current_bankroll" not in flat_branch
+
+
+def test_required_capital_is_reported():
+    """「いくら用意すれば途中で止まらずに済んだか」を出す。
+
+    定額では資産がマイナスになりうるので、その最小値から必要資金を出す。
+    """
+    r = sim_mod.SimulationResult(
+        window_start=None, window_end=None, model_path="x", strategy="balanced", budget=1
+    )
+    d = r.as_dict()
+    assert "required_capital" in d
+    assert "trough_bankroll" in d

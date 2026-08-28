@@ -524,6 +524,10 @@ export interface SimulationResponse {
   conditions: SimulationConditions | null;
   /** 資金不足で 1 点も買えなかったレース数。0 でなければ回収率は途中までしか測れていない */
   n_races_broke: number;
+  /** 期間中の資産の最小値。定額ではマイナスになりうる */
+  trough_bankroll: number;
+  /** この戦略を最後まで回すのに必要だった資金 */
+  required_capital: number;
   /** バックエンドが自動保存した row の id。null なら未保存 (旧サーバ互換)。 */
   run_id: number | null;
 }

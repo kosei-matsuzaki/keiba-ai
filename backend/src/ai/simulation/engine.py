@@ -169,6 +169,10 @@ class SimulationResult:
     #: 資金不足で 1 点も買えなかったレース数。0 でなければ、その run の回収率は
     #: 「破産するまでの期間」しか測っていない。
     n_races_broke: int = 0
+    #: 期間中の資産の最小値。flat ではマイナスになりうる。
+    trough_bankroll: int = 0
+    #: この戦略を最後まで回すのに必要だった資金 (= budget - trough_bankroll、下限 0)。
+    required_capital: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -176,6 +180,8 @@ class SimulationResult:
             "model_path": self.model_path,
             "conditions": self.conditions,
             "n_races_broke": self.n_races_broke,
+            "trough_bankroll": self.trough_bankroll,
+            "required_capital": self.required_capital,
             "strategy": self.strategy,
             "budget": self.budget,
             "n_races": self.n_races,
@@ -431,6 +437,7 @@ def simulate_active_model(
     # 資金不足で 1 点も買えなかったレース数。0 でないなら、その run の回収率は
     # 「破産するまでの期間」しか測っていない。
     n_races_broke = 0
+    trough_bankroll = budget
     current_bankroll = budget
     peak_bankroll = budget
     # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
@@ -510,11 +517,14 @@ def simulate_active_model(
             if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
                 race_budget = min(race_budget, int(max_stake_per_race_yen))
         else:
+            # **定額は残資産に依存しない。** 資産で頭打ちにすると、初期資産 10 万円 /
+            # 1 レース 5,000 円なら 20 レースで尽きて以降を評価しなくなる (複利より
+            # 早く破産する)。定額は「戦略の回収率を測る」ための機能なので、賭け金を
+            # 資金繰りから切り離す。資産はマイナスを許し、その最小値が
+            # 「この戦略を最後まで回すのに必要だった資金」を表す。
             race_budget = int(max_stake_per_race_yen or 0) or int(
                 budget * max_stake_per_race_pct
             )
-            # 資産が尽きたら賭けられないのは flat でも同じ (借金はしない)
-            race_budget = min(race_budget, max(0, current_bankroll))
         if race_budget < _MIN_STAKE:
             n_races_broke += 1
         stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
@@ -581,7 +591,13 @@ def simulate_active_model(
         race_invested = sum(int(s["stake"]) for s in settlements)
         race_payout_raw = sum(float(s["payout"]) for s in settlements)
         race_payout = race_payout_raw if math.isfinite(race_payout_raw) else 0.0
-        current_bankroll = max(0, current_bankroll - race_invested + int(round(race_payout)))
+        # compound は資金繰りの再現なので 0 で止める (借金はしない)。
+        # flat は測定用なのでマイナスを許し、最小値が必要資金を表す。
+        current_bankroll = current_bankroll - race_invested + int(round(race_payout))
+        if staking == "compound":
+            current_bankroll = max(0, current_bankroll)
+        if current_bankroll < trough_bankroll:
+            trough_bankroll = current_bankroll
         if current_bankroll > peak_bankroll:
             peak_bankroll = current_bankroll
 
@@ -665,6 +681,9 @@ def simulate_active_model(
             n_races_broke,
         )
     result.n_races_broke = n_races_broke
+    # 資産の最小値。flat ではマイナスになりうる (= その額の追加資金が要った)。
+    result.trough_bankroll = trough_bankroll
+    result.required_capital = max(0, budget - trough_bankroll)
     result.n_races = max(0, result.n_races - n_skipped_low_info)
     result.n_settled_races = n_settled
     result.final_bankroll = current_bankroll

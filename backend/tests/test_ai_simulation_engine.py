@@ -345,6 +345,9 @@ def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
             start=None, end=None, budget=5_000, strategy="balanced",
+            # 破産の検証なので複利を明示する (既定は flat で、定額は資金繰りから
+            # 切り離されているため破産しない)
+            staking="compound",
         )
 
     # 1st で全額消化 → bankroll=0, 以降 bet なし

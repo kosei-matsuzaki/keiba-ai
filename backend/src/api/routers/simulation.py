@@ -130,6 +130,11 @@ class SimulationResponse(BaseModel):
     #: 資金不足で 1 点も買えなかったレース数。0 でなければ、その run の回収率は
     #: 「破産するまでの期間」しか測っていない。
     n_races_broke: int = 0
+    #: 期間中の資産の最小値。定額ではマイナスになりうる。
+    trough_bankroll: int = 0
+    #: この戦略を最後まで回すのに必要だった資金。定額で「いくら用意すれば
+    #: 途中で止まらずに済んだか」を表す。
+    required_capital: int = 0
     # 実行直後にバックエンドが保存した row の id。再呼び出しで詳細を取得可能。
     run_id: int | None = None
 
@@ -177,6 +182,8 @@ def _result_to_response(
         by_course=[GroupStatsResponse(**g) for g in d["by_course"]],
         conditions=d.get("conditions") or None,
         n_races_broke=int(d.get("n_races_broke") or 0),
+        trough_bankroll=int(d.get("trough_bankroll") or 0),
+        required_capital=int(d.get("required_capital") or 0),
         bankroll_timeseries=[
             BankrollPointResponse(**p) for p in d["bankroll_timeseries"]
         ],
