@@ -479,6 +479,19 @@ export interface BankrollPoint {
   n_bets: number;
 }
 
+export interface SimulationConditions {
+  /** 確率モデルのディレクトリ名。null なら使っていない（Active モデルだけで実行） */
+  probability_model: string | null;
+  /** 複勝を買う確信度の下限。確率モデル未使用なら null */
+  place_min_confidence: number | null;
+  exclude_low_information: boolean;
+  enabled_bet_types: string[];
+  stake_unit_by_bet_type: Record<string, number>;
+  max_stake_per_race_pct: number;
+  max_stake_per_race_yen: number | null;
+  top_n_horses: number;
+}
+
 export interface SimulationResponse {
   window: { start: string | null; end: string | null };
   model_path: string;
@@ -501,6 +514,12 @@ export interface SimulationResponse {
   by_course: SimulationGroupStats[];
   /** 日次の資産推移 (date 昇順)。 */
   bankroll_timeseries: BankrollPoint[];
+  /**
+   * この run がどの条件で走ったか。設定を変えて回し直したとき、過去の run が
+   * 何の条件だったか分からなくなるのを防ぐために保存している。
+   * 古い run（migration 0013 より前）は null = 「条件の記録なし」。
+   */
+  conditions: SimulationConditions | null;
   /** バックエンドが自動保存した row の id。null なら未保存 (旧サーバ互換)。 */
   run_id: number | null;
 }

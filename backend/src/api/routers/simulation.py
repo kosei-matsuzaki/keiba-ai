@@ -123,6 +123,10 @@ class SimulationResponse(BaseModel):
     by_race_class: list[GroupStatsResponse]
     by_course: list[GroupStatsResponse]
     bankroll_timeseries: list[BankrollPointResponse]
+    #: この run が**どの条件で走ったか** (確率モデルの有無・複勝の確信度の
+    #: しきい値・履歴の無いレースの除外・券種・1 点あたりの金額など)。
+    #: 0013 より前に保存された run では None = 「条件の記録なし」。
+    conditions: dict | None = None
     # 実行直後にバックエンドが保存した row の id。再呼び出しで詳細を取得可能。
     run_id: int | None = None
 
@@ -168,6 +172,7 @@ def _result_to_response(
         by_bet_type=[GroupStatsResponse(**g) for g in d["by_bet_type"]],
         by_race_class=[GroupStatsResponse(**g) for g in d["by_race_class"]],
         by_course=[GroupStatsResponse(**g) for g in d["by_course"]],
+        conditions=d.get("conditions") or None,
         bankroll_timeseries=[
             BankrollPointResponse(**p) for p in d["bankroll_timeseries"]
         ],
@@ -195,6 +200,7 @@ def _row_to_response(row: SimulationRun) -> SimulationResponse:
             GroupStatsResponse(**g) for g in json.loads(row.by_race_class_json)
         ],
         by_course=[GroupStatsResponse(**g) for g in json.loads(row.by_course_json)],
+        conditions=json.loads(row.conditions_json) if row.conditions_json else None,
         bankroll_timeseries=[
             BankrollPointResponse(**p)
             for p in json.loads(row.bankroll_timeseries_json)

@@ -146,11 +146,16 @@ class SimulationResult:
     by_race_class: list[GroupStats] = field(default_factory=list)
     by_course: list[GroupStats] = field(default_factory=list)
     bankroll_timeseries: list[BankrollPoint] = field(default_factory=list)
+    #: この run が**どの条件で走ったか**。設定を変えて回し直したとき、過去の run が
+    #: 何の条件だったか分からなくなるのを防ぐ (確率モデルの有無・確信度のしきい値・
+    #: 履歴の無いレースの除外・券種・1 点あたりの金額は、いずれも結果を大きく変える)。
+    conditions: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {
             "window": {"start": self.window_start, "end": self.window_end},
             "model_path": self.model_path,
+            "conditions": self.conditions,
             "strategy": self.strategy,
             "budget": self.budget,
             "n_races": self.n_races,
@@ -364,6 +369,20 @@ def simulate_active_model(
         model_path=str(model_path),
         strategy=strategy,
         budget=budget,
+        conditions={
+            "probability_model": (
+                Path(probability_model_path).name if probability_model_path else None
+            ),
+            "place_min_confidence": (
+                place_min_confidence if probability_model_path else None
+            ),
+            "exclude_low_information": bool(exclude_low_information),
+            "enabled_bet_types": list(types),
+            "stake_unit_by_bet_type": dict(stake_unit_by_bet_type or {}),
+            "max_stake_per_race_pct": max_stake_per_race_pct,
+            "max_stake_per_race_yen": max_stake_per_race_yen,
+            "top_n_horses": int(preset["top_n_horses"]),
+        },
     )
 
     if frame.empty:

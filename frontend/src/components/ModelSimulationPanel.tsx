@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
@@ -24,8 +24,10 @@ import {
 } from '@/lib/api';
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
+import { useSettings } from '@/hooks/useSettings';
 import type {
   SimulationGroupStats,
+  SimulationConditions,
   SimulationResponse,
   SimulationRunSummary,
   SimulationStrategy,
@@ -307,6 +309,56 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
 
 // ── ModelSimulationPanel: 特定モデルのバックテスト ──────────────────────────
 
+/**
+ * この run がどの条件で走ったかを 1 行ずつ出す。
+ *
+ * シミュレーションは Settings の値（確率モデル・確信度のしきい値・券種・1 点あたり
+ * の金額）を実行時に読むので、**設定を変えれば同じ画面の同じボタンでも別の条件で
+ * 走る**。条件を残さないと過去の run と比べられないため、結果と一緒に表示する。
+ */
+function ConditionList({ conditions }: { conditions: SimulationConditions | null }) {
+  if (!conditions) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        ※ この run には実行条件が記録されていません（古い run）。
+      </p>
+    );
+  }
+  const rows: [string, string][] = [
+    [
+      '確率モデル',
+      conditions.probability_model
+        ? `${conditions.probability_model}（複勝の確信度と連系の確率に使用）`
+        : '未使用（Active モデルだけで実行）',
+    ],
+    [
+      '複勝を買う確信度',
+      conditions.place_min_confidence == null
+        ? '—（確率モデル未使用なので全レースで買う）'
+        : `${(conditions.place_min_confidence * 100).toFixed(0)}% 以上`,
+    ],
+    ['履歴の無いレース', conditions.exclude_low_information ? '除外した' : '含めた'],
+    ['対象券種', conditions.enabled_bet_types.join(' / ') || '—'],
+    ['連系を組む頭数', `上位 ${conditions.top_n_horses} 頭`],
+    [
+      '1 レースの上限',
+      conditions.max_stake_per_race_yen
+        ? `${conditions.max_stake_per_race_yen.toLocaleString()} 円`
+        : `残資産の ${(conditions.max_stake_per_race_pct * 100).toFixed(0)}%`,
+    ],
+  ];
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+      {rows.map(([k, v]) => (
+        <Fragment key={k}>
+          <dt className="text-muted-foreground">{k}</dt>
+          <dd className="tabular-nums">{v}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
 interface ModelSimulationPanelProps {
   /** バックテスト対象モデル (model_runs.id)。 */
   modelId: number;
@@ -327,6 +379,8 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   // 履歴の無いレース (新馬戦など) を除外するか。既定 off — 実測では単勝が +0.006 と
   // ほぼ変わらず、複勝はむしろ悪化する (下の説明文参照) ため、既定で切るほどの根拠が無い。
   const [excludeLowInfo, setExcludeLowInfo] = useState(false);
+  // Settings は実行時にバックエンドが読む。ここでは「何が引き継がれるか」の表示用。
+  const { data: settings } = useSettings();
   const [result, setResult] = useState<SimulationResponse | null>(null);
 
   // ── Background job orchestration ────────────────────────────────────
@@ -506,6 +560,27 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               </p>
             </div>
 
+            {/* Settings の値は実行時に読まれる。ここに出さないと「いま何が効いて
+                いるのか」がシミュレーション画面から分からない。 */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm">Settings から引き継ぐ条件</span>
+              <p className="text-xs text-muted-foreground">
+                {settings?.probability_model_path ? (
+                  <>
+                    確率モデル <strong>{settings.probability_model_path.split(/[\\/]/).pop()}</strong> を使用します
+                    （複勝は確信度 {((settings.place_min_confidence ?? 0.3) * 100).toFixed(0)}% 以上のレースだけ、
+                    連系の確率もこのモデル由来）。
+                  </>
+                ) : (
+                  <>
+                    確率モデルは<strong>未設定</strong>です（Active モデルだけで実行）。
+                    Settings &gt; MODELS で選ぶと、複勝の絞り込みと連系の確率が変わります。
+                  </>
+                )}
+                {' '}券種と 1 点あたりの金額も Settings の値を使います。
+              </p>
+            </div>
+
             <div className="flex flex-col gap-1.5">
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -614,6 +689,15 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         />
       ) : (
         <>
+          {/* この結果がどの条件で出たか。設定を変えれば同じボタンでも別条件で走るので、
+              結果と条件を必ず並べて見せる。 */}
+          <section className="rounded-sm border border-border p-3">
+            <h4 className="mb-2 font-mono text-[11px] uppercase tracking-[0.12em] text-subtle-foreground">
+              この実行の条件
+            </h4>
+            <ConditionList conditions={result.conditions} />
+          </section>
+
           {/* Bankroll KPI cards: 資産の絶対値 */}
           <MetricBand cols={4}>
             <MetricItem

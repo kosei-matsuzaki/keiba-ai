@@ -61,6 +61,9 @@ def save_simulation_result(
         bankroll_timeseries_json=json.dumps(
             d["bankroll_timeseries"], ensure_ascii=False
         ),
+        conditions_json=(
+            json.dumps(d["conditions"], ensure_ascii=False) if d.get("conditions") else None
+        ),
     )
 
     last_exc: Exception | None = None

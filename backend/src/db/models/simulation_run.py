@@ -59,6 +59,13 @@ class SimulationRun(Base):
     by_course_json: Mapped[str] = mapped_column(String, nullable=False)
     bankroll_timeseries_json: Mapped[str] = mapped_column(String, nullable=False)
 
+    # この run が**どの条件で走ったか** (確率モデル・確信度のしきい値・履歴の無い
+    # レースの除外・券種・1 点あたりの金額など)。設定を変えて回し直したとき、
+    # 過去の run が何の条件だったか分からなくなるのを防ぐ。列を個別に足さず JSON
+    # 1 本にしたのは、この種のノブが今後も増減するため (migration 0013)。
+    # 0013 より前に保存された行は NULL = 「条件の記録なし」。
+    conditions_json: Mapped[str | None] = mapped_column(String)
+
     # SQLAlchemy unit-of-work が parent-first insert を解決できるよう scalar
     # relationship を 1 本だけ張る (back_populates 等は意図的に省略)。
     model_run: Mapped[ModelRun] = relationship("ModelRun", foreign_keys=[model_run_id])
