@@ -52,6 +52,10 @@ class RecommendationsResponse(BaseModel):
     race_budget: int
     candidates: list[RecommendationCandidate]
     odds_source: Literal["live", "past", "unknown"] = "unknown"
+    #: 確率モデルが AI の本命に与えた単勝確率。確率モデル未設定なら None。
+    place_confidence: float | None = None
+    #: 複勝を買う確信度のしきい値 (place_confidence がこれ未満なら複勝は見送る)。
+    place_confidence_threshold: float | None = None
 
 
 def _resolve_odds_source(
@@ -243,16 +247,17 @@ def get_recommendations(
     # 実測 (前進検証 4.5 年): しきい値 0.30 で複勝回収率 0.866 → 0.907
     # (ai/inference/confidence.py に根拠)。未設定なら何もしない。
     confidence: float | None = None
+    conf_threshold: float | None = None
     if prob_bundle is not None and "複勝" in eff_bet_types and not predictions.empty:
         confidence = pick_confidence(
             prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
         )
-        threshold = float(settings.get("place_min_confidence", 0.30))
-        if not is_place_worth_buying(confidence, threshold):
+        conf_threshold = float(settings.get("place_min_confidence", 0.30))
+        if not is_place_worth_buying(confidence, conf_threshold):
             eff_bet_types = [b for b in eff_bet_types if b != "複勝"]
             logger.info(
                 "race %s: 複勝 skipped (confidence %.3f < %.2f)",
-                race_id, confidence, threshold,
+                race_id, confidence, conf_threshold,
             )
 
     result = recommend_for_race(
@@ -287,4 +292,6 @@ def get_recommendations(
         race_budget=result.race_budget,
         candidates=candidates,
         odds_source=odds_source,
+        place_confidence=confidence,
+        place_confidence_threshold=conf_threshold,
     )

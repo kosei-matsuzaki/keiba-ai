@@ -13,15 +13,16 @@ from sqlalchemy.orm import Session
 
 from ai.model.registry import delete_model_files, renumber_model_ids, set_active_by_id
 from ai.training.train_nn import train_nn
-from api.deps import get_job_registry, get_or_404, get_session
+from api.deps import get_job_registry, get_or_404, get_session, get_settings_store
 from api.jobs import JobRegistry
 from api.schemas import JobAccepted, ModelMeta, TrainRequest, UpdateModelRequest
+from core.settings_store import SettingsStore, is_probability_model
 from db.models.model_run import ModelRun
 
 router = APIRouter()
 
 
-def _run_to_schema(run: ModelRun) -> ModelMeta:
+def _run_to_schema(run: ModelRun, settings: dict | None = None) -> ModelMeta:
     params: dict | None = None
     if run.params_json:
         with contextlib.suppress(json.JSONDecodeError):
@@ -42,32 +43,37 @@ def _run_to_schema(run: ModelRun) -> ModelMeta:
         params=params,
         metrics=metrics,
         is_active=bool(run.is_active),
+        is_probability_model=is_probability_model(run.model_path, settings or {}),
     )
 
 
 @router.get("/models", response_model=list[ModelMeta])
 def get_models(
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> list[ModelMeta]:
     runs = session.scalars(
         select(ModelRun).order_by(ModelRun.created_at.desc())
     ).all()
-    return [_run_to_schema(r) for r in runs]
+    settings = store.load()
+    return [_run_to_schema(r, settings) for r in runs]
 
 
 @router.get("/models/{model_id}", response_model=ModelMeta)
 def get_model(
     model_id: int,
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> ModelMeta:
     run = get_or_404(session, ModelRun, model_id, label="Model")
-    return _run_to_schema(run)
+    return _run_to_schema(run, store.load())
 
 
 @router.post("/models/{model_id}/activate", response_model=ModelMeta)
 def activate_model(
     model_id: int,
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> ModelMeta:
     run = get_or_404(session, ModelRun, model_id, label="Model")
 
@@ -75,7 +81,7 @@ def activate_model(
     set_active_by_id(model_id, session)
     # Refresh after flush so is_active reflects the change
     session.refresh(run)
-    return _run_to_schema(run)
+    return _run_to_schema(run, store.load())
 
 
 @router.patch("/models/{model_id}", response_model=ModelMeta)
@@ -83,6 +89,7 @@ def update_model(
     model_id: int,
     body: UpdateModelRequest,
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> ModelMeta:
     """モデルの名称を更新する。空文字を渡すと名称をクリア (NULL) する。"""
     run = get_or_404(session, ModelRun, model_id, label="Model")
@@ -90,7 +97,7 @@ def update_model(
         run.notes = body.name.strip() or None
     session.flush()
     session.refresh(run)
-    return _run_to_schema(run)
+    return _run_to_schema(run, store.load())
 
 
 @router.post("/models/compact", status_code=204)
@@ -109,13 +116,32 @@ def compact_model_ids(
 def delete_model(
     model_id: int,
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> None:
-    """モデルを削除する。Active モデルは削除不可 (まず別モデルを activate してから)。"""
+    """モデルを削除する。使用中のモデルは削除不可。
+
+    使用中には 2 種類ある:
+      * **active** (`model_runs.is_active`) — どの馬・買い目を選ぶかを決める
+      * **確率モデル** (`settings.probability_model_path`) — 複勝の確信度と
+        連系の確率を出す
+
+    確率モデルを消せてしまうと、設定は存在しないパスを指したまま残り、推論側は
+    警告ログを出して**黙って旧挙動に戻る**。画面上は何も起きていないように見える
+    のに複勝の絞り込みと連系の確率が無効化されるので、ここで止める。
+    """
     run = get_or_404(session, ModelRun, model_id, label="Model")
     if bool(run.is_active):
         raise HTTPException(
             status_code=409,
             detail="Active モデルは削除できません。先に別モデルを activate してください。",
+        )
+    if is_probability_model(run.model_path, store.load()):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "確率モデルとして使用中のため削除できません。"
+                "先に Settings で別のモデルを選ぶか、未設定にしてください。"
+            ),
         )
     delete_model_files(run.model_path)
     session.delete(run)

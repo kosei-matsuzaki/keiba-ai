@@ -198,6 +198,9 @@ class ModelMeta(BaseModel):
     params: dict[str, Any] | None
     metrics: dict[str, Any] | None
     is_active: bool
+    #: 確率モデル (複勝の確信度 / 連系の確率) として設定されているか。
+    #: active とは別の役割で、両方 True になることもありうる。
+    is_probability_model: bool = False
 
 
 class UpdateModelRequest(BaseModel):

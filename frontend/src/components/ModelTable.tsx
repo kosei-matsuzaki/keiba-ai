@@ -83,11 +83,20 @@ export function ModelTable({
             <TableCell className="text-right">{extractMetric(model.metrics, 'ndcg3', 'score')}</TableCell>
             <TableCell className="text-right">{extractMetric(model.metrics, 'payback_win', 'ratio')}</TableCell>
             <TableCell className="text-center">
-              {model.is_active ? (
-                <Badge tone="success">Active</Badge>
-              ) : (
-                <Badge variant="outline">非アクティブ</Badge>
-              )}
+              {/* 役割は 2 つある: Active = 買う馬を決める / 確率 = 確からしさを出す。
+                  両方を兼ねることもあるので併記する。 */}
+              <div className="flex flex-wrap items-center justify-center gap-1">
+                {model.is_active ? (
+                  <Badge tone="success">Active</Badge>
+                ) : (
+                  !model.is_probability_model && <Badge variant="outline">非アクティブ</Badge>
+                )}
+                {model.is_probability_model && (
+                  <Badge title="複勝の確信度と連系の確率に使われています">
+                    確率
+                  </Badge>
+                )}
+              </div>
             </TableCell>
             <TableCell onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-end gap-2">

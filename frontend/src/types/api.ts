@@ -178,6 +178,8 @@ export interface ModelMeta {
   params: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   is_active: boolean;
+  /** 確率モデル（複勝の確信度・連系の確率）として設定されているか。active とは別の役割 */
+  is_probability_model?: boolean;
 }
 
 export interface UpdateModelRequest {
@@ -279,6 +281,13 @@ export interface SettingsResponse {
   stake_unit: number;
   stake_units: Record<string, number>;
   enabled_bet_types: BetType[];
+  /**
+   * 確率モデル（proper scoring rule で学習）のディレクトリ。data/ からの相対でも可。
+   * 設定すると複勝の確信度フィルタと連系の確率がこのモデル由来になる。null で無効。
+   */
+  probability_model_path: string | null;
+  /** 複勝を買う確信度の下限。AI の本命に対する確率モデルの単勝確率がこれ未満なら見送る */
+  place_min_confidence: number;
 }
 
 export interface SettingsUpdate {
@@ -292,6 +301,8 @@ export interface SettingsUpdate {
   stake_unit?: number;
   stake_units?: Record<string, number>;
   enabled_bet_types?: BetType[];
+  probability_model_path?: string | null;
+  place_min_confidence?: number;
 }
 
 // ── Recommendations ───────────────────────────────────────────────────────────
@@ -335,6 +346,10 @@ export interface RecommendationsResponse {
    * 'unknown' = オッズ取得待ち or 該当データなし
    */
   odds_source: 'live' | 'past' | 'unknown';
+  /** 確率モデルが AI の本命に与えた単勝確率。確率モデル未設定なら null */
+  place_confidence?: number | null;
+  /** 複勝を買う確信度の下限 */
+  place_confidence_threshold?: number | null;
 }
 
 // ── Bet records ───────────────────────────────────────────────────────────────

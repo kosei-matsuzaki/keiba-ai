@@ -42,7 +42,7 @@ vi.mock('../lib/api', () => ({
   runScraper: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
   runShutubaScraper: vi.fn().mockResolvedValue({ job_id: 'x', status: 'accepted', started_at: '' }),
   stopScraper: vi.fn().mockResolvedValue({ stopped: true }),
-  fetchSettings: vi.fn().mockResolvedValue({ user_agent: 'Mozilla/5.0', rate_min_seconds: 3, rate_max_seconds: 10, night_min_seconds: 30, win_min_odds: 1.1, scraper_stopped: false,
+  fetchSettings: vi.fn().mockResolvedValue({ user_agent: 'Mozilla/5.0', rate_min_seconds: 3, rate_max_seconds: 10, night_min_seconds: 30, win_min_odds: 1.1, probability_model_path: null, place_min_confidence: 0.3, scraper_stopped: false,
     race_budget: 5000,
     stake_unit: 100, enabled_bet_types: ['単勝', '複勝'] }),
   updateSettings: vi.fn().mockResolvedValue({}),

@@ -8,6 +8,8 @@ import type { SettingsResponse } from '../types/api';
 
 vi.mock('../lib/api', () => ({
   fetchSettings: vi.fn(),
+  // Settings の MODELS タブが確率モデルの選択肢を取りに行く
+  fetchModels: vi.fn().mockResolvedValue([]),
   updateSettings: vi.fn(),
   // Settings は Ingest タブを常時マウントするため、Ingest 系 API も必要
   fetchScraperStatus: vi.fn().mockResolvedValue({
@@ -40,7 +42,7 @@ const mockSettings: SettingsResponse = {
   rate_min_seconds: 3,
   rate_max_seconds: 10,
   night_min_seconds: 30,
-  win_min_odds: 1.1,
+  win_min_odds: 1.1, probability_model_path: null, place_min_confidence: 0.3,
   scraper_stopped: false,
     race_budget: 5000,
     stake_unit: 100,

@@ -84,6 +84,18 @@ def resolve_model_path(value: str | None) -> Path | None:
     return p if p.is_absolute() else (data_dir() / p)
 
 
+def is_probability_model(model_path: str | None, settings: dict) -> bool:
+    """``model_path`` が確率モデルとして設定されているか。
+
+    保存済みのパスは環境によって表記が違う (Windows / WSL、絶対 / data_dir 相対)
+    ので、`ai.model.registry` と同じく **basename で比べる**。
+    """
+    configured = settings.get("probability_model_path")
+    if not configured or not model_path:
+        return False
+    return Path(configured).name == Path(model_path).name
+
+
 class SettingsStore:
     """Load and persist user-editable settings as JSON."""
 

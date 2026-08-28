@@ -318,10 +318,24 @@ export function RecommendationsCard({
                   (バッジ「推定」、控除率込み)。
                 </span>
               </p>
+              {data.place_confidence != null && (
+                <p>
+                  ※ この予想の確信度 {(data.place_confidence * 100).toFixed(1)}%
+                  {data.place_confidence_threshold != null && (
+                    <>
+                      （複勝を買う下限 {(data.place_confidence_threshold * 100).toFixed(0)}%）。
+                      {data.place_confidence < data.place_confidence_threshold
+                        ? '下回るため複勝は見送っています。'
+                        : '上回るため複勝も買います。'}
+                    </>
+                  )}
+                </p>
+              )}
               <p>
-                ※ 本番モデルは単複の ROI を直接最適化（OOS 単勝 0.856 / 複勝 0.894、
-                いずれも人気1番超）。連系確率は NN 内部で校正済みだが控除率 25% で依然
-                -EV。EV&gt;1.0 でも回収率 1.0 超は未達なので実買いは慎重に。
+                ※ 買い目は期待値ではなく<strong>的中確率の高い順</strong>に選んでいます
+                （期待値で絞ると大穴に寄り、実測で回収率が落ちるため）。
+                実測の回収率は単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.85〜0.88 で、
+                <strong>いずれも 1.0 未満</strong>です。控除率の内側なので実買いは慎重に。
               </p>
             </div>
           </>

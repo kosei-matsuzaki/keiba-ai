@@ -13,7 +13,7 @@ vi.mock('../lib/api', () => ({
     rate_min_seconds: 3,
     rate_max_seconds: 6,
     night_min_seconds: 5,
-    win_min_odds: 1.1,
+    win_min_odds: 1.1, probability_model_path: null, place_min_confidence: 0.3,
     scraper_stopped: false,
     bankroll: 100000,
     kelly_fraction: 0.25,
