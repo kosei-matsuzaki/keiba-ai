@@ -38,6 +38,12 @@ class BetRecord(Base):
     profit: Mapped[int | None] = mapped_column(Integer)                     # payout - stake
     notes: Mapped[str | None] = mapped_column(String)
 
+    # この買い目が**どの条件で出たか** (買い目を決めたモデル・確率モデルの有無・
+    # 確信度のしきい値・オッズ下限・券種別の金額)。モデルを差し替えたり設定を
+    # 変えたりすると、過去の記録がどの条件のものか分からなくなり実績を評価できない。
+    # 登録時点の設定を写す (migration 0014)。0014 より前の行は NULL。
+    conditions_json: Mapped[str | None] = mapped_column(String)
+
     __table_args__ = (
         Index("ix_bet_records_race_id", "race_id"),
         Index("ix_bet_records_created_at", "created_at"),

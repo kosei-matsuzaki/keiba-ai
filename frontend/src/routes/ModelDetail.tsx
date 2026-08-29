@@ -93,10 +93,15 @@ export function ModelDetail() {
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
               <CardTitle className="flex items-center gap-3 text-base">
                 {title}
+                {/* 役割は 2 つある: Active = 買い目を決める / 確率 = 確からしさを出す。
+                    兼務もありうるので併記する。 */}
                 {model.is_active ? (
                   <Badge tone="success">Active</Badge>
                 ) : (
-                  <Badge variant="outline">非アクティブ</Badge>
+                  !model.is_probability_model && <Badge variant="outline">非アクティブ</Badge>
+                )}
+                {model.is_probability_model && (
+                  <Badge title="複勝の確信度と連系の確率に使われています">確率</Badge>
                 )}
               </CardTitle>
               {!model.is_active && (
@@ -111,6 +116,17 @@ export function ModelDetail() {
               )}
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+              <MetaRow
+                label="役割"
+                value={
+                  [
+                    model.is_active ? '買い目を決める' : null,
+                    model.is_probability_model ? '確からしさを出す' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' / ') || '未使用'
+                }
+              />
               <MetaRow label="ID" value={String(model.id)} />
               <MetaRow label="作成日時" value={formatDateTime(model.created_at)} />
               <MetaRow label="学習期間" value={model.train_range ?? PLACEHOLDER} />

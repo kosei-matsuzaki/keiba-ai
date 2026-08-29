@@ -22,7 +22,6 @@ import type {
   BetSummary,
   BetTimeseries,
   BulkPredictionsResponse,
-  DiscoverThisWeekendRaceIdsResponse,
   DiscoverTodayRaceIdsResponse,
   HealthResponse,
   JobAccepted,
@@ -218,26 +217,6 @@ export function discoverTodayRaceIds(date?: string): Promise<DiscoverTodayRaceId
   );
 }
 
-export function discoverThisWeekendRaceIds(
-  refresh: boolean = false,
-): Promise<DiscoverThisWeekendRaceIdsResponse> {
-  // Backend では unique 開催日キー (6-7 group) ごとに shutuba を 1 件 pre-fetch
-  // するため、rate_limiter (3-6 sec) 込みで合計 30-50 秒かかる。
-  // ky の default timeout (10s) では尽き果てて "Failed to fetch" になるため、
-  // この呼び出しでは 120 秒まで延長する。
-  // refresh=true で backend の 30 分キャッシュを bypass する (再取込ボタン用)。
-  const searchParams: Record<string, string> = {};
-  if (refresh) searchParams.refresh = 'true';
-  return getClient().then((c) =>
-    c
-      .get('scraper/discover_this_weekend_race_ids', {
-        timeout: 120_000,
-        ...(Object.keys(searchParams).length ? { searchParams } : {}),
-      })
-      .json<DiscoverThisWeekendRaceIdsResponse>()
-  );
-}
-
 export function stopScraper(): Promise<{ stopped: boolean }> {
   return getClient().then((c) => c.post('scraper/stop').json<{ stopped: boolean }>());
 }
@@ -370,31 +349,6 @@ export function createBetsBulk(body: BetRecordBulkIn): Promise<BetRecordList> {
 }
 
 // ── Simulation ────────────────────────────────────────────────────────────────
-
-/**
- * Run end-to-end backtest with the active model.
- *
- * Backend ~30-60 sec for ~800 races. Timeout extended to 180s here.
- */
-export function runSimulation(req: SimulationRequest): Promise<SimulationResponse> {
-  const searchParams: Record<string, string | number> = {
-    budget: req.budget,
-    strategy: req.strategy,
-  };
-  if (req.start) searchParams.start = req.start;
-  if (req.end) searchParams.end = req.end;
-  if (req.model_id != null) searchParams.model_id = req.model_id;
-  if (req.exclude_low_information) searchParams.exclude_low_information = 'true';
-  if (req.staking) searchParams.staking = req.staking;
-  return getClient().then((c) =>
-    c
-      .get('simulation/active_model', {
-        searchParams,
-        timeout: 180_000,
-      })
-      .json<SimulationResponse>()
-  );
-}
 
 /**
  * バックグラウンド job として シミュレーションを開始する。

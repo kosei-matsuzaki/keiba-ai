@@ -9,6 +9,8 @@ from __future__ import annotations
 import csv
 import datetime
 import io
+import json
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +18,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from api.deps import get_or_404, get_session
+from ai.model.registry import get_active
+from api.deps import get_or_404, get_session, get_settings_store
 from api.schemas import (
     BetBreakdown,
     BetBreakdownRow,
@@ -30,12 +33,15 @@ from api.schemas import (
     BetTimeseries,
     BetTimeseriesPoint,
 )
+from core.logging import get_logger
+from core.settings_store import SettingsStore
 from db.models.bet_record import BetRecord
 from db.models.race import Race
 from services import bet_analytics
 from services.bet_settlement import settle_bet
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 _MAX_CSV_DAYS = 366
 _MAX_CSV_ROWS = 50_000
@@ -59,6 +65,9 @@ def _to_out(record: BetRecord) -> BetRecordOut:
         payout=record.payout,
         profit=record.profit,
         notes=record.notes,
+        conditions=(
+            json.loads(record.conditions_json) if record.conditions_json else None
+        ),
     )
 
 
@@ -227,11 +236,41 @@ def export_bets_csv(
         headers={"Content-Disposition": "attachment; filename=bet_records.csv"},
     )
 
+def _capture_conditions(session: Session, store: SettingsStore) -> str | None:
+    """登録時点の「買い目を左右する条件」を JSON にする。
+
+    クライアントに送らせず**サーバ側で写す**。推奨買目を見てから記録するまでに
+    設定が変わっていれば理論上ズレるが、クライアントの申告を信じるより確実で、
+    実運用では両者は数秒差。
+    """
+    try:
+        settings = store.load()
+        active = get_active(session)
+        prob = settings.get("probability_model_path")
+        return json.dumps(
+            {
+                "bet_model": Path(str(active)).name if active else None,
+                "probability_model": Path(str(prob)).name if prob else None,
+                "place_min_confidence": (
+                    float(settings.get("place_min_confidence", 0.30)) if prob else None
+                ),
+                "win_min_odds": float(settings.get("win_min_odds", 1.1)),
+                "stake_units": settings.get("stake_units") or {},
+            },
+            ensure_ascii=False,
+        )
+    except Exception:  # noqa: BLE001
+        # 条件を取れなくても購入記録そのものは残す (記録できないより良い)
+        logger.warning("bet の実行条件を記録できなかった", exc_info=True)
+        return None
+
+
 
 @router.post("/bets", response_model=BetRecordOut, status_code=201)
 def create_bet(
     body: BetRecordIn,
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> BetRecordOut:
     """bet_record を登録し、即時突合せを試みる。
 
@@ -249,6 +288,7 @@ def create_bet(
         source=body.source,
         recommendation_id=body.recommendation_id,
         notes=body.notes,
+        conditions_json=_capture_conditions(session, store),
     )
     session.add(record)
     session.flush()  # id を確定させてから突合せ
@@ -264,6 +304,7 @@ def create_bet(
 def create_bets_bulk(
     body: BetRecordBulkIn,
     session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
 ) -> BetRecordList:
     """買い方（流し / ボックス / フォーメーション）を展開した複数点をまとめて登録する。
 
@@ -274,12 +315,15 @@ def create_bets_bulk(
     get_or_404(session, Race, body.race_id, label="Race")
 
     now = _now_iso()
+    # 1 回だけ写して全点で共有する (同じ推奨から出た買い目なので条件は同一)
+    conditions = _capture_conditions(session, store)
     records = [
         BetRecord(
             created_at=now,
             race_id=body.race_id,
             bet_type=body.bet_type,
             combo=item.combo,
+            conditions_json=conditions,
             stake=item.stake,
             source=body.source,
             notes=body.notes,

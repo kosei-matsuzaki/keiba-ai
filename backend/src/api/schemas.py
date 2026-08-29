@@ -455,6 +455,9 @@ class BetRecordOut(BaseModel):
     payout: int | None
     profit: int | None
     notes: str | None
+    #: この買い目が出たときの条件 (買い目を決めたモデル・確率モデルの有無・
+    #: 確信度のしきい値など)。0014 より前の記録は None。
+    conditions: dict | None = None
 
 
 class BetRecordList(BaseModel):
