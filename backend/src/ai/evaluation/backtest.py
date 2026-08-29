@@ -53,8 +53,15 @@ if TYPE_CHECKING:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-WIN_EV_THRESHOLD = 1.1   # Expected value threshold for win bet
-PLACE_EV_THRESHOLD = 1.05  # Expected value threshold for place bet
+#: 単勝で買うオッズの下限。実運用の `settings.win_min_odds` と同じ役割。
+#: **EV 閾値ではない** — 既定の "top1" ルールは EV を使わない。
+WIN_MIN_ODDS = 1.1
+
+#: 旧ルール (--win-bet-rule ev / --place-bet-rule ev) 専用の EV 閾値。
+#: **実運用では EV を全券種で廃止済み**で、これらは「昔の買い方と比べる」
+#: 分析用途にだけ残している。既定のルールでは一切参照されない。
+LEGACY_WIN_EV_THRESHOLD = 1.1
+LEGACY_PLACE_EV_THRESHOLD = 1.05
 
 # Bootstrap CI metrics — keys listed here get `_ci_low` / `_ci_high` companions
 # in the returned metrics dict when bootstrap is enabled.
@@ -421,11 +428,12 @@ def evaluate(
     baseline: str | None = None,
     persist: bool = False,
     *,
-    win_ev_threshold: float = WIN_EV_THRESHOLD,
+    win_min_odds: float = WIN_MIN_ODDS,
+    legacy_win_ev_threshold: float = LEGACY_WIN_EV_THRESHOLD,
     win_bet_rule: str = "top1",
     place_bet_rule: str = "topk",
     place_top_k: int = 1,
-    place_ev_threshold: float = PLACE_EV_THRESHOLD,
+    legacy_place_ev_threshold: float = LEGACY_PLACE_EV_THRESHOLD,
     probability_model_path: Path | None = None,
     place_min_confidence: float = 0.30,
     exclude_top_rank: int = 0,
@@ -445,8 +453,10 @@ def evaluate(
     {"model": {...}, "baseline_favorite": {...}, "delta": {...}}.
 
     `win_bet_rule` は単勝の買い方:
-      - "top1" (既定) … **モデル 1 位の馬**を `odds > win_ev_threshold` のときだけ買う。
-      - "ev"          … `win_prob × odds > win_ev_threshold` の馬すべて (旧既定)。
+      - "top1" (既定) … **モデル 1 位の馬**を `odds > win_min_odds` のときだけ買う。
+        これは**オッズの下限**であって EV 閾値ではない (実運用と同じ)。
+      - "ev"          … `win_prob × odds > legacy_win_ev_threshold` の馬すべて。
+        **実運用では廃止済み**で、昔の買い方と比べるための分析用途。
 
     温度を NLL 較正すると "ev" は平坦な確率 × 大穴オッズで偽 EV を量産して回収率が
     落ちる (実測 0.698)。旧既定の 0.912 は温度がグリッド端に張り付いて win_prob が
@@ -457,7 +467,8 @@ def evaluate(
     `place_bet_rule` は複勝の買い方:
       - "topk" (既定) … **モデル上位 `place_top_k` 頭**を無条件に買う。実測 (test 19ヶ月)
         k=1 で 5,402 点・回収率 **0.887**、k=2 で 0.860、k=3 で 0.837 と k が小さいほど良い。
-      - "ev"          … `place_prob × 推定複勝オッズ > place_ev_threshold` (旧既定)。
+      - "ev"          … `place_prob × 推定複勝オッズ > legacy_place_ev_threshold`。
+        **実運用では廃止済み**で、分析用途にだけ残している。
         43,464 点・回収率 0.654 で、1 番人気ベタ買いの複勝 0.850 にも負ける。
 
     複勝の EV は単に狂っているのではなく **順序が逆**。実測 (test 19ヶ月) の EV 帯別
@@ -604,9 +615,9 @@ def evaluate(
                 if odds is None or pd.isna(odds):
                     continue
                 if win_bet_rule == "top1":
-                    take = rank == 0 and odds > win_ev_threshold
+                    take = rank == 0 and odds > win_min_odds
                 else:
-                    take = row["win_prob"] * odds > win_ev_threshold
+                    take = row["win_prob"] * odds > legacy_win_ev_threshold
                 if take:
                     # デプロイ (ai.betting.strategy.assign_flat_stakes) と同じ 1 点定額。
                     # Kelly (資金比率) は賭け金決定から廃止済みで、評価側にだけ残すと
@@ -672,7 +683,9 @@ def evaluate(
                     if place_bet_rule == "topk":
                         take_place = rank < place_top_k
                     else:
-                        take_place = row["place_prob"] * place_odds > place_ev_threshold
+                        take_place = (
+                            row["place_prob"] * place_odds > legacy_place_ev_threshold
+                        )
                     if take_place:
                         place_bet_size = 100
                         place_bets += 1
@@ -718,9 +731,9 @@ def evaluate(
         ),
         # Record the betting filter params so that persisted metrics_json /
         # CLI JSON dump explains under what strategy the numbers were produced.
-        "win_ev_threshold": float(win_ev_threshold),
+        "win_min_odds": float(win_min_odds),
         "win_bet_rule": win_bet_rule,
-        "place_ev_threshold": float(place_ev_threshold),
+
         "place_bet_rule": place_bet_rule,
         # 確率モデルを使ったか (使うと複勝の対象レースが減るので、後から
         # 「どの条件で測った数字か」を判別できるようにする)
@@ -802,16 +815,19 @@ def _cli() -> None:
         ),
     )
     parser.add_argument(
-        "--win-ev-threshold",
+        "--win-min-odds",
         type=float,
-        default=WIN_EV_THRESHOLD,
-        help=f"EV threshold for win bets (default {WIN_EV_THRESHOLD}).",
+        default=WIN_MIN_ODDS,
+        help=f"単勝で買うオッズの下限 (既定 {WIN_MIN_ODDS})。EV 閾値ではない。",
     )
     parser.add_argument(
         "--place-ev-threshold",
         type=float,
-        default=PLACE_EV_THRESHOLD,
-        help=f"EV threshold for place bets (default {PLACE_EV_THRESHOLD}).",
+        default=LEGACY_PLACE_EV_THRESHOLD,
+        help=(
+            f"--place-bet-rule ev のときだけ使う EV 閾値 (既定 "
+            f"{LEGACY_PLACE_EV_THRESHOLD})。実運用では廃止済み。"
+        ),
     )
     parser.add_argument(
         "--probability-model", type=Path, default=None,
@@ -923,11 +939,11 @@ def _cli() -> None:
         end=args.end,
         baseline=args.baseline,
         persist=args.persist,
-        win_ev_threshold=args.win_ev_threshold,
+        win_min_odds=args.win_min_odds,
         win_bet_rule=args.win_bet_rule,
         place_bet_rule=args.place_bet_rule,
         place_top_k=args.place_top_k,
-        place_ev_threshold=args.place_ev_threshold,
+        legacy_place_ev_threshold=args.place_ev_threshold,
         probability_model_path=prob_model_path,
         place_min_confidence=place_min_conf,
         exclude_top_rank=args.exclude_top_rank,

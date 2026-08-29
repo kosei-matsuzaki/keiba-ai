@@ -89,6 +89,14 @@ def app_with_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     importlib.reload(_main_mod)
 
     app = _main_mod.create_app()
+    # 設定ストアを**明示的に**この tmp_path 配下へ向ける。
+    # create_app 内の SettingsStore() は data_dir() 経由で環境変数を読むので
+    # 実際には隔離されているが、それは「呼び出し時に env が立っている」ことに
+    # 依存した暗黙の隔離で、fixture の順序やインポート時刻が変わると崩れる。
+    # 1 つのテストが書いた設定が次のテストに漏れると、原因の分かりにくい
+    # 失敗になる (実際に「EV 閾値が 1.1 のはずが 1.2」で一度踏んだ)。
+    from core.settings_store import SettingsStore
+    app.state.settings_store = SettingsStore(data_dir / "settings.json")
     return app
 
 

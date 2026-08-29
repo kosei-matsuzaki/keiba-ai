@@ -1,5 +1,22 @@
 # KEIBA AI — テーマ設計と UX 改善（第3版）
 
+> ## この文書の現状（2026-08-29 追記）
+>
+> **これは 2026-08-23 時点の設計メモであり、現在の仕様書ではない。** 実装と食い違う
+> ときは `docs/design.md` / `docs/spec.md` が正。以下の区別で読むこと。
+>
+> | 部分 | 現状 |
+> |---|---|
+> | **Part A（テーマ）** | **おおむね有効**。罫線で仕切る / 角丸 2px / 数値は等幅 + `tabular-nums` / 型と余白を数段に絞る、は現在の作法として生きている（`MetricBand` / `OperatingModelsCard` はこの方針に沿う） |
+> | **Part B-2 Dashboard** | 部分的に古い。「Active モデル」1 枚のカードを前提にしているが、**運用モデルは 2 つになった**（買い目を決める active / 確からしさを出す確率モデル）。`OperatingModelsCard` を参照 |
+> | **Part B-3 Race 一覧（UpcomingRaces）** | **画面ごと廃止**。今週末 / Past のタブは Race 画面のカレンダーに統合済み |
+> | **Part B-6 Models / ModelDetail** | 古い。役割バッジ（Active / 確率）と確率モデルの割り当て操作が追加されている |
+> | **Part B-7 Ingest** | **画面ごと廃止**。取込は Race 画面の `DayIngestPanel` へ移設 |
+> | **Part B-8 Settings** | 古い。EV 閾値は全券種で廃止、タブ構成も SCRAPER / BETTING / BET TYPES に変わっている |
+>
+> 残しているのは**なぜその意匠にしたか**の記録として価値があるため。画面構成の
+> 現状は `docs/design.md`「UI 画面構成」を見ること。
+
 更新: 2026-08-23 / 対象: `frontend/`
 
 > **第2版は適用済みです**（`--radius: 0.125rem` / `--background: 223 33% 4%` / `Card` の `boxed` /

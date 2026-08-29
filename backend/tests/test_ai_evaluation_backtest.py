@@ -134,29 +134,31 @@ def test_evaluate_betting_filter_params_recorded(trained_scenario):
     metrics = evaluate(
         model_path=model_dir,
         db=db_file,
-        win_ev_threshold=1.2,
-        place_ev_threshold=1.15,
+        win_min_odds=1.2,
+        legacy_place_ev_threshold=1.15,
         exclude_top_rank=2,
         min_popularity=4,
         max_popularity=12,
     )
 
-    assert metrics["win_ev_threshold"] == 1.2
-    assert metrics["place_ev_threshold"] == 1.15
+    assert metrics["win_min_odds"] == 1.2
     assert metrics["exclude_top_rank"] == 2
     assert metrics["min_popularity"] == 4
     assert metrics["max_popularity"] == 12
 
 
 def test_evaluate_default_filter_params_match_constants(trained_scenario):
-    """フィルタ未指定時は既存挙動 (= 後方互換) になっている。"""
-    from ai.evaluation.backtest import PLACE_EV_THRESHOLD, WIN_EV_THRESHOLD
+    """フィルタ未指定時は既定値になっている。
+
+    既定の "top1" ルールが使うのは**オッズの下限**であって EV 閾値ではない
+    (実運用が EV を全券種で廃止したのに合わせて名前を分けた)。
+    """
+    from ai.evaluation.backtest import WIN_MIN_ODDS
 
     db_file, model_dir = trained_scenario
     metrics = evaluate(model_path=model_dir, db=db_file)
 
-    assert metrics["win_ev_threshold"] == WIN_EV_THRESHOLD
-    assert metrics["place_ev_threshold"] == PLACE_EV_THRESHOLD
+    assert metrics["win_min_odds"] == WIN_MIN_ODDS
     assert metrics["exclude_top_rank"] == 0
     assert metrics["min_popularity"] is None
     assert metrics["max_popularity"] is None
