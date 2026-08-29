@@ -182,6 +182,18 @@ def main() -> None:
     ap.add_argument("--valid-months", type=int, default=6)
     ap.add_argument("--test-months", type=int, default=6)
     ap.add_argument("--max-epochs", type=int, default=100)
+    ap.add_argument(
+        "--pl-top-k", type=int, default=None,
+        help="--losses plackett_luce のとき先頭何着までを尤度に含めるか (既定 None = 全順列)",
+    )
+    ap.add_argument(
+        "--tag", default="",
+        help=(
+            "出力ファイル名に付ける接尾辞。損失名が同じでも設定違いの run を"
+            "別ファイルにするために使う (既存ファイルがあると skip されるため、"
+            "タグを付けないと **学習されずに古い結果が残る**)"
+        ),
+    )
     ap.add_argument("--out-dir", type=Path, default=None)
     args = ap.parse_args()
 
@@ -197,7 +209,7 @@ def main() -> None:
 
     for cutoff in args.cutoffs.split(","):
         for loss in args.losses.split(","):
-            tag = f"{cutoff}_{loss}"
+            tag = f"{cutoff}_{loss}{('_' + args.tag) if args.tag else ''}"
             out = out_dir / f"oof_{tag}.csv"
             if out.exists():
                 print(f"[skip] {tag} (already done)", flush=True)
@@ -212,6 +224,7 @@ def main() -> None:
                 test_months=args.test_months,
                 loss=loss,
                 monitor=MONITOR.get(loss, "valid_tansho_roi"),
+                pl_top_k=args.pl_top_k,
                 max_epochs=args.max_epochs,
                 device="cpu",
                 persist=True,          # 予測にモデルが要るので保存する
@@ -230,6 +243,12 @@ def main() -> None:
             _check_oof(rows, cutoff, t_start, t_end)
             pd.DataFrame(rows).to_csv(out, index=False, encoding="utf-8")
             print(f"  wrote {len(rows)} rows -> {out}", flush=True)
+            # **どの fold がどのモデルディレクトリか**を残す。後段の検証で
+            # 「その fold の確率モデル」を引く必要がある (model_runs 行は消すので
+            # DB からは辿れない)。
+            (out_dir / "fold_models.txt").open("a", encoding="utf-8").write(
+                f"{tag}\t{model_dir}\n"
+            )
             _drop_model_run(str(model_dir))
 
     engine.dispose()
