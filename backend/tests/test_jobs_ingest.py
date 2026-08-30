@@ -500,3 +500,63 @@ async def test_ingest_payouts_idempotent_on_reingest(
     assert len(count_first) == len(count_second), (
         f"payouts duplicated on re-ingest: {len(count_first)} -> {len(count_second)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_stale_no_result_cache_is_refetched(db_session, tmp_path, monkeypatch):
+    """結果未掲載のキャッシュを掴んだら、キャッシュを迂回して取り直す。
+
+    結果ページは 30 日キャッシュされる。発走前・確定前に取ったページがそこに残ると
+    「ok を記録しないので後で再取得できる」という設計が効かなくなり、**30 日間その
+    レースの結果が入らない** (2026-08-22 の 15 レースが実際にこれで欠けた)。
+    """
+    import httpx
+
+    from jobs.ingest import ingest_one_race_result
+
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+    calls: list[float | None] = []
+
+    async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
+        if "/horse/" in url:
+            raise RuntimeError("no horse fixture")
+        calls.append(cache_max_age_hours)
+        # 1 回目 = 結果テーブルの無い古いキャッシュ、2 回目 = 確定後の実ページ
+        return "<html><body>結果はまだありません</body></html>" if len(calls) == 1 else RESULT_HTML
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    client = NetkeibaClient(
+        AsyncRateLimiter(settings), RobotsCache("TestAgent"), httpx.AsyncClient(), settings
+    )
+    client.fetch = fake_fetch  # type: ignore[method-assign]
+
+    status = await ingest_one_race_result(client, db_session, "202406010101", "2024-06-01")
+
+    assert status == "fetched"
+    assert len(calls) == 2, "結果が無いページを掴んだら取り直すこと"
+    assert calls[1] == 0, "2 回目はキャッシュを迂回すること"
+
+
+@pytest.mark.asyncio
+async def test_still_no_results_after_refetch_stays_no_results(db_session, tmp_path, monkeypatch):
+    """取り直しても結果が無ければ no_results。ok は記録せず、後で再取得できる。"""
+    import httpx
+
+    from jobs.ingest import ingest_one_race_result
+
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path))
+
+    async def fake_fetch(url: str, *, use_cache: bool = True, cache_max_age_hours: float = 24 * 30) -> str:
+        return "<html><body>結果はまだありません</body></html>"
+
+    settings = Settings(rate_min_seconds=0.0, rate_max_seconds=0.0)
+    client = NetkeibaClient(
+        AsyncRateLimiter(settings), RobotsCache("TestAgent"), httpx.AsyncClient(), settings
+    )
+    client.fetch = fake_fetch  # type: ignore[method-assign]
+
+    status = await ingest_one_race_result(client, db_session, "202406010101", "2024-06-01")
+
+    assert status == "no_results"
+    logs = db_session.execute(select(ScrapeLog).where(ScrapeLog.status == "ok")).scalars().all()
+    assert logs == [], "未確定のページに ok を付けると二度と取り直せなくなる"

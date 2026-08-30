@@ -198,6 +198,22 @@ def _upsert_payouts(session: Session, race_id: str, html: str) -> int:
     return len(payout_rows)
 
 
+def _parse_result_or_none(html: str, race_id: str):
+    """結果ページを解析する。結果テーブルがまだ無ければ None。
+
+    quiet=True: 直近レースは db.netkeiba のアーカイブ反映が遅れて結果テーブルが
+    まだ無いことがある。想定内なので ERROR を出さない。
+    """
+    try:
+        return parse_race_result(html, race_id, quiet=True)
+    except ResultParseError:
+        return None
+
+
+def _has_results(parsed) -> bool:
+    return any(e.finish_position is not None for e in parsed.entries)
+
+
 async def ingest_one_race_result(
     client: NetkeibaClient,
     session: Session,
@@ -224,19 +240,18 @@ async def ingest_one_race_result(
 
     try:
         html = await client.fetch(result_url, cache_max_age_hours=24 * 30)
-        try:
-            # quiet=True: 直近レースは db.netkeiba アーカイブ反映が遅れ結果テーブルが
-            # まだ無いことがある。想定内なので ERROR を出さず no_results 扱いにする。
-            parsed = parse_race_result(html, race_id, quiet=True)
-        except ResultParseError:
-            return "no_results"
+        parsed = _parse_result_or_none(html, race_id)
+        if parsed is None or not _has_results(parsed):
+            # **結果未掲載のページが 30 日キャッシュに残ると、その間ずっと取り込めない。**
+            # ok を記録しないだけでは足りず (再取得しても同じキャッシュを読む)、
+            # キャッシュを迂回して 1 度だけ取り直す。実際 2026-08-22 の 15 レースが
+            # 未確定版のキャッシュを掴み続け、9 日後も結果が入らなかった。
+            html = await client.fetch(result_url, cache_max_age_hours=0)
+            parsed = _parse_result_or_none(html, race_id)
+            if parsed is None or not _has_results(parsed):
+                return "no_results"
         if date_str:
             parsed.date = date_str
-
-        has_results = any(e.finish_position is not None for e in parsed.entries)
-        if not has_results:
-            # まだ確定していない → ok を記録せず、確定後の再取得に委ねる。
-            return "no_results"
 
         _upsert_race(session, parsed)
         await _ensure_masters(session, parsed, client=client)
