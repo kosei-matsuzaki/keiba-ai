@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -106,6 +107,50 @@ def test_activate_model(
         run1 = session.get(ModelRun, ids[1])
         assert run0.is_active == 0
         assert run1.is_active == 1
+
+
+def test_evaluate_endpoint_returns_job_accepted(
+    app_with_temp_db: FastAPI,
+) -> None:
+    """POST /api/models/{id}/evaluate は即座に job_id を返す (実行は裏)。
+
+    学習時の指標は実運用の賭けルールと別物で、log-loss に至っては学習側に無い。
+    画面の「未算出」をここから埋められるようにしている。
+    """
+    from db.session import session_scope
+
+    with (
+        patch("api.routers.models.evaluate", return_value={}) as mock_eval,
+        TestClient(app_with_temp_db) as client,
+    ):
+        # engine は lifespan で作られるので、TestClient に入ってから触る
+        with session_scope(app_with_temp_db.state.engine) as session:
+            run = ModelRun(
+                created_at="2026-08-30T00:00:00",
+                model_path="data/models/dummy-nn",
+                model_type="nn",
+                is_active=0,
+            )
+            session.add(run)
+            session.flush()
+            model_id = run.id
+
+        resp = client.post(f"/api/models/{model_id}/evaluate")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "job_id" in data
+        assert data["status"] == "running"
+        # persist=True でないと metrics_json に書き戻らない (画面が埋まらない)
+        for _ in range(50):
+            if mock_eval.call_count:
+                break
+            time.sleep(0.05)
+        assert mock_eval.call_args.kwargs["persist"] is True
+
+
+def test_evaluate_endpoint_404_for_unknown_model(app_with_temp_db: FastAPI) -> None:
+    with TestClient(app_with_temp_db) as client:
+        assert client.post("/api/models/9999/evaluate").status_code == 404
 
 
 def test_train_endpoint_returns_job_accepted(

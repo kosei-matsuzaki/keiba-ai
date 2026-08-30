@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -66,6 +67,12 @@ LEGACY_PLACE_EV_THRESHOLD = 1.05
 # Bootstrap CI metrics — keys listed here get `_ci_low` / `_ci_high` companions
 # in the returned metrics dict when bootstrap is enabled.
 _BOOTSTRAP_METRIC_KEYS = ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place")
+
+
+def _binary_nll(p: float, y: int) -> float:
+    """二値の負の対数尤度。p が 0/1 に張り付くと発散するのでクリップする。"""
+    p = min(max(p, 1e-6), 1.0 - 1e-6)
+    return -(math.log(p) if y else math.log(1.0 - p))
 
 
 def _bet_excluded(
@@ -526,6 +533,13 @@ def evaluate(
     top1_hits: list[int] = []
     place_hits: list[int] = []
 
+    # 本命 1 頭についての二値 log-loss。**確率の良し悪しはこれで判定する。**
+    # 回収率は分散が大きく窓によって符号が変わるが、log-loss は proper scoring rule
+    # なので同じレース数でも差が出る。市場 (1/オッズ) を下回れないモデルが市場より
+    # systematically に儲けることは原理的にできないので、これは必要条件。
+    logloss_model: list[float] = []
+    logloss_market: list[float] = []
+
     # Per-race stake/payout (one entry per *evaluated* race, same length as the
     # ndcg lists). Bootstrap CI resamples on this axis. Races with no triggered
     # bet contribute 0 invested / 0 payout — required so the resampled index
@@ -597,7 +611,22 @@ def evaluate(
 
             # Top-1 hit: does the horse ranked #1 by model actually finish 1st?
             top_horse = preds.iloc[0]  # sorted by score desc
-            top1_hits.append(1 if top_horse["finish_position"] == 1 else 0)
+            won = 1 if top_horse["finish_position"] == 1 else 0
+            top1_hits.append(won)
+
+            # 本命についてのモデル確率と市場の実装確率 (1/オッズ) を同じ土俵で測る。
+            # オッズの無いレースは市場側を作れないので両方とも数えない (対比較を保つ)。
+            top_odds = top_horse.get("odds_win")
+            top_p = top_horse.get("win_prob")
+            if (
+                top_odds is not None
+                and not pd.isna(top_odds)
+                and float(top_odds) > 0
+                and top_p is not None
+                and not pd.isna(top_p)
+            ):
+                logloss_model.append(_binary_nll(float(top_p), won))
+                logloss_market.append(_binary_nll(1.0 / float(top_odds), won))
 
             # Place hit: is at least one of top-3 model picks in actual top-3?
             top3_horses = set(preds.iloc[:3]["horse_id"])
@@ -710,13 +739,28 @@ def evaluate(
             per_race_place_payout.append(race_place_payout)
 
     n_races = len(ndcg1_list)
+    # どの期間で測った数字か。モデルごとに test 窓が違うので、これが無いと
+    # 一覧に並べたときに横比較できない数字が黙って並ぶ。
+    eval_start = str(start) if start else None
+    eval_end = str(end) if end else None
+    if "date" in frame.columns and not frame.empty:
+        eval_start = eval_start or str(frame["date"].min())
+        eval_end = eval_end or str(frame["date"].max())
     metrics = {
+        "eval_start": eval_start,
+        "eval_end": eval_end,
         "n_races": n_races,
         "ndcg1": float(np.mean(ndcg1_list)) if ndcg1_list else float("nan"),
         "ndcg3": float(np.mean(ndcg3_list)) if ndcg3_list else float("nan"),
         "top1_hit": float(np.mean(top1_hits)) if top1_hits else float("nan"),
         # 上位 3 推奨のうち少なくとも 1 頭が実際に 3 着以内に入ったレース割合
         "place_hit": float(np.mean(place_hits)) if place_hits else float("nan"),
+        # 本命の二値 log-loss (小さいほど良い)。market_log_loss を下回れているかが
+        # 「市場より正確か」の判定で、確率モデルの採否はこれで決める。
+        "log_loss": float(np.mean(logloss_model)) if logloss_model else float("nan"),
+        "market_log_loss": (
+            float(np.mean(logloss_market)) if logloss_market else float("nan")
+        ),
         "win_bets": win_bets,
         "win_invested": win_invested,
         "win_gross_payout": win_gross_payout,

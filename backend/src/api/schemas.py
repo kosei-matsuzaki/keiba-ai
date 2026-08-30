@@ -167,13 +167,30 @@ class BulkPredictionsResponse(BaseModel):
 # ── Metrics schemas ───────────────────────────────────────────────────────────
 
 class MetricsSummary(BaseModel):
+    """Dashboard の KPI。
+
+    `source` は数字の出所で、これが無いと画面のラベルが嘘になる:
+      - "backtest" … `backtest --persist` が実運用の賭けルールで測った実測。
+      - "training" … 学習ループが test split で測った値。**複勝的中率は別量**
+        (backtest=上位3頭のうち1頭以上が3着以内 / training=予想1位が3着以内。
+        実測 0.885 vs 0.503)。
+    """
+
     ndcg1: float | None
     ndcg3: float | None
     top1_hit: float | None
     place_hit: float | None
     payback_win: float | None
+    payback_place: float | None
+    # 本命の二値 log-loss と、市場 (1/オッズ) の同じ量。小さいほど良い。
+    # 確率の質はこれで見る (回収率よりノイズに強い proper scoring rule)。
+    log_loss: float | None
+    market_log_loss: float | None
     n_races: int | None
     model_id: int | None
+    source: str | None
+    eval_start: str | None
+    eval_end: str | None
 
 
 class TimeseriesPoint(BaseModel):

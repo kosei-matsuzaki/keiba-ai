@@ -60,8 +60,14 @@ def get_metrics_summary(
             top1_hit=None,
             place_hit=None,
             payback_win=None,
+            payback_place=None,
+            log_loss=None,
+            market_log_loss=None,
             n_races=None,
             model_id=None,
+            source=None,
+            eval_start=None,
+            eval_end=None,
         )
 
     metrics: dict = {}
@@ -71,6 +77,15 @@ def get_metrics_summary(
 
     n_races_raw = metrics.get("n_races")
     n_races = int(n_races_raw) if isinstance(n_races_raw, (int, float)) else None
+
+    # 数字の出所。`backtest --persist` を回すと payback_win が書かれるので、
+    # それを持っているかで判別する。**画面のラベルは出所で変わる** — 複勝的中率は
+    # backtest と学習時で別の量なので、混ぜて出すと嘘になる。
+    source = "backtest" if _pick_metric(metrics, "payback_win") is not None else (
+        "training" if metrics else None
+    )
+    eval_start = metrics.get("eval_start") if isinstance(metrics.get("eval_start"), str) else None
+    eval_end = metrics.get("eval_end") if isinstance(metrics.get("eval_end"), str) else None
 
     return MetricsSummary(
         # `backtest --persist` が走っていれば、4 指標すべてを **同じ 1 回の評価**
@@ -91,8 +106,16 @@ def get_metrics_summary(
         top1_hit=_pick_metric(metrics, "top1_hit", "test_tansho_hit"),
         place_hit=_pick_metric(metrics, "place_hit", "test_fukusho_hit"),
         payback_win=_pick_metric(metrics, "payback_win", "test_tansho_roi"),
+        payback_place=_pick_metric(metrics, "payback_place", "test_fukusho_roi"),
+        # log-loss は backtest でしか計算していない (学習ループは PL 損失しか持たない)。
+        # fallback すると別の量になるので、無いときは素直に null を返す。
+        log_loss=_pick_metric(metrics, "log_loss"),
+        market_log_loss=_pick_metric(metrics, "market_log_loss"),
         n_races=n_races,
         model_id=active_run.id,
+        source=source,
+        eval_start=eval_start,
+        eval_end=eval_end,
     )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 
 import numpy as np
@@ -10,7 +11,7 @@ import pytest
 from sqlalchemy import create_engine
 
 import db.models  # noqa: F401
-from ai.evaluation.backtest import evaluate
+from ai.evaluation.backtest import _binary_nll, evaluate
 from tests.synthetic import make_synthetic_db, train_synthetic_nn
 
 
@@ -46,6 +47,42 @@ def test_evaluate_returns_all_metric_keys(trained_scenario):
     assert required_keys.issubset(metrics.keys()), (
         f"Missing keys: {required_keys - metrics.keys()}"
     )
+
+
+def test_evaluate_reports_log_loss_against_market(trained_scenario):
+    """本命の log-loss と、同じレース集合での市場 (1/オッズ) の log-loss を出す。
+
+    確率モデルの採否はこれで決めるので、片方だけ出ると比較にならない。
+    """
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+
+    assert "log_loss" in metrics
+    assert "market_log_loss" in metrics
+    # 二値 NLL は非負。クリップしているので発散しない。
+    for key in ("log_loss", "market_log_loss"):
+        value = metrics[key]
+        assert value >= 0.0, f"{key} が負: {value}"
+        assert value < 20.0, f"{key} が発散している: {value}"
+
+
+def test_binary_nll_matches_definition():
+    """-log(p) / -log(1-p)。0/1 に張り付いても発散させない。"""
+    assert _binary_nll(0.5, 1) == pytest.approx(math.log(2))
+    assert _binary_nll(0.5, 0) == pytest.approx(math.log(2))
+    # 当たったのに確率 0 を出したら大きな罰、ただし有限
+    assert _binary_nll(0.0, 1) > 10.0
+    assert math.isfinite(_binary_nll(0.0, 1))
+    assert math.isfinite(_binary_nll(1.0, 0))
+
+
+def test_evaluate_records_eval_window(trained_scenario):
+    """どの期間で測った数字かを metrics に残す (窓が違う値を並べないため)。"""
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+    assert metrics["eval_start"] is not None
+    assert metrics["eval_end"] is not None
+    assert metrics["eval_start"] <= metrics["eval_end"]
 
 
 def test_evaluate_payback_semantics(trained_scenario):

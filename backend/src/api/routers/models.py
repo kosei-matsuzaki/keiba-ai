@@ -5,18 +5,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ai.evaluation.backtest import evaluate
 from ai.model.registry import delete_model_files, renumber_model_ids, set_active_by_id
 from ai.training.train_nn import train_nn
 from api.deps import get_job_registry, get_or_404, get_session, get_settings_store
 from api.jobs import JobRegistry
 from api.schemas import JobAccepted, ModelMeta, TrainRequest, UpdateModelRequest
-from core.settings_store import SettingsStore, is_probability_model
+from core.settings_store import SettingsStore, is_probability_model, resolve_model_path
 from db.models.model_run import ModelRun
 
 router = APIRouter()
@@ -147,6 +149,52 @@ def delete_model(
     session.delete(run)
     session.flush()
     renumber_model_ids(session)
+
+
+@router.post("/models/{model_id}/evaluate", response_model=JobAccepted)
+async def evaluate_model(
+    model_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    store: Annotated[SettingsStore, Depends(get_settings_store)],
+    registry: Annotated[JobRegistry, Depends(get_job_registry)],
+    start: str | None = None,
+    end: str | None = None,
+) -> JobAccepted:
+    """このモデルを**実運用と同じ賭けルール**で測り直し、metrics_json に書き戻す。
+
+    学習ループが書く指標は「top-1 に賭け続けた場合」で、アプリの買い方とは
+    別物 (複勝的中率は 0.885 と 0.503 で別の量になる)。`log_loss` に至っては
+    学習側に存在しない。画面で「未算出」と出ているものはここで埋まる。
+
+    確率モデルと確信度のしきい値は **settings から解決する** — CLI と同じにして
+    おかないと、画面に出る数字が実運用と食い違う (複勝の対象レース数が変わる)。
+
+    5,000 レース規模で 10 分前後かかるのでバックグラウンドジョブにする。
+    """
+    run = get_or_404(session, ModelRun, model_id, label="Model")
+    model_path = Path(run.model_path)
+
+    settings = store.load()
+    prob_model_path = resolve_model_path(settings.get("probability_model_path"))
+    place_min_conf = float(settings.get("place_min_confidence", 0.30))
+
+    async def _coro() -> None:
+        await asyncio.to_thread(
+            evaluate,
+            model_path=model_path,
+            start=start,
+            end=end,
+            persist=True,
+            probability_model_path=prob_model_path,
+            place_min_confidence=place_min_conf,
+        )
+
+    info = registry.start("evaluate", _coro)
+    return JobAccepted(
+        job_id=info.job_id,
+        status=info.status,
+        started_at=info.started_at,
+    )
 
 
 @router.post("/models/train", response_model=JobAccepted)
