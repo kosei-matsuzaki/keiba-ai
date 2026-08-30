@@ -124,6 +124,7 @@ data/raw/misc/<sha256(url)[:16]>.html      — その他 HTML（馬詳細 / 馬�
 ### キャッシュの保持期間
 
 - `data/raw/<yyyy>/<mm>/`（レース結果 HTML）: 手動削除するまで保持する。parser 修正後に再 parse できるよう意図的に残す
+- **結果が載っていないページを掴んだら、キャッシュを迂回して 1 度だけ取り直す**。発走前・確定前に取ったページが 30 日残ると、`no_results` で ok を記録せず再取得に委ねる設計が効かなくなる（再実行しても同じキャッシュを読むため）。2026-08-22 の 15 レースが 9 日間これで欠けた
 - `data/raw/misc/`（馬詳細 / 馬血統 / カレンダー HTML）: `ingest_range` が各日の ingest 完了直後に `clear_misc_cache()` で自動削除する。これらは一度 DB へ parse されれば再利用の必要がないため、長期 ingest でのディスク肥大を防ぐ
 - `KEIBA_KEEP_MISC_CACHE=1` 環境変数を設定するとデバッグ用に misc キャッシュを削除しない（opt-out）
 - `data/raw/` は `.gitignore` 対象
@@ -183,7 +184,8 @@ uv run python -m jobs.ingest_range \
 - フェッチが失敗したレース ID は `scrape_log` に `status='error'` で記録する
 - 次回実行時に `status='error'` かつ `fetched_at < (now - 1h)` のレコードを再試行対象に含める
 - `status='ok'` かつ `content_hash` 一致のレコードはスキップする
-- `ingest_range` は各日付の ok ログを参照してスキップするため、中断後に同じコマンドを再実行するだけでレジュームできる
+- `ingest_range` は **`races.date` と結果の有無**で日単位のスキップを判定する。中断後に同じコマンドを再実行するだけでレジュームできる
+- **race_id は日付ではない**（年+場+回+日+R）。`race/YYYYMMDD%` の前方一致で判定すると別日のレースに当たり（2026-07-01 の判定に race_id=202607010101 = 2026-03-14 開催が当たる）、開催日を丸ごとスキップする。旧実装がこれで 7〜8 月に穴を作った
 - 未取得日数は `GET /api/scraper/status?range=N`（デフォルト 30 日）の `missing_dates_count` で確認できる（ok ログ 0 件の日数をカウント）
 - `scrape_log` は UI 監視用途でも参照される。`GET /api/scraper/recent_activity?minutes=N` が直近 N 分のレコードを集計し、status 内訳・rate_per_min・最新 race_id を返す。CLI 実行中の進捗確認に使う。現在この集計を出す画面は無い（`curl` で叩く）
 - `scrape_log.fetched_at` には `ix_scrape_log_fetched_at` インデックスが設定されている（migration 0003）。Phase 2 の大規模 ingest で行数が数万に達しても `recent_activity` の `WHERE fetched_at >= cutoff` が full scan にならないよう保護している
