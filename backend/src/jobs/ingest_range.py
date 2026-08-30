@@ -22,7 +22,7 @@ from core.config import load_settings
 from core.logging import configure_logging, get_logger
 from core.paths import db_path
 from db.base import Base
-from db.models.scrape_log import ScrapeLog
+from db.models.race import Race
 from db.session import make_engine, session_scope
 from jobs.ingest import run_ingest
 from scraper import stop_flag
@@ -38,22 +38,30 @@ _RESULT_URL_PREFIX = "https://db.netkeiba.com/race/"
 
 
 def is_date_completed(session: Session, date_str: str) -> bool:
-    """Return True if the given date has at least one 'ok' scrape_log entry.
+    """その日が **結果まで** 取り込み済みなら True (= skip してよい)。
 
-    The simplified check: if any ok-status result URL for that date's prefix
-    exists in scrape_log, we treat the date as completed and skip it.
-    This avoids fetching the calendar again just to count races.
-    The date prefix in race IDs is the 8-digit YYYYMMDD portion.
+    **race_id は日付ではない。** netkeiba の ID は 年+場+回+日+R の構造化文字列で、
+    `2026-07-01` を `race/20260701%` で照合すると **場=07・1回1日目**のレース
+    (実際には 2026-03-14 開催) に当たる。旧実装はこの前方一致で完了判定していた
+    ため、**開催のあった日を丸ごと skip** していた (7〜8 月に穴が空いた原因)。
+
+    判定は `races.date` と結果の有無で行う。出馬表だけ入っている日 (payout 未取得)
+    は未完了として扱い、再実行で結果を埋められるようにする。レース単位の skip は
+    `run_ingest` 側 (`already_scraped`) にあるので、完了済みのレースを取り直す
+    ことはない。
     """
-    date_compact = date_str.replace("-", "")
-    url_prefix = f"{_RESULT_URL_PREFIX}{date_compact}%"
-    count = session.execute(
-        select(func.count()).select_from(ScrapeLog).where(
-            ScrapeLog.url.like(url_prefix),
-            ScrapeLog.status == "ok",
+    total = session.execute(
+        select(func.count()).select_from(Race).where(Race.date == date_str)
+    ).scalar_one()
+    if total == 0:
+        return False
+    missing_result = session.execute(
+        select(func.count()).select_from(Race).where(
+            Race.date == date_str,
+            Race.payout_win.is_(None),
         )
     ).scalar_one()
-    return count > 0
+    return missing_result == 0
 
 
 def _date_range(start: datetime.date, end: datetime.date) -> list[datetime.date]:

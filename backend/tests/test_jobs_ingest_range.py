@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from core.config import Settings
+from db.models.race import Race
 from db.models.scrape_log import ScrapeLog
 from jobs.ingest_range import is_date_completed, run_range
 from scraper.netkeiba import NetkeibaClient
@@ -41,31 +42,47 @@ def mock_client() -> NetkeibaClient:
     return client
 
 
-def test_is_date_completed_false_when_no_logs(db_session):
-    """Fresh DB has no scrape logs; every date is incomplete."""
+def _race(race_id: str, date: str, *, payout: int | None) -> Race:
+    return Race(
+        race_id=race_id,
+        date=date,
+        course="東京",
+        surface="芝",
+        distance=1600,
+        payout_win=payout,
+    )
+
+
+def test_is_date_completed_false_when_no_races(db_session):
+    """レースが 1 件も無ければ未取得。"""
     assert is_date_completed(db_session, "2024-12-28") is False
 
 
-def test_is_date_completed_true_when_ok_log_exists(db_session):
-    """A date is complete when at least one ok entry exists for that date prefix."""
-    db_session.add(ScrapeLog(
-        url="https://db.netkeiba.com/race/202412280101/",
-        fetched_at="2024-12-28T10:00:00+00:00",
-        status="ok",
-    ))
+def test_is_date_completed_true_when_all_races_have_results(db_session):
+    db_session.add(_race("202412280101", "2024-12-28", payout=350))
     db_session.commit()
     assert is_date_completed(db_session, "2024-12-28") is True
 
 
-def test_is_date_completed_false_when_only_error_log(db_session):
-    """An error-status log does not count as completed."""
-    db_session.add(ScrapeLog(
-        url="https://db.netkeiba.com/race/202412280101/",
-        fetched_at="2024-12-28T10:00:00+00:00",
-        status="error",
-    ))
+def test_is_date_completed_false_when_results_missing(db_session):
+    """出馬表だけ入っている日は未完了。再実行で結果を埋められないと穴が残る。"""
+    db_session.add(_race("202412280101", "2024-12-28", payout=350))
+    db_session.add(_race("202412280102", "2024-12-28", payout=None))
     db_session.commit()
     assert is_date_completed(db_session, "2024-12-28") is False
+
+
+def test_is_date_completed_ignores_race_id_prefix_collision(db_session):
+    """**race_id は日付ではない。**
+
+    netkeiba の ID は 年+場+回+日+R。`race/20260701%` で照合すると 場=07 の
+    1回1日目 (実際は 3 月開催) に当たり、7/1 を取得済みと誤判定して**開催日を
+    丸ごと skip** していた。日付は races.date で見る。
+    """
+    db_session.add(_race("202607010101", "2026-03-14", payout=350))
+    db_session.commit()
+    assert is_date_completed(db_session, "2026-07-01") is False
+    assert is_date_completed(db_session, "2026-03-14") is True
 
 
 @pytest.mark.asyncio
@@ -151,16 +168,12 @@ async def test_run_range_skips_completed_dates(in_memory_engine, mock_client, tm
     start = dates[0].isoformat()
     end = dates[-1].isoformat()
 
-    # Pre-seed scrape_log with ok entries for each date using matching race_id prefix
+    # 結果まで入っている日は skip される。**race_id の前方一致ではなく
+    # races.date で判定する** ので、その日のレース行を結果つきで入れておく。
     from sqlalchemy.orm import Session
     with Session(in_memory_engine) as s:
-        for d in dates:
-            date_compact = d.strftime("%Y%m%d")
-            s.add(ScrapeLog(
-                url=f"https://db.netkeiba.com/race/{date_compact}0101/",
-                fetched_at=f"{d.isoformat()}T10:00:00+00:00",
-                status="ok",
-            ))
+        for i, d in enumerate(dates):
+            s.add(_race(f"20241228010{i}", d.isoformat(), payout=350))
         s.commit()
 
     # All 3 dates should be skipped because is_date_completed returns True for each
