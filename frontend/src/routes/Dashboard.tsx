@@ -1,35 +1,35 @@
-import { BarChart3, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 
+import { useActivateModel } from '@/hooks/useActivateModel';
+import { useCompactModelIds } from '@/hooks/useCompactModelIds';
+import { useDeleteModel } from '@/hooks/useDeleteModel';
+import { useEvaluateModel } from '@/hooks/useEvaluateModel';
 import { useMetricsSummary } from '@/hooks/useMetricsSummary';
-import { useMetricsTimeseries } from '@/hooks/useMetricsTimeseries';
 import { useModels } from '@/hooks/useModels';
 import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
-import { MetricBand, MetricItem } from '@/components/MetricBand';
-import { OperatingModelsCard } from '@/components/OperatingModelsCard';
-import { AccuracyChart } from '@/components/AccuracyChart';
+import { useTrainModel } from '@/hooks/useTrainModel';
+import { useUpdateModel } from '@/hooks/useUpdateModel';
+import { useUpdateSettings } from '@/hooks/useSettings';
+import { DeleteModelDialog } from '@/components/DeleteModelDialog';
+import { EditModelNameDialog } from '@/components/EditModelNameDialog';
 import { EmptyState } from '@/components/EmptyState';
+import { JobProgressCard } from '@/components/JobProgressCard';
+import { ModelTable } from '@/components/ModelTable';
+import { OperatingModels } from '@/components/OperatingModels';
 import { PageHeader } from '@/components/PageHeader';
+import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { MetricsSummary } from '@/types/api';
-
-function MetricsSkeleton() {
-  return (
-    <div className="grid grid-cols-2 border-y border-border lg:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="px-5 py-5">
-          <Skeleton className="h-16 w-full rounded-sm" />
-        </div>
-      ))}
-    </div>
-  );
-}
+import { toast } from '@/components/ui/toast';
+import { formatErrorMessage } from '@/lib/api';
+import { useTrainingStore } from '@/store/app';
+import type { ModelMeta, TrainRequest } from '@/types/api';
 
 /**
- * いまの状態を 1 行で出す帯 (B-2 ①)。
+ * いまの状態を 1 行で出す帯。
  *
  * 指標が並んでいるだけだと「次に何をすればいいか」が分からない。
  * 週末のレースが未取得でも、モデルが無くても、画面が同じ顔をしてしまう。
@@ -49,9 +49,9 @@ function StatusBand({
   const issue = !hasActiveModel
     ? {
         message: '有効なモデルがありません',
-        detail: 'モデルを学習すると予想と評価が動きます。',
-        to: '/models',
-        action: '学習する',
+        detail: '下の一覧から Activate するか、新しく学習してください。',
+        to: null,
+        action: null,
       }
     : weekendRaceCount === 0
       ? {
@@ -69,42 +69,168 @@ function StatusBand({
       <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
       <span className="text-sm font-medium">{issue.message}</span>
       <span className="text-sm text-muted-foreground">{issue.detail}</span>
-      <Button asChild size="sm" variant="outline" className="ml-auto">
-        <Link to={issue.to}>{issue.action}</Link>
-      </Button>
+      {issue.to && issue.action && (
+        <Button asChild size="sm" variant="outline" className="ml-auto">
+          <Link to={issue.to}>{issue.action}</Link>
+        </Button>
+      )}
     </div>
   );
 }
 
-/** 4 指標がすべて未算出なら「まだ評価していない」= カードを並べる意味がない。 */
-function hasAnyMetric(summary: MetricsSummary): boolean {
-  return [summary.ndcg3, summary.top1_hit, summary.place_hit, summary.payback_win].some(
-    (v) => typeof v === 'number' && Number.isFinite(v),
-  );
-}
-
-const RANGES = [
-  { value: '30d', label: '30日' },
-  { value: '90d', label: '90日' },
-  { value: '180d', label: '180日' },
-  { value: 'all', label: '全期間' },
-] as const;
-
+/**
+ * モデルに関する操作をすべて持つ 1 画面。
+ *
+ * 成績 (KPI)・比較 (一覧)・学習・役割の割り当てを別画面に分けていたが、
+ * **見比べてから選ぶ**という流れが画面をまたいでいた。active を切り替えるのも
+ * 確率モデルを割り当てるのも「数字を見た直後」にやることなので同じ画面に置く。
+ * 個別モデルのバックテストだけは重いので詳細 (`/models/:id`) に残す。
+ */
 export function Dashboard() {
-  const [range, setRange] = useState<(typeof RANGES)[number]['value']>('180d');
   const summary = useMetricsSummary();
-  const timeseries = useMetricsTimeseries('ndcg3', range);
   const modelsQuery = useModels();
   const weekend = useThisWeekendRaces();
+  const queryClient = useQueryClient();
+
+  const activateMutation = useActivateModel();
+  // 確率モデルの割り当ては settings に持つが、操作はモデルを見比べるこの画面で行う。
+  const updateSettings = useUpdateSettings();
+  const updateMutation = useUpdateModel();
+  const deleteMutation = useDeleteModel();
+  const compactMutation = useCompactModelIds();
+  const evaluateMutation = useEvaluateModel();
+  const trainMutation = useTrainModel();
+  const trackedJobId = useTrainingStore((s) => s.trackedJobId);
+  const setTrackedJobId = useTrainingStore((s) => s.setTrackedJobId);
+  const [activatingId, setActivatingId] = useState<number | null>(null);
+  const [evaluatingId, setEvaluatingId] = useState<number | null>(null);
+  const [editTarget, setEditTarget] = useState<ModelMeta | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ModelMeta | null>(null);
+
   const activeModel = modelsQuery.data?.find((m) => m.is_active) ?? null;
 
+  function handleActivate(id: number) {
+    setActivatingId(id);
+    activateMutation.mutate(id, {
+      onSuccess: () => {
+        toast.success(`モデル ${id} をアクティブにしました`);
+        setActivatingId(null);
+      },
+      onError: async (err) => {
+        toast.error('Activate に失敗しました', {
+          description: await formatErrorMessage(err),
+          action: { label: '再試行', onClick: () => handleActivate(id) },
+        });
+        setActivatingId(null);
+      },
+    });
+  }
+
+  /** 確率モデルを割り当てる / 解除する。model=null で未設定に戻す。 */
+  function handleSetProbability(model: ModelMeta | null) {
+    updateSettings.mutate(
+      { probability_model_path: model ? model.model_path : null },
+      {
+        onSuccess: () => {
+          void queryClient.invalidateQueries({ queryKey: ['models'] });
+          toast.success(
+            model
+              ? `ID ${model.id} を確率モデルにしました（複勝の確信度と連系の確率に使われます）`
+              : '確率モデルの割り当てを解除しました'
+          );
+        },
+        onError: async (err) => {
+          toast.error('設定の更新に失敗しました', {
+            description: await formatErrorMessage(err),
+          });
+        },
+      }
+    );
+  }
+
+  function handleEditSubmit(id: number, name: string | null) {
+    updateMutation.mutate(
+      { id, body: { name } },
+      {
+        onSuccess: () => {
+          toast.success(`モデル ${id} の名称を更新しました`);
+          setEditTarget(null);
+        },
+        onError: async (err) => {
+          toast.error(`名称更新に失敗しました: ${await formatErrorMessage(err)}`);
+        },
+      }
+    );
+  }
+
+  function handleDeleteConfirm(id: number) {
+    deleteMutation.mutate(id, {
+      onSuccess: () => {
+        toast.success(`モデル ${id} を削除しました`);
+        setDeleteTarget(null);
+      },
+      onError: async (err) => {
+        toast.error('削除に失敗しました', {
+          description: await formatErrorMessage(err),
+          action: { label: '再試行', onClick: () => handleDeleteConfirm(id) },
+        });
+      },
+    });
+  }
+
+  /** 実運用の賭けルールで測り直す。進捗は JobProgressCard が拾う。 */
+  function handleEvaluate(model: ModelMeta) {
+    setEvaluatingId(model.id);
+    evaluateMutation.mutate(model.id, {
+      onSuccess: (data) => {
+        setTrackedJobId(data.job_id);
+        setEvaluatingId(null);
+        toast.success(`ID ${model.id} の計測を開始しました`, {
+          description: '5,000 レース規模で 10 分前後かかります。終わると指標が入ります。',
+        });
+      },
+      onError: async (err) => {
+        setEvaluatingId(null);
+        toast.error(`計測の開始に失敗しました: ${await formatErrorMessage(err)}`);
+      },
+    });
+  }
+
+  function handleCompact() {
+    compactMutation.mutate(undefined, {
+      onSuccess: () => toast.success('モデル ID を詰めました'),
+      onError: async (err) => {
+        toast.error(`ID 詰めに失敗しました: ${await formatErrorMessage(err)}`);
+      },
+    });
+  }
+
+  function handleTrain(req: TrainRequest) {
+    trainMutation.mutate(req, {
+      onSuccess: (data) => {
+        setTrackedJobId(data.job_id);
+        toast.success(`学習ジョブを受け付けました（Job ID: ${data.job_id}）`);
+      },
+      onError: async (err) => {
+        toast.error(`再学習に失敗しました: ${await formatErrorMessage(err)}`);
+      },
+    });
+  }
+
   return (
-    <div className="flex flex-col gap-12 p-6">
-      <PageHeader
-        eyebrow="Dashboard"
-        title="モデル成績の概観"
-        description="直近の指標推移と active モデルの状態"
-      />
+    <div className="flex flex-col gap-10 p-6">
+      <PageHeader eyebrow="Dashboard" title="モデル" description="成績・比較・学習・役割の割り当て">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleCompact}
+          disabled={compactMutation.isPending}
+          title="ModelRun.id を作成日時順に 1..N に詰める"
+        >
+          {compactMutation.isPending ? 'ID 詰め中…' : 'ID を詰める'}
+        </Button>
+        <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
+      </PageHeader>
 
       <StatusBand
         hasActiveModel={activeModel != null}
@@ -112,105 +238,82 @@ export function Dashboard() {
         isLoading={modelsQuery.isPending || weekend.isPending}
       />
 
-      {/* 予想に使っている 2 つのモデル (買い目を決める / 確からしさを出す) —
-          クリックで Models 画面へ */}
-      {modelsQuery.isPending ? (
-        <Skeleton className="h-24 w-full rounded-sm" />
-      ) : (
-        <OperatingModelsCard models={modelsQuery.data} />
-      )}
-
-      {/* Metric summary cards */}
-      {summary.isPending ? (
-        <MetricsSkeleton />
-      ) : summary.isError ? (
+      {/* 運用中の 2 モデルと、その数字。**役割カードと KPI 帯を分けない** —
+          分けると同じ active の回収率が上下 2 箇所に出て、どのモデルの数字か
+          読み取れなくなる。左は利用者が得る回収率、右は確率としての正しさ。 */}
+      {summary.isError ? (
         <EmptyState
           message="メトリクス取得に失敗しました"
           description="バックエンドが起動しているか確認してください。"
         />
-      ) : !hasAnyMetric(summary.data) ? (
-        // 4 枚とも未算出のときは「—」だらけのカードを並べず、1 枚の空状態にする。
-        <div className="border-y border-border">
-          <EmptyState
-            icon={BarChart3}
-            message="評価結果がまだありません"
-            description="モデルを学習して評価を実行すると、ここに指標が出ます。"
-          >
-            <Button asChild>
-              <Link to="/models">Models 画面へ</Link>
-            </Button>
-          </EmptyState>
-        </div>
+      ) : modelsQuery.isPending || summary.isPending ? (
+        <Skeleton className="h-48 w-full rounded-sm" />
       ) : (
-        <MetricBand cols={4}>
-          <MetricItem
-            title="NDCG@3"
-            value={summary.data.ndcg3}
-            format="decimal"
-            description="直近 active モデル"
-            hint="上位3頭の並びの正確さ（1.0 が完全一致）。回収率とは無関係に上がる点に注意"
-            to="/models"
-          />
-          <MetricItem
-            title="Top-1 ヒット率"
-            value={summary.data.top1_hit}
-            format="percent"
-            description="1着予想的中率"
-            hint="予想1位の馬が実際に1着だった割合"
-            to="/models"
-          />
-          <MetricItem
-            title="複勝的中率"
-            value={summary.data.place_hit}
-            format="percent"
-            description="3着以内的中率"
-            hint="予想上位3頭のうち1頭以上が3着以内に入ったレースの割合"
-            to="/models"
-          />
-          <MetricItem
-            title="単勝回収率"
-            value={summary.data.payback_win}
-            format="ratio"
-            tone={
-              summary.data.payback_win != null && summary.data.payback_win >= 1
-                ? 'positive'
-                : 'negative'
-            }
-            description="1.00 = 収支トントン"
-            hint="期待値が基準を超えた馬に単勝を買ったときの払戻 ÷ 投資。1.0 未満は平均で負け越し"
-            to="/ledger"
-          />
-        </MetricBand>
+        <OperatingModels models={modelsQuery.data} summary={summary.data} />
       )}
 
-      {/* Timeseries chart — 箱に入れず、上端の罫線だけで区切る */}
-      <Card className="border-t border-border pt-6">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-          <CardTitle className="text-label-ja">NDCG@3 推移</CardTitle>
-          <div className="flex gap-1">
-            {RANGES.map((r) => (
-              <Button
-                key={r.value}
-                variant={range === r.value ? 'soft' : 'ghost'}
-                size="sm"
-                className="h-7 px-2"
-                onClick={() => setRange(r.value)}
-              >
-                {r.label}
-              </Button>
-            ))}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {timeseries.isPending ? (
-            <Skeleton className="h-60 w-full rounded-sm" />
-          ) : timeseries.isError ? (
-            <EmptyState message="チャートデータ取得に失敗しました" />
-          ) : (
-            <AccuracyChart points={timeseries.data.points} metricLabel="NDCG@3" />
-          )}
-        </CardContent>
-      </Card>
+      {trackedJobId && (
+        <JobProgressCard
+          jobId={trackedJobId}
+          title="ジョブ進捗 (学習 / 計測)"
+          onDismiss={() => setTrackedJobId(null)}
+        />
+      )}
+
+      {/* モデル一覧。**推移グラフを置かないのは、モデルごとに評価窓が違うから。**
+          学習の --train-end を変えれば test 期間も動くので、時系列に並べても
+          「良くなった / 悪くなった」は読めない。窓を列で見せる。 */}
+      <section aria-label="モデル一覧" className="flex flex-col gap-3">
+        <h2 className="text-label-ja">モデル一覧</h2>
+        {modelsQuery.isPending ? (
+          <Skeleton className="h-64 w-full rounded-sm" />
+        ) : modelsQuery.isError ? (
+          <EmptyState
+            message="モデル情報の取得に失敗しました"
+            description="バックエンドが起動しているか確認してください。"
+          />
+        ) : modelsQuery.data.length === 0 ? (
+          <EmptyState
+            message="学習済みモデルはありません"
+            description="「再学習を実行」ボタンから最初のモデルを学習してください。"
+          />
+        ) : (
+          <>
+            <ModelTable
+              models={modelsQuery.data}
+              onActivate={handleActivate}
+              onEvaluate={handleEvaluate}
+              onSetProbability={handleSetProbability}
+              onEdit={setEditTarget}
+              onDelete={setDeleteTarget}
+              activatingId={activatingId}
+              settingProbability={updateSettings.isPending}
+              evaluatingId={evaluatingId}
+            />
+            <p className="text-xs text-subtle-foreground">
+              評価窓が違う行どうしは比較できません（<code>--train-end</code> を変えると test
+              期間も動くため）。揃えて測り直すには行を開いてバックテストを実行します。
+            </p>
+          </>
+        )}
+      </section>
+
+      <EditModelNameDialog
+        open={editTarget !== null}
+        onOpenChange={(o) => !o && setEditTarget(null)}
+        modelId={editTarget?.id ?? null}
+        currentName={editTarget?.name ?? null}
+        onSubmit={handleEditSubmit}
+        isPending={updateMutation.isPending}
+      />
+      <DeleteModelDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        modelId={deleteTarget?.id ?? null}
+        modelName={deleteTarget?.name ?? null}
+        onConfirm={handleDeleteConfirm}
+        isPending={deleteMutation.isPending}
+      />
     </div>
   );
 }

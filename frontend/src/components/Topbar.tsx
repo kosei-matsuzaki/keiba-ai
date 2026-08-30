@@ -14,18 +14,15 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { to: '/', label: 'DASHBOARD' },
+  // Dashboard がモデルの成績・一覧・学習・役割の割り当てを兼ねる。
+  // モデル詳細 (/models/:id) からもここが active に見えるようにする。
+  { to: '/', label: 'DASHBOARD', activeMatch: (p) => p === '/' || p.startsWith('/models') },
   {
     to: '/races',
     label: 'RACE',
     activeMatch: (p) => p.startsWith('/races') || p.startsWith('/upcoming') || p.startsWith('/past'),
   },
   { to: '/ledger', label: 'LEDGER' },
-  {
-    to: '/models',
-    label: 'MODELS',
-    activeMatch: (p) => p.startsWith('/models'),
-  },
   {
     to: '/settings',
     label: 'SETTINGS',

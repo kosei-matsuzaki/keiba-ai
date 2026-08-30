@@ -6,7 +6,6 @@ import { App } from '../App';
 import { Dashboard } from '../routes/Dashboard';
 import { Races } from '../routes/Races';
 import { RaceDetail } from '../routes/RaceDetail';
-import { Models } from '../routes/Models';
 import { Settings } from '../routes/Settings';
 
 // Mock entire API module so no real network calls are made
@@ -26,7 +25,6 @@ vi.mock('../lib/api', () => ({
   // App シェルがマウント時に warm-up で fetchHealth() を fire-and-forget する
   fetchHealth: vi.fn().mockResolvedValue({ status: 'ok', version: 'test', db_path: '' }),
   fetchMetricsSummary: vi.fn().mockResolvedValue({}),
-  fetchMetricsTimeseries: vi.fn().mockResolvedValue({ metric: 'ndcg3', points: [] }),
   fetchUpcomingRaces: vi.fn().mockResolvedValue({ races: [] }),
   // UpcomingRaces (useThisWeekendRaces) が使う
   fetchThisWeekendRaces: vi.fn().mockResolvedValue({ races: [] }),
@@ -69,7 +67,6 @@ function makeRouter(initialPath: string) {
           { index: true, element: <Dashboard /> },
           { path: 'races', element: <Races /> },
           { path: 'races/:race_id', element: <RaceDetail /> },
-          { path: 'models', element: <Models /> },
           { path: 'settings', element: <Settings /> },
         ],
       },
@@ -97,7 +94,7 @@ beforeEach(() => {
 describe('Routing', () => {
   it('renders Dashboard at /', async () => {
     renderAt('/');
-    expect(await screen.findByRole('heading', { name: 'モデル成績の概観' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'モデル' })).toBeInTheDocument();
   });
 
   it('renders the unified Race screen at /races', async () => {
@@ -111,9 +108,16 @@ describe('Routing', () => {
     expect(await screen.findByRole('heading', { name: 'レース詳細' })).toBeInTheDocument();
   });
 
-  it('renders Models at /models', async () => {
-    renderAt('/models');
-    expect(await screen.findByRole('heading', { name: '学習済みモデル' })).toBeInTheDocument();
+  it('旧 /models は Dashboard へ redirect する (ブックマーク互換)', async () => {
+    // 実際のルート定義を見る。ここだけテスト用の複製ではなく本物を確かめたい。
+    const { router: appRouter } = await import('../router');
+    const child = appRouter.routes[0].children?.find((r) => r.path === 'models');
+    expect(child).toBeDefined();
+    const element = (child as { element?: unknown }).element as
+      | { props?: { to?: string; replace?: boolean } }
+      | undefined;
+    expect(element?.props?.to).toBe('/');
+    expect(element?.props?.replace).toBe(true);
   });
 
   it('renders Settings at /settings', async () => {
@@ -123,11 +127,11 @@ describe('Routing', () => {
 
   it('topbar contains all navigation links', async () => {
     renderAt('/');
-    // Topbar の 5 タブ。等幅の英字のみ (章番号は廃止)
+    // Topbar の 4 タブ。等幅の英字のみ (MODELS は Dashboard に統合したので無い)
     expect(await screen.findByRole('link', { name: 'DASHBOARD' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'RACE' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'LEDGER' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'MODELS' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'MODELS' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'SETTINGS' })).toBeInTheDocument();
   });
 });

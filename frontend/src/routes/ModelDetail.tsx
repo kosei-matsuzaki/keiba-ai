@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import { fetchModel } from '@/lib/api';
 import { useActivateModel } from '@/hooks/useActivateModel';
+import { MetricBand, MetricItem } from '@/components/MetricBand';
 import { ModelSimulationPanel } from '@/components/ModelSimulationPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
@@ -12,28 +13,105 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
-import { formatDateTime, formatRatio, formatScore } from '@/lib/formatters';
+import { formatDateTime, formatPercent, formatScore } from '@/lib/formatters';
 import { formatErrorMessage } from '@/lib/api';
+import {
+  betRuleSummary,
+  placeHitLabel,
+  readModelMeta,
+  sourceDescription,
+  sourceLabel,
+} from '@/lib/modelMetrics';
 import type { ModelMeta } from '@/types/api';
 
 const PLACEHOLDER = '—';
-
-function metric(
-  metrics: Record<string, unknown> | null,
-  key: string,
-  fmt: 'score' | 'ratio',
-): string {
-  if (!metrics) return PLACEHOLDER;
-  const v = metrics[key];
-  if (typeof v !== 'number') return PLACEHOLDER;
-  return fmt === 'score' ? formatScore(v) : formatRatio(v);
-}
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-sm font-medium">{value}</span>
+    </div>
+  );
+}
+
+/** モデル 1 件の成績。出所・買い方・評価窓を数字と一緒に出す。 */
+function ModelScoreBand({ model }: { model: ModelMeta }) {
+  const m = readModelMeta(model);
+  const rule = betRuleSummary(model.metrics);
+  const edge =
+    m.logLoss != null && m.marketLogLoss != null ? m.logLoss - m.marketLogLoss : null;
+
+  if (m.source === null) {
+    return (
+      <EmptyState
+        message="評価がまだ走っていません"
+        description="下のバックテストを実行すると、実運用の賭けルールで測った成績が出ます。"
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <MetricBand cols={4}>
+        <MetricItem
+          title="単勝回収率"
+          value={m.paybackWin}
+          format="ratio"
+          tone={m.paybackWin != null && m.paybackWin >= 1 ? 'positive' : 'negative'}
+          description="1.00 = 収支トントン"
+        />
+        <MetricItem
+          title="複勝回収率"
+          value={m.paybackPlace}
+          format="ratio"
+          tone={m.paybackPlace != null && m.paybackPlace >= 1 ? 'positive' : 'negative'}
+          description="1.00 = 収支トントン"
+        />
+        <MetricItem
+          title="本命の的中率"
+          value={m.top1Hit}
+          format="percent"
+          description="予想1位が1着だった割合"
+          hint="的中率が高いほど儲かるとは限らない。人気馬を選べば当たるが配当が小さい"
+        />
+        <MetricItem
+          title="確率の質 (log-loss)"
+          value={m.logLoss}
+          format="decimal"
+          tone={edge != null && edge < 0 ? 'positive' : 'default'}
+          description={
+            m.marketLogLoss != null
+              ? `市場 ${formatScore(m.marketLogLoss)} / 差 ${edge != null && edge < 0 ? '−' : '+'}${formatScore(Math.abs(edge ?? 0))}`
+              : '小さいほど正確'
+          }
+          hint="本命についての二値 log-loss。市場 (1/オッズ) を下回れないモデルが市場より systematically に儲けることは原理的にできない"
+        />
+      </MetricBand>
+
+      <p className="px-1 text-xs text-subtle-foreground">
+        <span className="mr-2 rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {sourceLabel(m.source)}
+        </span>
+        {[
+          sourceDescription(m.source),
+          m.nRaces != null ? `${m.nRaces.toLocaleString()} レース` : null,
+          m.evalRange,
+          rule,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </p>
+
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-border px-1 pt-3 text-sm">
+        <span className="text-muted-foreground">順位精度 NDCG@3</span>
+        <span className="tabular-nums">{m.ndcg3 != null ? formatScore(m.ndcg3) : '未算出'}</span>
+        <span className="text-muted-foreground">複勝的中率</span>
+        <span className="tabular-nums">
+          {m.placeHit != null ? formatPercent(m.placeHit) : '未算出'}
+        </span>
+        <span className="text-xs text-subtle-foreground">（{placeHitLabel(m.source)}）</span>
+      </div>
     </div>
   );
 }
@@ -72,7 +150,7 @@ export function ModelDetail() {
     <div className="flex flex-col gap-8 p-6">
       <PageHeader eyebrow="Model Detail" title={title} description="モデル詳細とバックテスト">
         <Button variant="outline" size="sm" asChild>
-          <Link to="/models">
+          <Link to="/">
             <ArrowLeft className="mr-1.5 h-4 w-4" />
             一覧へ
           </Link>
@@ -131,13 +209,13 @@ export function ModelDetail() {
               <MetaRow label="作成日時" value={formatDateTime(model.created_at)} />
               <MetaRow label="学習期間" value={model.train_range ?? PLACEHOLDER} />
               <MetaRow label="検証期間" value={model.valid_range ?? PLACEHOLDER} />
-              <MetaRow label="NDCG@3" value={metric(model.metrics, 'ndcg3', 'score')} />
-              <MetaRow
-                label="単勝回収率"
-                value={metric(model.metrics, 'payback_win', 'ratio')}
-              />
+              <MetaRow label="評価窓" value={readModelMeta(model).evalRange ?? PLACEHOLDER} />
             </CardContent>
           </Card>
+
+          {/* 成績。**回収率を先に、順位精度は下に小さく。** 順位精度は上げても
+              回収率が上がらないことが実測で分かっているので、判断に使う数字を上に置く。 */}
+          <ModelScoreBand model={model} />
 
           {/* このモデルのバックテスト */}
           <ModelSimulationPanel modelId={modelId} />

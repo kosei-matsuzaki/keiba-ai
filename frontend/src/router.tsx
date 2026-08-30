@@ -3,7 +3,6 @@ import { App } from './App';
 import { Dashboard } from './routes/Dashboard';
 import { Races } from './routes/Races';
 import { RaceDetail } from './routes/RaceDetail';
-import { Models } from './routes/Models';
 import { ModelDetail } from './routes/ModelDetail';
 import { Settings } from './routes/Settings';
 import { Ledger } from './routes/Ledger';
@@ -20,8 +19,9 @@ export const router = createBrowserRouter([
       // 既存ブックマーク互換: 旧 /upcoming /past は /races へ redirect
       { path: 'upcoming', element: <Navigate to="/races" replace /> },
       { path: 'past', element: <Navigate to="/races" replace /> },
-      // Models: 一覧。各モデルの詳細 (/models/:id) でバックテストを実行する。
-      { path: 'models', element: <Models /> },
+      // モデルの一覧・学習・役割の割り当ては Dashboard に統合済み。
+      // 旧ブックマーク互換で /models は Dashboard へ送る。
+      { path: 'models', element: <Navigate to="/" replace /> },
       { path: 'models/:model_id', element: <ModelDetail /> },
       // Settings: 全レース共通の予想パラメータ + スクレイパー動作設定
       { path: 'settings', element: <Settings /> },

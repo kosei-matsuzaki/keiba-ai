@@ -27,7 +27,6 @@ import type {
   JobAccepted,
   JobInfo,
   MetricsSummary,
-  MetricsTimeseries,
   ModelMeta,
   PredictionResponse,
   RaceDetail,
@@ -141,17 +140,6 @@ export function fetchMetricsSummary(range = '30d'): Promise<MetricsSummary> {
   );
 }
 
-export function fetchMetricsTimeseries(
-  metric = 'ndcg3',
-  range = '180d'
-): Promise<MetricsTimeseries> {
-  return getClient().then((c) =>
-    c
-      .get('metrics/timeseries', { searchParams: { metric, range } })
-      .json<MetricsTimeseries>()
-  );
-}
-
 export function fetchModels(): Promise<ModelMeta[]> {
   return getClient().then((c) => c.get('models').json<ModelMeta[]>());
 }
@@ -178,6 +166,11 @@ export function compactModelIds(): Promise<void> {
 
 export function trainModel(body: TrainRequest): Promise<JobAccepted> {
   return getClient().then((c) => c.post('models/train', { json: body }).json<JobAccepted>());
+}
+
+/** モデルを実運用の賭けルールで測り直し、metrics_json に書き戻す (非同期ジョブ)。 */
+export function evaluateModel(id: number): Promise<JobAccepted> {
+  return getClient().then((c) => c.post(`models/${id}/evaluate`).json<JobAccepted>());
 }
 
 export function fetchScraperStatus(): Promise<ScraperStatus> {

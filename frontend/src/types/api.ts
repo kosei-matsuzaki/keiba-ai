@@ -152,18 +152,17 @@ export interface MetricsSummary {
   top1_hit: number | null;
   place_hit: number | null;
   payback_win: number | null;
+  payback_place: number | null;
+  /** 本命の二値 log-loss（小さいほど良い）。backtest --persist でのみ算出される */
+  log_loss: number | null;
+  /** 同じレース集合での市場（1/オッズ）の log-loss。モデルの比較対象 */
+  market_log_loss: number | null;
   n_races: number | null;
   model_id: number | null;
-}
-
-export interface TimeseriesPoint {
-  date: string;
-  value: number | null;
-}
-
-export interface MetricsTimeseries {
-  metric: string;
-  points: TimeseriesPoint[];
+  /** 'backtest'（実運用の賭けルールで実測）か 'training'（学習時）か。**ラベルが変わる** */
+  source: 'backtest' | 'training' | null;
+  eval_start: string | null;
+  eval_end: string | null;
 }
 
 // ── Model ─────────────────────────────────────────────────────────────────────
