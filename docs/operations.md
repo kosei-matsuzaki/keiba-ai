@@ -13,7 +13,7 @@
 2. ブラウザで `http://localhost:5173` を開く
 3. Settings 画面で User-Agent と取り込みレート（秒）を設定する
 4. Race 画面のカレンダーで日を選び、取込パネルから初回データ取り込みを実行する
-5. Models 画面で初回学習を実行し、生成されたモデルを active に切り替える
+5. Dashboard で初回学習を実行し、生成されたモデルを active に切り替える
 6. Upcoming Races 画面でレース一覧を確認し、Race Detail 画面で馬ごとの予想を確認する
 
 ---
@@ -92,9 +92,9 @@ curl http://127.0.0.1:8765/api/jobs
 curl http://127.0.0.1:8765/api/jobs/{job_id}
 ```
 
-UI の Race 画面でも ScraperStatusCard がポーリング表示します（アイドル: 30 秒間隔 / 実行中: 5 秒間隔）。ScraperStatusCard は「直近 10 分: N fetch (ok X, err Y)」「最新 race_id」「CLI 進行中バッジ」を表示するため、`ingest_range` を CLI で実行中も UI を開くだけで 1 分あたり何 fetch 進んでいるかを即座に確認できます。
+この集計を表示する画面は現在ありません。CLI 実行中の進み具合は上の `recent_activity` を叩いて確認します。
 
-UI の Models / Race 画面では JobProgressCard が API ジョブ（`POST /api/models/train`、`POST /api/scraper/run`）の進捗を 2 秒間隔で polling し、terminal status（completed / failed）で自動停止します。
+UI の Dashboard / Race 画面では JobProgressCard が API ジョブ（`POST /api/models/train`、`POST /api/scraper/run`）の進捗を 2 秒間隔で polling し、terminal status（completed / failed）で自動停止します。
 
 ### モデル学習
 
@@ -112,7 +112,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 学習後はバックテスト評価で指標を確認します。
 
 ```bash
-# バックテスト評価（NDCG@1/3/5, Top-1 hit, place_hit, payback_win, payback_place）
+# バックテスト評価（payback_win / payback_place / top1_hit / place_hit / log_loss / NDCG）
 uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn
 
 # 評価結果を model_runs.metrics_json に保存する（Dashboard の KPI に反映させる場合は必須）
@@ -123,6 +123,9 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
     --baseline favorite
 ```
 
+> 画面からも実行できる（Dashboard のモデル一覧の「計測」= `POST /api/models/{id}/evaluate`）。
+> CLI と同じく確率モデルと確信度しきい値を settings から解決するので同じ数字になる。
+>
 > **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は学習ループが測った valid / test の指標で、レース集合も指標の定義もアプリの画面と揃っていない。`--persist` を回すと backtest が**アプリと同じ賭けルール**（単勝・複勝ともモデルの本命 1 点）で測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、**同じレース集合の** `ndcg*` を上書き保存し、Dashboard が「利用者が実際に得る数字」を表示するようになる。
 >
 > 数字は変わる。単勝回収率は学習時 `test_tansho_roi` 0.930 に対し backtest 0.931 とほぼ一致する（どちらも本命 1 点）が、複勝的中率は 0.503 → 0.885 と大きく動く。これは改善ではなく**定義が違う**ためで、前者は「予想 1 位が 3 着以内」、後者は「上位 3 頭のうち 1 頭以上が 3 着以内」。**学習直後に必ず `--persist` 付きで評価すること。**
@@ -131,10 +134,9 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
 
 ```bash
 curl http://127.0.0.1:8765/api/metrics/summary
-curl http://127.0.0.1:8765/api/metrics/timeseries
 ```
 
-Dashboard 画面の AccuracyChart にもメトリクス推移が表示されます。
+Dashboard 画面は同じ値を KPI 帯とモデル比較表に出します（出所・レース数・評価窓つき）。
 
 ### active モデルの切り替え
 
@@ -307,7 +309,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 # バックエンド
 cd backend
 uv sync
-uv run alembic upgrade head  # 現在の最新: 0013_simulation_run_conditions
+uv run alembic upgrade head  # 現在の最新: 0014_bet_record_conditions
 
 # フロントエンド（別ターミナル）
 cd frontend
@@ -321,7 +323,7 @@ pnpm install
 ```bash
 cd backend
 uv run alembic current   # 適用済みリビジョンを確認
-uv run alembic upgrade head  # 未適用のリビジョン（最新: 0013）を差分適用
+uv run alembic upgrade head  # 未適用のリビジョン（最新: 0014）を差分適用
 ```
 
 ### 開発サーバ起動
@@ -351,14 +353,7 @@ cd frontend
 pnpm dev
 ```
 
-主な環境変数:
-
-| 変数 | 説明 | デフォルト |
-|---|---|---|
-| `KEIBA_API_PORT` | バックエンドのポート番号 | 8765（直接起動時） |
-| `KEIBA_CORS_EXTRA` | 追加で許可する CORS オリジン（カンマ区切り） | なし |
-| `KEIBA_DATA_DIR` | data/ ディレクトリのパス | backend/data/ |
-| `VITE_KEIBA_API_BASE_URL` | フロントの API ベース URL（ブラウザ直接起動時） | http://127.0.0.1:8765 |
+環境変数の一覧は [spec.md](spec.md)「環境変数」。
 
 ### テスト
 
@@ -483,13 +478,12 @@ uv run alembic upgrade head
 
 ### Dialog が閉じない / Settings バリデーション残留
 
-**症状**: TrainModelDialog / IngestRunDialog が閉じない、または Settings フォームにエラーが残る
+**症状**: TrainModelDialog が閉じない、または Settings フォームにエラーが残る
 
 | 原因 | 確認・対処 |
 |---|---|
 | mutation の `isPending` フラグが true のまま | API が応答を返すまで待つ。応答がなければバックエンドのログを確認する |
 | `rate_min > rate_max` になっている | rate_min ≤ rate_max の制約がある。値を修正してから再送信する |
-| EV 閾値が 1.0 未満 | 単勝・複勝 EV 閾値はそれぞれ 1.0 以上が必須 |
 | `PUT /api/settings` が 422 を返す | バックエンドのログで Pydantic バリデーションエラーの詳細を確認する |
 
 ### Vitest / jsdom で ResizeObserver エラー

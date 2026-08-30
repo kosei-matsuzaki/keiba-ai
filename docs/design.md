@@ -9,7 +9,7 @@
 ### ユーザー要件
 
 - 今週末の出走予定レースを一覧表示し、馬ごとの単勝・複勝予想確率を確認したい
-- モデルの精度推移（NDCG@3・Top-1 ヒット率・複勝的中率・ROI）を時系列グラフで把握したい
+- モデルの成績（回収率・的中率・確率の質）を、出所と評価窓つきで把握したい
 - 手元の PC 上で完結して動作し、外部サービスへデータを送出しない
 
 ### 非機能要件
@@ -149,23 +149,22 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 | # | 画面名 | ルート | 役割 | 対応 API |
 |---|---|---|---|---|
-| 1 | Dashboard | `/` | active モデルの KPI（NDCG@3 / Top-1 ヒット率 / 複勝的中率 / 単勝回収率）と精度推移グラフ | `GET /api/metrics/summary`, `GET /api/metrics/timeseries` |
+| 1 | Dashboard | `/` | **モデルの 1 画面**。KPI（単勝回収率 / 複勝回収率 / 本命の的中率 / log-loss）+ 一覧 + 学習 + 計測 + 役割の割り当て | `GET /api/metrics/summary`, `GET /api/models`, `POST /api/models/train`, `POST /api/models/{id}/evaluate`, `POST /api/models/{id}/activate`, `PUT /api/settings` |
 | 2 | Race | `/races` | 月カレンダーで日を選び、その日のレース一覧と取込操作をまとめる | `GET /api/races/calendar`, `GET /api/races/by_date`, `POST /api/scraper/run_shutuba`, `POST /api/scraper/run_results` |
 | 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬表（予想確率・BUY バッジ）+ 推奨買目 + 結果の答え合わせ | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}`, `GET /api/recommendations/{race_id}` |
 | 4 | Ledger | `/ledger` | 購入記録と収支（回収率・的中率・券種別内訳・損益推移） | `GET /api/bets*` |
-| 5 | Models | `/models` | 学習履歴テーブル。active 切り替えと再学習トリガ | `GET /api/models`, `POST /api/models/train`, `POST /api/models/{id}/activate` |
-| 6 | Model Detail | `/models/:model_id` | モデル 1 件の詳細と、期間・予算を指定したバックテスト | `GET /api/models/{id}`, `POST /api/simulation/start`, `GET /api/simulation/runs/{run_id}` |
-| 7 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（SCRAPER / BETTING / BET TYPES タブ） | `GET /api/settings`, `PUT /api/settings` |
+| 5 | Model Detail | `/models/:model_id` | モデル 1 件の詳細と、期間・予算を指定したバックテスト | `GET /api/models/{id}`, `POST /api/simulation/start`, `GET /api/simulation/runs/{run_id}` |
+| 6 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（SCRAPER / BETTING / BET TYPES タブ） | `GET /api/settings`, `PUT /api/settings` |
 
-旧 `/upcoming` `/past` `/ingest` は Race 画面へ統合済みで、ブックマーク互換のため
-`router.tsx` が `Navigate` でリダイレクトするだけの経路として残している。
+旧 `/upcoming` `/past` `/ingest` は Race 画面へ、旧 `/models` は Dashboard へ統合済みで、
+ブックマーク互換のため `router.tsx` が `Navigate` でリダイレクトするだけの経路として残している。
 
 ### 画面遷移図
 
 ```text
-[Topbar: DASHBOARD / RACE / LEDGER / MODELS / SETTINGS]（全画面共通）
+[Topbar: DASHBOARD / RACE / LEDGER / SETTINGS]（全画面共通）
 
-[Dashboard] ─ active モデルカード → [Models] → [Model Detail]
+[Dashboard] ─ モデル一覧の行 → [Model Detail]（重いバックテストはここ）
 [Race] ─ カレンダーで日を選ぶ → レース行クリック → [Race Detail]
 [Race Detail] ─ 推奨買目をまとめて記録 → [Ledger]
 ```
@@ -179,15 +178,20 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 ```text
 ┌─────────────────────────────────────────┐
-│  OperatingModelsCard（Models ページへの Link 付き）
-│    予想に使う 2 つのモデルを役割ごとに並べる:
-│      買い目を決める (active) / 確からしさを出す (確率モデル)
-│    未設定側は「未設定」バッジ + 設定すると何が変わるかを出す
+│  PageHeader（ID を詰める / 再学習を実行）
 ├─────────────────────────────────────────┤
-│  MetricBand（NDCG@3 / Top-1 / 複勝的中率 / 単勝回収率）
-│    カードではなく罫線区切りの帯。値の出所は metrics/summary
+│  OperatingModels（運用中の 2 モデル + それぞれの数字）
+│    左 買い目を決める (active): 単勝/複勝回収率・本命的中率・log-loss
+│    右 確からしさを出す (確率モデル): log-loss と順位精度だけ
+│    見出し右に出所チップ・レース数・評価窓。未設定側は
+│    「未設定」バッジ + 設定すると何が変わるかを出す
+│    **役割カードと KPI 帯は分けない** — 分けると同じ active の回収率が
+│    上下 2 箇所に出て、どのモデルの数字か読み取れなくなる
 ├─────────────────────────────────────────┤
-│  AccuracyChart（推移、Recharts LineChart）
+│  ModelTable（評価窓つき。Activate / 計測 / 確率に設定 / 名称編集 / 削除）
+│    「計測」= 実運用の賭けルールで測り直す。学習時の指標しか無い行の
+│    「未算出」はこれで埋まる (10 分前後・JobProgressCard で進捗)
+│    推移グラフは置かない — モデルごとに評価窓が違い時系列に並べても読めない
 └─────────────────────────────────────────┘
 ```
 
@@ -244,24 +248,6 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 └─────────────────────────────────────────┘
 ```
 
-#### Models
-
-```text
-┌─────────────────────────────────────────┐
-│  OperatingModelsCard（linkToModels=false で自リンク回避）
-├─────────────────────────────────────────┤
-│  ModelTable（学習済みモデル一覧）        │
-│    モデル ID / 学習日時 / 評価指標      │
-│    is_active 行をハイライト             │
-│    Activate / 確率に設定 / 名前変更 / 削除
-│    役割バッジ: Active（買い目を決める）と        │
-│    確率（確からしさを出す）を併記。兼務も可      │
-├─────────────────────────────────────────┤
-│  再学習ボタン → TrainModelDialog        │
-│    起動後は JobProgressCard で進捗表示  │
-└─────────────────────────────────────────┘
-```
-
 #### Model Detail
 
 ```text
@@ -284,8 +270,7 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 └─────────────────────────────────────────┘
 ```
 
-スクレイパーの稼働状況・緊急停止は `ScraperStatusCard`（Race 画面）に置く。
-取込の手動実行は `DayIngestPanel` / `IngestRunDialog` から行う。
+取込の手動実行・スクレイパーの稼働状況・緊急停止は `DayIngestPanel`（Race 画面）に集約する。
 
 #### Settings
 
@@ -315,7 +300,7 @@ BETTING に **EV 閾値は無い**。どの券種でも期待値は買う/買わ
 分かっているため（`docs/ai-model.md`）。枠連は AI が買い目を生成しないので
 BET TYPES の選択肢に出さない。
 
-**確率モデルの割り当ては Settings ではなく Models 画面で行う**（モデルを見比べて
+**確率モデルの割り当ては Settings ではなく Dashboard のモデル一覧で行う**（モデルを見比べて
 いる場所で選べないと意味がないため）。Settings に残るのは「複勝を買う確信度」という
 買い方のパラメータだけ。
 
@@ -331,7 +316,7 @@ FieldRow には help text を添える。
 - **TanStack Query（React Query v5）**: サーバーデータのフェッチ・キャッシュ・再取得を管理。API 呼び出しは `src/hooks/` のカスタムフックに集約
 - **Zustand**: ページをまたいで保持する UI 状態のみ管理。サーバーデータは一切持たない
 - **sonner**: Toast 通知ライブラリ。`src/components/ui/toast.tsx` / `toaster.tsx` を sonner ラッパとして手書き配置。`main.tsx` で `<Toaster />` をマウント
-- **react-hook-form + zod**: SettingsForm / IngestRunDialog / TrainModelDialog の共通フォームバリデーションパターン。`zodResolver` + `mode: 'onChange'` で inline error を表示し、submit ボタンを自動 disable する。ダイアログは `open` のたびに `reset` で初期値を復元する。`src/components/ui/form.tsx` で react-hook-form と shadcn フォームコンポーネントを統合
+- **react-hook-form + zod**: SettingsForm / TrainModelDialog の共通フォームバリデーションパターン。`zodResolver` + `mode: 'onChange'` で inline error を表示し、submit ボタンを自動 disable する。ダイアログは `open` のたびに `reset` で初期値を復元する。`src/components/ui/form.tsx` で react-hook-form と shadcn フォームコンポーネントを統合
 - API クライアントは `src/lib/api.ts` の `ky` インスタンスに集約し、各フックから呼び出す
 
 ### React Query（TanStack Query）
@@ -340,11 +325,9 @@ FieldRow には help text を添える。
 |---|---|---|---|
 | `['races', 'calendar', year, month]` | `useRacesCalendar` | `GET /api/races/calendar` | 5 分（staleTime） |
 | `['races', 'by_date', date]` | `useRacesByDate` | `GET /api/races/by_date` | 5 分（staleTime） |
-| `['races', 'upcoming']` | `useUpcomingRaces` | `GET /api/races/upcoming` | 5 分（staleTime） |
 | `['races', raceId]` | `useRaceDetail` | `GET /api/races/{race_id}` | ユーザー操作時のみ（refetch） |
 | `['predictions', raceId]` | `usePredictions` | `GET /api/predictions/{race_id}` | ユーザー操作時のみ（refetch） |
 | `['metrics', 'summary']` | `useMetricsSummary` | `GET /api/metrics/summary` | 10 分 |
-| `['metrics', 'timeseries']` | `useMetricsTimeseries` | `GET /api/metrics/timeseries` | 10 分 |
 | `['scraper', 'status']` | `useScraperStatus` | `GET /api/scraper/status` | アイドル: 30 秒 / 実行中: 5 秒（refetchInterval を Zustand `isRunning` で切り替え） |
 | `['models']` | `useModels` | `GET /api/models` | ユーザー操作時のみ |
 | `['settings']` | `useSettings` | `GET /api/settings` | ユーザー操作時のみ |
@@ -444,7 +427,7 @@ Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` �
 #### Card hover
 
 - `ui/card.tsx` に `transition-shadow duration-150` を全 Card 共通で付与し、hover 時の影変化を滑らかにする
-- クリック可能なカード（レース一覧の行 / `OperatingModelsCard`）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
+- クリック可能なカード（レース一覧の行）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
 
 #### Dialog overlay
 

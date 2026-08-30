@@ -103,11 +103,10 @@
 │   │   ├── router.tsx         # createBrowserRouter（7 画面 + 旧 URL の Navigate リダイレクト 3 本）
 │   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
 │   │   ├── routes/            # ページコンポーネント
-│   │   │   ├── Dashboard.tsx        # OperatingModelsCard + MetricBand + AccuracyChart
+│   │   │   ├── Dashboard.tsx        # モデルの 1 画面（KPI + 一覧 + 学習 + 役割の割り当て）
 │   │   │   ├── Races.tsx            # RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
 │   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目 + 答え合わせ
 │   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
-│   │   │   ├── Models.tsx           # OperatingModelsCard + ModelTable（Activate / 確率に設定）+ TrainModelDialog
 │   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
 │   │   ├── components/        # 共通コンポーネント
@@ -115,7 +114,6 @@
 │   │   │   ├── BrandMark.tsx        # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従
 │   │   │   ├── PageHeader.tsx       # ページ見出し共通コンポーネント
 │   │   │   ├── MetricBand.tsx       # KPI 帯（罫線区切り。旧 MetricCard を置換）
-│   │   │   ├── AccuracyChart.tsx    # 精度推移グラフ（Recharts）
 │   │   │   ├── RaceCalendar.tsx     # 月カレンダー。日ごとの取込状況を色で示す
 │   │   │   ├── DayIngestPanel.tsx   # 選択日の取込操作（過去=結果 / 当日=両方 / 未来=出馬表）
 │   │   │   ├── DataCoverageBand.tsx # データ取込のカバレッジ表示
@@ -124,13 +122,12 @@
 │   │   │   ├── ModelSimulationPanel.tsx # 期間・予算・戦略を選んでバックテストを回す
 │   │   │   ├── BankrollChart.tsx    # シミュレーションの資産推移
 │   │   │   ├── AddBetDialog.tsx     # 購入記録の手動登録
-│   │   │   ├── EmptyState.tsx / JobProgressCard.tsx / ScraperStatusCard.tsx
-│   │   │   ├── OperatingModelsCard.tsx  # 予想に使う 2 モデル（買い目を決める / 確からしさを出す）
+│   │   │   ├── EmptyState.tsx / JobProgressCard.tsx
+│   │   │   ├── OperatingModels.tsx  # 運用中の 2 モデルと、それぞれの数字（回収率 / log-loss）
 │   │   │   ├── ModelTable.tsx
 │   │   │   ├── SettingsForm.tsx     # 設定フォーム（Section / FieldRow ヘルパ）
-│   │   │   ├── TrainModelDialog.tsx / IngestRunDialog.tsx / RunResultsDialog.tsx
+│   │   │   ├── TrainModelDialog.tsx
 │   │   │   ├── DeleteModelDialog.tsx / EditModelNameDialog.tsx / DateYMDPicker.tsx
-│   │   │   ├── PredictionTable.tsx  # ※未使用（RaceDetail が独自の表を持つ）
 │   │   │   └── ui/                  # shadcn 手書きコンポーネント
 │   │   │       ├── button.tsx / card.tsx / table.tsx
 │   │   │       ├── tabs.tsx / badge.tsx / skeleton.tsx
@@ -184,7 +181,7 @@
 
 ## DB スキーマ
 
-SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 13 ファイル（`0001`〜`0013`）が定義されている。
+SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 14 ファイル（`0001`〜`0014`）が定義されている。
 
 | ファイル | revision | 内容 |
 |---|---|---|
@@ -201,6 +198,7 @@ SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convent
 | `0011_model_type_default_nn.py` | 0011 | `model_type` のデフォルトを `"nn"` に変更（NN 専用化） |
 | `0012_add_horses_sire_dam_index.py` | 0012 | horses の `sire` / `dam` にインデックス追加（血統特徴量の集計高速化） |
 | `0013_simulation_run_conditions.py` | 0013 | simulation_runs に `conditions_json` を追加（実行条件を残し、設定を変えて回し直しても後から見分けられるようにする） |
+| `0014_bet_record_conditions.py` | 0014 | bet_records に `conditions_json` を追加（購入記録に、その買い目を決めた条件を残す） |
 
 ### ID 型の方針
 
@@ -424,6 +422,7 @@ CREATE TABLE model_runs (
 | GET | `/api/models` | 200 | 学習済みモデル一覧 |
 | GET | `/api/models/{id}` | 200 / 404 | モデル詳細（パラメータ・評価指標） |
 | POST | `/api/models/train` | 202 | 再学習ジョブをバックグラウンド起動（即時 JobAccepted 返却） |
+| POST | `/api/models/{model_id}/evaluate` | 202 | **実運用の賭けルールで測り直し**、`metrics_json` に書き戻すジョブを起動。学習時の指標とは別物で、`log_loss` は学習側に存在しないためこれでしか埋まらない。確率モデルと確信度しきい値は settings から解決する（CLI と条件を揃えないと画面の数字が実運用とずれる） |
 | POST | `/api/models/{id}/activate` | 200 / 404 | 指定モデルを active に設定 |
 | PATCH | `/api/models/{id}` | 200 / 404 | 表示名の変更 |
 | DELETE | `/api/models/{id}` | 200 / 404 | モデル削除（active は削除不可） |
@@ -443,9 +442,11 @@ CREATE TABLE model_runs (
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
 | GET | `/api/metrics/summary` | 200 | モデル評価指標サマリ |
-| GET | `/api/metrics/timeseries` | 200 | 時系列メトリクス（グラフ用） |
+| GET | `/api/metrics/timeseries` | 200 | 時系列メトリクス。**現在フロントは参照していない**（評価窓がモデルごとに違い、時系列に並べても読めないため Dashboard はモデル比較表に変えた） |
 
-**`GET /api/metrics/summary` の指標ソース**: `backtest --persist` が走っていれば、4 指標すべてを **同じ 1 回の評価**（同じレース集合・アプリと同じ賭けルール）から取る。混ぜると「valid の NDCG と test の回収率」のように出所の違う数字が 1 枚のカードに並ぶため、`ndcg*` も backtest 側を優先する。
+**`GET /api/metrics/summary` の指標ソース**: `backtest --persist` が走っていれば、指標すべてを **同じ 1 回の評価**（同じレース集合・アプリと同じ賭けルール）から取る。混ぜると「valid の NDCG と test の回収率」のように出所の違う数字が 1 枚のカードに並ぶため、`ndcg*` も backtest 側を優先する。
+
+レスポンスは `source`（`"backtest"` / `"training"`）と `eval_start` / `eval_end` を持つ。**出所によって同じ名前の指標が別の量になる**（複勝的中率は backtest が「上位 3 頭のうち 1 頭以上が 3 着以内」、学習時が「予想 1 位が 3 着以内」で、実測 0.885 と 0.503）。画面はこれを見てラベルを変える。`log_loss` / `market_log_loss` は backtest でしか算出されないため、無いときは fallback せず null を返す。
 
 backtest 未実行のときだけ学習時の指標に fallback するが、**fallback 先は同じ量ではない**ので注意:
 
@@ -539,6 +540,8 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | GET | `/api/bets/timeseries` | 200 | 損益推移（グラフ用）|
 | GET | `/api/bets/export.csv` | 200 | CSV 書き出し |
 
+登録時の条件は記録に残る（`conditions`）。買い目を決めたモデル・確率モデルの有無・`place_min_confidence`・`win_min_odds`・券種別の金額を、クライアントの申告ではなく**サーバ側で写す**。取得できなくても購入記録そのものは残す。
+
 ### 設定
 
 | メソッド | パス | ステータス | 概要 |
@@ -602,7 +605,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | `KEIBA_DISABLE_FRAME_CACHE` | `0` | バックエンド（特徴量） | `1` で特徴量フレームのキャッシュを無効化 |
 | `KEIBA_DEBUG_SIM_MISSES` | `0` | バックエンド（シミュレーション） | `1` で外れ買い目の内訳をログ出力 |
 | `KEIBA_EXCLUDE_ODDS_FEATURES` | `0` | バックエンド（学習・推論） | `1` でオッズ系特徴量を除外（オッズ未確定時の検証用）|
-| `KEIBA_MISSING_INDICATORS` / `KEIBA_LOG_FEATURES` / `KEIBA_SPEED_FIGURE` / `KEIBA_PACE_FEATURES` | `0` | バックエンド（学習・推論） | 実験用の特徴量ノブ。**すべて default-off**（A/B で本番 ROI 改善せず。`docs/ai-model.md`「実験ノブと A/B 知見」）。有効化するときは学習と推論で必ず揃える |
+| `KEIBA_MISSING_INDICATORS` / `KEIBA_LOG_FEATURES` / `KEIBA_SPEED_FIGURE` / `KEIBA_PACE_FEATURES` / `KEIBA_RELATIVE_FORM` | `0` | バックエンド（学習・推論） | 実験用の特徴量ノブ。**すべて default-off**（A/B で本番 ROI 改善せず。`docs/ai-model.md`「実験ノブ」）。有効化するときは学習と推論で必ず揃え、`KEIBA_DISABLE_FRAME_CACHE=1` も渡す |
 | `VITE_KEIBA_API_BASE_URL` | `http://127.0.0.1:8765` | フロントエンド | `src/lib/api-base.ts` の `getApiBaseUrl()` が返すベース URL を上書き |
 
 ---
@@ -621,19 +624,7 @@ bash scripts/dev.sh
 
 `scripts/dev.sh` は実行のたびに `uv sync` / `alembic upgrade head` / `pnpm install` を行うため、PR 取り込み直後でも追加コマンド不要でこれ一本で動く。
 
-個別に起動する場合:
-
-```bash
-# バックエンド
-cd backend
-uv sync
-uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload
-
-# フロント（別ターミナル）
-cd frontend
-pnpm install
-pnpm dev
-```
+個別起動・初回セットアップ・テストの実行は [operations.md](operations.md)「開発者向けセットアップ」。
 
 ---
 
@@ -651,34 +642,6 @@ pnpm dev
 
 ### AI 学習・評価 CLI
 
-```bash
-cd backend
-
-# モデル学習（DB から全データを読み込み、時系列分割して学習）
-uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi
-
-# 分割の基準日を指定する（**学習終了日ではない**。学習が終わるのは
-#   基準日 - test_months - valid_months。詳細は docs/ai-model.md「時系列分割」）
-uv run python -m ai.training.train_nn --loss multi --train-end 2025-12-31
-
-# バックテスト評価（学習済みモデルディレクトリを指定）
-uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn
-
-# 評価結果を model_runs.metrics_json にマージ保存する（Dashboard の KPI に反映させる場合は必須）
-uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn --persist
-
-# 評価期間を絞る
-uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
-    --start 2025-06-01 --end 2025-12-31
-
-# 1 番人気常時投票ベースラインとの比較（{model, baseline_favorite, delta} を出力）
-uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
-    --baseline favorite
-
-# 買い方を変えて評価する（既定はアプリと同じ「本命 1 点」ルール）
-uv run python -m ai.evaluation.backtest --model data/models/20260101T120000-nn \
-    --win-bet-rule top1 --place-bet-rule topk --place-top-k 1
-```
-
-最良構成は **二段階**（`plackett_luce` で事前学習 → `--init-from <model_dir>` で
-`multi` に fine-tune）。損失・監視指標の選び方は `docs/ai-model.md` を参照。
+コマンドと引数は [ai-model.md](ai-model.md)「学習 CLI」、回すタイミングと `--persist` の意味は
+[operations.md](operations.md)「再学習サイクル」。最良構成は **二段階**
+（`plackett_luce` で事前学習 → `--init-from <model_dir>` で `multi` に fine-tune）。

@@ -185,7 +185,7 @@ uv run python -m jobs.ingest_range \
 - `status='ok'` かつ `content_hash` 一致のレコードはスキップする
 - `ingest_range` は各日付の ok ログを参照してスキップするため、中断後に同じコマンドを再実行するだけでレジュームできる
 - 未取得日数は `GET /api/scraper/status?range=N`（デフォルト 30 日）の `missing_dates_count` で確認できる（ok ログ 0 件の日数をカウント）
-- `scrape_log` は UI 監視用途でも参照される。`GET /api/scraper/recent_activity?minutes=N` が直近 N 分のレコードを集計し、status 内訳・rate_per_min・最新 race_id を返す。`ingest_range` を CLI で実行中も UI からリアルタイムに進捗を確認できる（ScraperStatusCard が実行中 5 秒 / アイドル 30 秒間隔でポーリング）
+- `scrape_log` は UI 監視用途でも参照される。`GET /api/scraper/recent_activity?minutes=N` が直近 N 分のレコードを集計し、status 内訳・rate_per_min・最新 race_id を返す。CLI 実行中の進捗確認に使う。現在この集計を出す画面は無い（`curl` で叩く）
 - `scrape_log.fetched_at` には `ix_scrape_log_fetched_at` インデックスが設定されている（migration 0003）。Phase 2 の大規模 ingest で行数が数万に達しても `recent_activity` の `WHERE fetched_at >= cutoff` が full scan にならないよう保護している
 - `recent_activity` エンドポイントは直近 N 分を最大 2000 行に制限して取得する（約 3 時間分のピーク fetch 量に相当）。UI 側は集計値と最新の `latest_race_id` のみを参照するため、この上限で実運用上の問題は生じない
 
