@@ -192,6 +192,19 @@ PACE_FEATURE_COLS: list[str] = [
     "pace_fit",
 ]
 
+# レース内相対の走破指標 (KEIBA_RELATIVE_FORM=1)。
+#
+# 既存の recent_avg_agari_3f / recent_avg_finish_time_norm は**生の秒数**なので、
+# 「その日の時計水準」が値に混ざる。重馬場の 34.0 と良馬場の 34.0 が同じ値になり、
+# 馬場・ペース・クラスの違うレースをまたいで比較できない。同じレースを走った馬
+# どうしは条件を共有するので、レース内平均からの差を取ると水準が落ちる。
+# ハンデ師の「上がり最速だった」「時計の速い決着だった」はこの相対量のこと。
+RELATIVE_FORM_COLS: list[str] = [
+    "recent_avg_agari_rel",        # 上がり3F のレース内偏差 (秒、負ほど速い)
+    "recent_avg_agari_rank_pct",   # 上がり順位のパーセンタイル (小さいほど速い)
+    "recent_avg_time_rel",         # 走破時計のレース内偏差 (秒、負ほど速い)
+]
+
 
 def _exclude_odds_flag_set() -> bool:
     """KEIBA_EXCLUDE_ODDS_FEATURES が truthy か。
@@ -211,6 +224,12 @@ def _missing_indicator_flag_set() -> bool:
 def _pace_features_flag_set() -> bool:
     """KEIBA_PACE_FEATURES が truthy か (大小文字無視, B2)。"""
     raw = os.environ.get("KEIBA_PACE_FEATURES", "").strip().lower()
+    return raw in {"1", "true", "yes"}
+
+
+def _relative_form_flag_set() -> bool:
+    """KEIBA_RELATIVE_FORM が truthy か (大小文字無視)。"""
+    raw = os.environ.get("KEIBA_RELATIVE_FORM", "").strip().lower()
     return raw in {"1", "true", "yes"}
 
 
@@ -253,6 +272,8 @@ def get_active_features() -> list[str]:
         cols = cols + missing_indicator_cols()
     if _pace_features_flag_set():
         cols = cols + list(PACE_FEATURE_COLS)
+    if _relative_form_flag_set():
+        cols = cols + list(RELATIVE_FORM_COLS)
     return cols
 
 

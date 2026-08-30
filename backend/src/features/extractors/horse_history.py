@@ -164,6 +164,9 @@ def _empty_horse_history() -> dict[str, float | int | None]:
         "starts_same_distance": 0,
         "starts_same_course": 0,
         "recent_avg_agari_3f": nan,
+        "recent_avg_agari_rel": nan,
+        "recent_avg_agari_rank_pct": nan,
+        "recent_avg_time_rel": nan,
         "days_since_last_race": nan,
         "wins_same_course": 0,
         "horse_course_place_rate": nan,
@@ -279,6 +282,46 @@ def compute_horse_history(
         if r.Entry.agari_3f is not None
     ]
     recent_avg_agari_3f = sum(agari_values) / len(agari_values) if agari_values else nan
+
+    # レース内の相対指標。**cache 版と同じ値を返さないと、学習 (cache 経路) と
+    # 推論 (この SQL 経路) で特徴量が変わる。** 履歴 GRU で同じ型の不具合を踏んで
+    # 単勝回収率が 0.912 → 0.823 に落ちたことがあるので、必ず両経路を揃える。
+    #
+    # 各過去走について「そのレースの完走馬全体」の平均が要るので、対象レースの
+    # race_id をまとめて 1 クエリで引く (per-race に 1 クエリ投げない)。
+    past_race_ids = [r.Entry.race_id for r in recent_rows]
+    field_rows = (
+        session.execute(
+            select(Entry.race_id, Entry.agari_3f, Entry.finish_time)
+            .where(Entry.race_id.in_(past_race_ids))
+        ).all()
+        if past_race_ids
+        else []
+    )
+    field = pd.DataFrame(field_rows, columns=["race_id", "agari_3f", "finish_time"])
+    agari_rels: list[float] = []
+    rank_pcts: list[float] = []
+    time_rels: list[float] = []
+    for r in recent_rows:
+        same = field[field["race_id"] == r.Entry.race_id]
+        a, ft = r.Entry.agari_3f, r.Entry.finish_time
+        agari_field = same["agari_3f"].dropna()
+        if a is not None and not agari_field.empty:
+            agari_rels.append(float(a) - float(agari_field.mean()))
+            # pandas の rank(pct=True, method="average") と**同じ規約に揃える**。
+            # pandas の順位は 1 始まりなので、最速でも 1/n であって 0 ではない。
+            # 0 始まりで計算すると全体が 0.5/n ずれ、学習 (cache 経路) と推論
+            # (この SQL 経路) で特徴量の分布が変わる。
+            n_less = float((agari_field < a).sum())
+            n_tie = float((agari_field == a).sum())
+            rank_pcts.append((n_less + (n_tie + 1.0) / 2.0) / float(len(agari_field)))
+        time_field = same["finish_time"].dropna()
+        if ft is not None and not time_field.empty:
+            time_rels.append(float(ft) - float(time_field.mean()))
+
+    recent_avg_agari_rel = sum(agari_rels) / len(agari_rels) if agari_rels else nan
+    recent_avg_agari_rank_pct = sum(rank_pcts) / len(rank_pcts) if rank_pcts else nan
+    recent_avg_time_rel = sum(time_rels) / len(time_rels) if time_rels else nan
 
     # PR-C: days between the most recent race and before_date
     last_race_date_str = rows[0].Race.date
@@ -410,6 +453,9 @@ def compute_horse_history(
         "starts_same_distance": starts_same_distance,
         "starts_same_course": starts_same_course,
         "recent_avg_agari_3f": recent_avg_agari_3f,
+        "recent_avg_agari_rel": recent_avg_agari_rel,
+        "recent_avg_agari_rank_pct": recent_avg_agari_rank_pct,
+        "recent_avg_time_rel": recent_avg_time_rel,
         "days_since_last_race": days_since_last_race,
         "wins_same_course": wins_same_course,
         "horse_course_place_rate": horse_course_place_rate,
@@ -469,6 +515,7 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
     query = (
         select(
             Entry.horse_id,
+            Entry.race_id,
             Race.date,
             Race.distance,
             Race.course,
@@ -487,11 +534,27 @@ def build_horse_history_cache(session: Session) -> HorseHistoryCache:
     df = pd.DataFrame(
         rows,
         columns=[
-            "horse_id", "date", "distance", "course", "race_class", "n_runners",
+            "horse_id", "race_id", "date", "distance", "course", "race_class", "n_runners",
             "finish_position", "agari_3f",
             "margin", "finish_time", "passing", "weight_carried",
         ],
     )
+    # ── レース内の相対指標 ───────────────────────────────────────────────
+    # 生の agari_3f / finish_time は「その日の時計水準」を含んでしまう。重馬場の
+    # 34.0 と良馬場の 34.0 は別物なのに、同じ値として扱われていた。**同じレースを
+    # 走った馬どうしは同じ条件を共有する**ので、レース内平均からの差を取ると
+    # 馬場・ペース・クラスの水準が落ちる。ハンデ師が「上がり最速だった」
+    # 「時計の速い決着だった」と言うのはこの相対量のこと。
+    #
+    # レース単位の集計なので、ここで 1 度だけベクトル化して持つ。
+    grp = df.groupby("race_id")
+    df["agari_rel"] = df["agari_3f"] - grp["agari_3f"].transform("mean")
+    # 上がり順位のパーセンタイル (0.0 = そのレースで最速)
+    df["agari_rank_pct"] = grp["agari_3f"].rank(pct=True, method="average")
+    # 走破時計のレース内偏差 (秒)。距離で割らないのは、同一レース内の比較なので
+    # 距離が共通だから。
+    df["time_rel"] = df["finish_time"] - grp["finish_time"].transform("mean")
+
     # Pre-compute class_weight column once (vectorised) so per-pair lookup
     # is just a column read.
     df["class_weight"] = df["race_class"].map(_RACE_CLASS_WEIGHTS).fillna(1).astype(int)
@@ -581,6 +644,18 @@ def compute_horse_history_from_cache(
 
     agari_recent = recent["agari_3f"].dropna()
     recent_avg_agari_3f = float(agari_recent.mean()) if not agari_recent.empty else nan
+
+    # レース内の相対指標。生の秒数と違い「その日の時計水準」が落ちているので、
+    # 馬場やペースの違うレースをまたいで比較できる (build_horse_history_cache 参照)。
+    def _rel_mean(col: str) -> float:
+        if col not in recent.columns:
+            return nan
+        vals = recent[col].dropna()
+        return float(vals.mean()) if not vals.empty else nan
+
+    recent_avg_agari_rel = _rel_mean("agari_rel")
+    recent_avg_agari_rank_pct = _rel_mean("agari_rank_pct")
+    recent_avg_time_rel = _rel_mean("time_rel")
 
     # Most recent date is the first row (sorted desc).
     last_race_date_str = str(h["date"].iloc[0])
@@ -681,6 +756,9 @@ def compute_horse_history_from_cache(
         "starts_same_distance": starts_same_distance,
         "starts_same_course": starts_same_course,
         "recent_avg_agari_3f": recent_avg_agari_3f,
+        "recent_avg_agari_rel": recent_avg_agari_rel,
+        "recent_avg_agari_rank_pct": recent_avg_agari_rank_pct,
+        "recent_avg_time_rel": recent_avg_time_rel,
         "days_since_last_race": days_since_last_race,
         "wins_same_course": wins_same_course,
         "horse_course_place_rate": horse_course_place_rate,
