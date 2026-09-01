@@ -548,7 +548,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
 | GET | `/api/settings` | 200 | 現在の設定値取得 |
-| PUT | `/api/settings` | 200 | 設定値更新（User-Agent・レート制御値・ベットルール閾値等） |
+| PUT | `/api/settings` | 200 | 設定値更新（User-Agent・レート制御値・買い方のパラメータ等）。`place_min_hit_prob` は 0〜1、`max_points_per_bet_type` は 0 以上（0 で無制限）|
 
 設定値は `data/settings.json` に永続化される（`core/settings_store.py`）。主なキー:
 

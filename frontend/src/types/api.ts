@@ -288,6 +288,8 @@ export interface SettingsResponse {
   /** 複勝を買う確信度の下限。AI の本命に対する確率モデルの単勝確率がこれ未満なら見送る */
   /** 複勝を買う下限。確率モデルが本命に付けた 3 着内率 */
   place_min_hit_prob: number;
+  /** 連系を 1 券種あたり何点まで買うか。0 で無制限 */
+  max_points_per_bet_type: number;
 }
 
 export interface SettingsUpdate {
@@ -303,6 +305,7 @@ export interface SettingsUpdate {
   enabled_bet_types?: BetType[];
   probability_model_path?: string | null;
   place_min_hit_prob?: number;
+  max_points_per_bet_type?: number;
 }
 
 // ── Recommendations ───────────────────────────────────────────────────────────

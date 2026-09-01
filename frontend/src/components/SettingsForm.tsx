@@ -27,6 +27,11 @@ const schema = z
     night_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     // 確率モデルの割り当ては Models 画面で行うので、ここでは扱わない。
+    max_points_per_bet_type: z.coerce
+      .number()
+      .int()
+      .min(0, '0 以上で指定してください')
+      .optional(),
     place_min_hit_prob: z.coerce
       .number()
       .min(0, '0 以上の値を入力してください')
@@ -200,6 +205,20 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                     type="number"
                     step="0.05"
                     {...register('place_min_hit_prob')}
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="連系を何点まで買うか"
+                  id="max_points_per_bet_type"
+                  help="券種ごとの上限。予算が余っていてもここで止めます（予算は上限であって使い切る目標ではありません）。買い目は的中確率の高い順なので、深く買うほど当たりにくい買い目に金を足すことになります。実測では上位 2 点で止めると連系に使う金が 44% になり、回収率は 0.877 → 0.898。0 で無制限。単勝・複勝は元から 1 点なので影響しません。"
+                  error={errors.max_points_per_bet_type?.message}
+                >
+                  <Input
+                    id="max_points_per_bet_type"
+                    type="number"
+                    step="1"
+                    min="0"
+                    {...register('max_points_per_bet_type')}
                   />
                 </FieldRow>
                 <FieldRow

@@ -273,6 +273,9 @@ class SettingsResponse(BaseModel):
     #: 複勝を買う下限。確率モデルが本命に付けた **3 着内率**。
     #: 旧 `place_min_confidence` (1 着確率・0.30) とは目盛りが違う。
     place_min_hit_prob: float = 0.60
+    #: 連系を 1 券種あたり何点まで買うか。0 で無制限。
+    #: **予算は上限であって使い切る目標ではない。**
+    max_points_per_bet_type: int = 2
 
 
 class SettingsUpdate(BaseModel):
@@ -288,6 +291,7 @@ class SettingsUpdate(BaseModel):
     enabled_bet_types: list[str] | None = None
     probability_model_path: str | None = None
     place_min_hit_prob: float | None = None
+    max_points_per_bet_type: int | None = None
 
     @field_validator("place_min_hit_prob")
     @classmethod
@@ -295,6 +299,14 @@ class SettingsUpdate(BaseModel):
         # 確率なので 0〜1。0 なら実質フィルタ無効。
         if v is not None and not (0.0 <= v <= 1.0):
             raise ValueError("place_min_hit_prob は 0.0〜1.0 の範囲で指定してください")
+        return v
+
+    @field_validator("max_points_per_bet_type")
+    @classmethod
+    def max_points_non_negative(cls, v: int | None) -> int | None:
+        # 0 = 無制限 (従来どおり予算まで買う)。負の点数は無い。
+        if v is not None and v < 0:
+            raise ValueError("max_points_per_bet_type は 0 以上で指定してください")
         return v
 
     @field_validator("race_budget")

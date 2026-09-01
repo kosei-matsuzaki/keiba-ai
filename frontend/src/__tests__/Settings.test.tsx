@@ -43,6 +43,7 @@ const mockSettings: SettingsResponse = {
   rate_max_seconds: 10,
   night_min_seconds: 30,
   win_min_odds: 1.1, probability_model_path: null, place_min_hit_prob: 0.6,
+  max_points_per_bet_type: 2,
   scraper_stopped: false,
     race_budget: 5000,
     stake_unit: 100,
