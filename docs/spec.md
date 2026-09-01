@@ -119,6 +119,7 @@
 │   │   │   ├── DataCoverageBand.tsx # データ取込のカバレッジ表示
 │   │   │   ├── Umaban.tsx           # 馬番チップ（枠色）
 │   │   │   ├── RecommendationsCard.tsx / RecommendationParamsBar.tsx  # 推奨買目と、その条件（予算 / 1点 / 券種 / 狙い方）
+│   │   │   ├── PurchaseTable.tsx    # 買い目を流し / ボックス / フォーメーションに畳んだ購入用の表
 │   │   │   ├── ModelSimulationPanel.tsx # 期間・予算・戦略を選んでバックテストを回す
 │   │   │   ├── BankrollChart.tsx    # シミュレーションの資産推移
 │   │   │   ├── AddBetDialog.tsx     # 購入記録の手動登録

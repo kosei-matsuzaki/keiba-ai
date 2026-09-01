@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 
 from ai.betting.odds import compute_race_odds_with_sources
 from ai.betting.strategy import recommend_for_race
-from ai.inference.confidence import is_place_worth_buying, pick_confidence
+from ai.inference.confidence import (
+    is_place_worth_buying,
+    pick_confidence,
+    place_stake_multiplier,
+)
 from ai.inference.predict import (
     _combinations_from_base,
     _predict_race_nn,
@@ -259,6 +263,14 @@ def get_recommendations(
                 "race %s: 複勝 skipped (confidence %.3f < %.2f)",
                 race_id, confidence, conf_threshold,
             )
+        else:
+            # しきい値を超えた先も確信度で厚みを変える (前進検証 5/5 年でプラス)。
+            mult = place_stake_multiplier(confidence)
+            if mult > 1 and "複勝" in eff_stake_units:
+                eff_stake_units["複勝"] = eff_stake_units["複勝"] * mult
+                logger.info(
+                    "race %s: 複勝 stake x%d (confidence %.3f)", race_id, mult, confidence
+                )
 
     result = recommend_for_race(
         predictions=predictions,

@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RecommendationsCard } from '../components/RecommendationsCard';
 import type { BetRecordOut, RecommendationsResponse } from '../types/api';
@@ -160,7 +161,7 @@ describe('RecommendationsCard', () => {
       />
     );
 
-    expect(screen.getByText('現在のフィルタで推奨候補がありません')).toBeInTheDocument();
+    expect(screen.getByText('このレースの買い目がありません')).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
   });
 
@@ -602,5 +603,74 @@ describe('RecommendationsCard', () => {
       />
     );
     expect(screen.getByText('推定')).toBeInTheDocument();
+  });
+
+  it('購入用タブは連系を流し/ボックスにまとめ、開くと 1 点ずつ出す', async () => {
+    const user = userEvent.setup();
+    const data: RecommendationsResponse = {
+      ...mockData,
+      candidates: [
+        {
+          bet_type: '馬連',
+          combo: '1-3',
+          pattern: 'nagashi',
+          prob: 0.2,
+          est_odds: 12,
+          ev: 2.4,
+          stake: 100,
+          post_positions: [1, 3],
+        },
+        {
+          bet_type: '馬連',
+          combo: '3-5',
+          pattern: 'nagashi',
+          prob: 0.15,
+          est_odds: 20,
+          ev: 3.0,
+          stake: 100,
+          post_positions: [3, 5],
+        },
+      ],
+    };
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={data}
+        isPending={false}
+        isError={false}
+        error={null}
+        runners={12}
+      />
+    );
+
+    await user.click(screen.getByRole('tab', { name: '購入用' }));
+    // 1 行にまとまる (軸 3 から 1,5 へ流し = 2 点)
+    expect(await screen.findByText('軸1頭流し')).toBeInTheDocument();
+    expect(screen.getByText('軸から')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'すべて開く' })).toBeInTheDocument();
+
+    // 開くまでは 1 点ずつの購入 UI を出さない
+    expect(screen.queryByRole('button', { name: '買う' })).not.toBeInTheDocument();
+    await user.click(screen.getByText('軸1頭流し'));
+    expect(await screen.findAllByRole('button', { name: '買う' })).toHaveLength(2);
+  });
+
+  it('購入用タブは賭ける点だけを合計する (stake=0 は入れない)', async () => {
+    const user = userEvent.setup();
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+    await user.click(screen.getByRole('tab', { name: '購入用' }));
+    const panel = within(await screen.findByLabelText('購入用の買い目'));
+    // mockData は 単勝 500 + 馬連 1-2 が 200、馬連 2-3 は stake=0
+    expect(panel.getByText('700 円')).toBeInTheDocument();
+    expect(panel.getByText('2 点')).toBeInTheDocument();
+    expect(panel.queryByText('2-3')).not.toBeInTheDocument();
   });
 });

@@ -16,6 +16,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { EmptyState } from '@/components/EmptyState';
+import { PurchaseTable } from '@/components/PurchaseTable';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Umaban } from '@/components/Umaban';
 import {
   RecommendationParamsBar,
@@ -93,16 +95,6 @@ function ComboMarks({ combo, runners }: { combo: string; runners: number }) {
   );
 }
 
-// ── EV coloring ───────────────────────────────────────────────────────────────
-
-function evClass(ev: number | null): string {
-  if (ev === null) return 'text-muted-foreground';
-  // 緑 = 「買い」推奨。強弱は色相ではなくウェイトで付ける。
-  if (ev >= 1.5) return 'font-medium text-success';
-  if (ev >= 1.2) return 'text-success';
-  return 'text-muted-foreground';
-}
-
 // ── StakeInputAndBuy ──────────────────────────────────────────────────────────
 
 interface StakeInputAndBuyProps {
@@ -168,19 +160,23 @@ function StakeInputAndBuy({ candidate, raceId }: StakeInputAndBuyProps) {
 
 // ── Candidate sorting ─────────────────────────────────────────────────────────
 
+/** 券種の優先度。エンジン (assign_flat_stakes) と同じ順序。 */
+const BET_TYPE_PRIORITY: Record<string, number> = { 単勝: 0, 複勝: 1 };
+
 /**
- * Sort candidates: stake desc → ev desc (null last) → prob desc.
- * This ensures recommended (stake > 0) candidates appear above zero-stake ones,
- * and candidates with null ev/est_odds are pinned to the bottom.
+ * **エンジンが賭ける順序をそのまま出す**: 買う → 単勝 → 複勝 → 連系 → 的中確率の高い順。
+ *
+ * 以前は EV の降順で並べていたが、エンジンは EV を見ていない。表の順序と実際の
+ * 買い方が違うと「上から順に買えばよい」という読み方ができなくなる。EV 順は
+ * とくに危険で、較正済みの確率だと単勝の EV が連系より低く出るため、
+ * 回収率の推定が最も確かな単複が下に沈む。
  */
 function sortCandidates(candidates: RecommendationCandidate[]): RecommendationCandidate[] {
   return [...candidates].sort((a, b) => {
-    if (b.stake !== a.stake) return b.stake - a.stake;
-    // null ev rows sink to the bottom
-    if (a.ev === null && b.ev === null) return b.prob - a.prob;
-    if (a.ev === null) return 1;
-    if (b.ev === null) return -1;
-    if (b.ev !== a.ev) return b.ev - a.ev;
+    if ((b.stake > 0 ? 1 : 0) !== (a.stake > 0 ? 1 : 0)) return b.stake > 0 ? 1 : -1;
+    const pa = BET_TYPE_PRIORITY[a.bet_type] ?? 2;
+    const pb = BET_TYPE_PRIORITY[b.bet_type] ?? 2;
+    if (pa !== pb) return pa - pb;
     return b.prob - a.prob;
   });
 }
@@ -235,8 +231,8 @@ export function RecommendationsCard({
         ) : !data || data.candidates.length === 0 ? (
           <EmptyState
             icon={Wallet}
-            message="現在のフィルタで推奨候補がありません"
-            description="EV が十分な組合せがないか、enabled_bet_types で絞り込まれています。"
+            message="このレースの買い目がありません"
+            description="オッズが取れないか、買う馬券の設定で絞り込まれています。"
           />
         ) : (
           <>
@@ -255,15 +251,46 @@ export function RecommendationsCard({
                 （うち {data.candidates.filter((c) => c.stake > 0).length} 件が推奨）
               </p>
             </div>
+            <Tabs defaultValue="detail">
+              <TabsList>
+                <TabsTrigger value="detail">1 点ずつ</TabsTrigger>
+                <TabsTrigger value="purchase">購入用</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="purchase" className="pt-3">
+                <PurchaseTable
+                  candidates={data.candidates}
+                  runners={runners}
+                  renderBuy={(c) => <StakeInputAndBuy candidate={c} raceId={raceId} />}
+                />
+                <p className="mt-2 text-xs text-subtle-foreground">
+                  同じ買い目を、窓口・ネット投票の 1 操作にまとめています。行を開くと 1 点ずつ出ます。
+                  流し / ボックス / フォーメーションと呼べるのは
+                  <strong>その形で買うと推奨と点数が一致するとき</strong>だけで、
+                  一致しないものは「個別」として出します。
+                </p>
+              </TabsContent>
+
+              <TabsContent value="detail" className="pt-3">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>券種</TableHead>
                   <TableHead>組合せ</TableHead>
-                  <TableHead className="text-right">確率</TableHead>
+                  <TableHead
+                    className="text-right"
+                    title="単勝=1着になる確率 / 複勝=3着以内に入る確率 / 連系=その組合せが当たる確率。買う順序はこれで決めている"
+                  >
+                    的中確率
+                  </TableHead>
                   <TableHead className="text-right">推定オッズ</TableHead>
-                  <TableHead className="text-right">EV</TableHead>
                   <TableHead className="text-right">推奨 stake</TableHead>
+                  <TableHead
+                    className="text-right text-subtle-foreground"
+                    title="参考値。的中確率 × オッズ。買う / 買わないの判定には使っていない (使うと大穴に寄り、実測で回収率が落ちる)"
+                  >
+                    参考 EV
+                  </TableHead>
                   <TableHead className="text-right">賭け金 / 購入</TableHead>
                 </TableRow>
               </TableHeader>
@@ -288,15 +315,11 @@ export function RecommendationsCard({
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className={`text-right ${evClass(c.ev)}`}>
-                        {c.ev === null ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : (
-                          formatRatio(c.ev)
-                        )}
-                      </TableCell>
                       <TableCell className="text-right text-muted-foreground">
                         {isZeroStake ? '—' : formatYen(c.stake)}
+                      </TableCell>
+                      <TableCell className="text-right text-subtle-foreground">
+                        {c.ev === null ? '—' : formatRatio(c.ev)}
                       </TableCell>
                       <TableCell className="text-right">
                         <StakeInputAndBuy candidate={c} raceId={raceId} />
@@ -306,6 +329,8 @@ export function RecommendationsCard({
                 })}
               </TableBody>
             </Table>
+              </TabsContent>
+            </Tabs>
             <div className="mt-2 space-y-1 text-xs text-muted-foreground">
               <p>
                 {data.odds_source === 'live'
@@ -332,8 +357,9 @@ export function RecommendationsCard({
                 </p>
               )}
               <p>
-                ※ 買い目は期待値ではなく<strong>的中確率の高い順</strong>に選んでいます
-                （期待値で絞ると大穴に寄り、実測で回収率が落ちるため）。
+                ※ 買い目は<strong>単勝 → 複勝 → 連系</strong>の順に、同じ券種内は
+                <strong>的中確率の高い順</strong>で予算まで選んでいます（期待値は使っていません。
+                期待値で絞ると大穴に寄り、実測で回収率が落ちるため）。
                 実測の回収率は単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.85〜0.88 で、
                 <strong>いずれも 1.0 未満</strong>です。控除率の内側なので実買いは慎重に。
               </p>

@@ -29,7 +29,11 @@ from ai.betting.odds import (
     compute_race_odds_with_sources,
 )
 from ai.betting.strategy import recommend_for_race
-from ai.inference.confidence import is_place_worth_buying, pick_confidence
+from ai.inference.confidence import (
+    is_place_worth_buying,
+    pick_confidence,
+    place_stake_multiplier,
+)
 from ai.inference.predict import (
     _combinations_from_base,
     _predict_race_nn,
@@ -473,6 +477,7 @@ def simulate_active_model(
 
         # 複勝の確信度フィルタ (確率専用モデルが指定されているときだけ)
         race_types = types
+        place_mult = 1
         if prob_bundle is not None and "複勝" in types:
             conf = pick_confidence(
                 prob_bundle, race_frame, preds.iloc[0]["horse_id"], session=session
@@ -480,6 +485,9 @@ def simulate_active_model(
             if not is_place_worth_buying(conf, place_min_confidence):
                 race_types = [b for b in types if b != "複勝"]
                 n_skipped_place += 1
+            else:
+                # 買うと決めた後の厚み。確信度の高いレースに厚く賭ける。
+                place_mult = place_stake_multiplier(conf)
 
         # Combination predictions + odds (with implied fill)
         race_odds, race_odds_sources = compute_race_odds_with_sources(
@@ -537,6 +545,8 @@ def simulate_active_model(
                 bt: max(100, int(stake_unit * (v / base) / 100) * 100)
                 for bt, v in stake_unit_by_bet_type.items()
             }
+            if place_mult > 1 and "複勝" in units:
+                units["複勝"] = units["複勝"] * place_mult
 
         rec = recommend_for_race(
             predictions=preds,

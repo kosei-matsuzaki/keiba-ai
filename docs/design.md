@@ -151,7 +151,7 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 |---|---|---|---|---|
 | 1 | Dashboard | `/` | **モデルの 1 画面**。KPI（単勝回収率 / 複勝回収率 / 本命の的中率 / log-loss）+ 一覧 + 学習 + 計測 + 役割の割り当て | `GET /api/metrics/summary`, `GET /api/models`, `POST /api/models/train`, `POST /api/models/{id}/evaluate`, `POST /api/models/{id}/activate`, `PUT /api/settings` |
 | 2 | Race | `/races` | 月カレンダーで日を選び、その日のレース一覧と取込操作をまとめる | `GET /api/races/calendar`, `GET /api/races/by_date`, `POST /api/scraper/run_shutuba`, `POST /api/scraper/run_results` |
-| 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬表（予想確率・BUY バッジ）+ 推奨買目 + 結果の答え合わせ | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}`, `GET /api/recommendations/{race_id}` |
+| 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬表（予想確率・BUY バッジ）+ 推奨買目（1 点ずつ / 購入用の 2 タブ）+ 結果の答え合わせ | `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}`, `GET /api/recommendations/{race_id}` |
 | 4 | Ledger | `/ledger` | 購入記録と収支（回収率・的中率・券種別内訳・損益推移） | `GET /api/bets*` |
 | 5 | Model Detail | `/models/:model_id` | モデル 1 件の詳細と、期間・予算を指定したバックテスト | `GET /api/models/{id}`, `POST /api/simulation/start`, `GET /api/simulation/runs/{run_id}` |
 | 6 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（SCRAPER / BETTING / BET TYPES タブ） | `GET /api/settings`, `PUT /api/settings` |
@@ -229,6 +229,11 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ├─────────────────────────────────────────┤
 │  RecommendationParamsBar + RecommendationsCard
 │    予算 / 1 点あたり / 券種 を切り替えて再計算
+│    タブ 1「1 点ずつ」= 買う順序どおりに並べる
+│      単勝 → 複勝 → 連系 → 的中確率の高い順 (エンジンと同じ)
+│      EV は「参考」列に降格。買う判定に使っていないため
+│    タブ 2「購入用」= 流し / ボックス / フォーメーションに畳む
+│      畳めるのは推奨と点数が一致するときだけ。行を開くと 1 点ずつ
 │    まとめて Ledger に記録できる         │
 ├─────────────────────────────────────────┤
 │  結果の答え合わせ（確定後）             │

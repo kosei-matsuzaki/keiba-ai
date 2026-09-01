@@ -211,8 +211,8 @@ describe('RaceDetail', () => {
   it('unified table contains win_prob and place_prob columns', async () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    expect(screen.getByRole('columnheader', { name: '単勝確率' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '複勝確率' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '1着確率' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '3着内率' })).toBeInTheDocument();
   });
 
   it('shows horse post_position in unified table', async () => {
@@ -248,16 +248,18 @@ describe('RaceDetail', () => {
     expect(screen.getByRole('columnheader', { name: /着順/ })).toBeInTheDocument();
   });
 
-  it('puts 推奨 before 単勝EV so the conclusion is read first', async () => {
+  it('結論 → 根拠 (確率) → 事実 の順に並べ、EV は根拠の最後に置く', async () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    const headers = screen.getAllByRole('columnheader').map((t) => t.textContent ?? '');
     const rec = headers.findIndex((t) => t.includes('推奨'));
-    const ev = headers.findIndex((t) => t.includes('単勝EV'));
+    const winProb = headers.findIndex((t) => t.includes('1着確率'));
+    const ev = headers.findIndex((t) => t.includes('参考EV'));
     const odds = headers.findIndex((t) => t.includes('単勝オッズ'));
     expect(rec).toBeGreaterThanOrEqual(0);
-    // 結論 (推奨) → 根拠 (単勝EV) → 事実 (オッズ) の順
-    expect(rec).toBeLessThan(ev);
+    // 買う順序を決めているのは確率なので、確率を EV より前に置く
+    expect(rec).toBeLessThan(winProb);
+    expect(winProb).toBeLessThan(ev);
     expect(ev).toBeLessThan(odds);
   });
 

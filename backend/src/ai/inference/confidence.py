@@ -77,3 +77,31 @@ def is_place_worth_buying(confidence: float | None, threshold: float) -> bool:
     if confidence is None:
         return True
     return confidence >= threshold
+
+
+#: 確信度 → 複勝の 1 点額の倍率。**しきい値を超えた先も確信度で厚みを変える。**
+#:
+#: 前進検証 (OOF 14,619 レース・2020-05〜2024-10) の実測:
+#:
+#:   定額 (全レース)              0.850
+#:   確信度 0.30 以上だけ定額       0.875   ← 従来
+#:   段階 x1/x2/x3               0.882   ← これ
+#:
+#: 5 年すべてでプラス (+0.019 / +0.001 / +0.013 / +0.005 / +0.001)。効果は小さいが
+#: 符号が安定している。**単勝と連系には使わない** — 単勝は確信度で絞ると回収率が
+#: 下がり (0.870 → 0.854)、連系は無相関 (0.877 → 0.879)。
+PLACE_STAKE_TIERS: tuple[tuple[float, int], ...] = ((0.55, 3), (0.40, 2), (0.0, 1))
+
+
+def place_stake_multiplier(confidence: float | None) -> int:
+    """複勝の 1 点額を何倍にするか。確率が取れないときは 1 倍 (従来どおり)。
+
+    ここは「買うかどうか」ではなく「いくら賭けるか」。買うかどうかは
+    ``is_place_worth_buying`` が ``place_min_confidence`` で決める。
+    """
+    if confidence is None:
+        return 1
+    for lo, mult in PLACE_STAKE_TIERS:
+        if confidence >= lo:
+            return mult
+    return 1

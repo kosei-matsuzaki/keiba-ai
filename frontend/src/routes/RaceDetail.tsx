@@ -104,11 +104,6 @@ function isBuy(
  * 緑は「プラス収支」専用の色なので、ここ以外では使わない。
  * **BUY = +EV ではない**点に注意 (本命買いも平均は 0.931 = マイナス)。
  */
-function winEvClass(ev: number | null): string {
-  if (ev === null) return 'text-muted-foreground';
-  return ev > 1.0 ? 'font-medium text-success' : 'text-foreground';
-}
-
 interface EntryRow {
   entry: EntrySummary;
   pred: HorsePrediction | null;
@@ -377,18 +372,31 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
             {...headerProps}
           />
           <SortableHeader
-            label="単勝EV"
-            sortKey="win_ev"
+            label="1着確率"
+            sortKey="win_prob"
             className={`text-right ${AI_SURFACE}`}
-            title={EV_FORMULA}
+            title="この馬が1着になる確率 (較正済み)"
             {...headerProps}
           />
-          <SortableHeader label="単勝確率" sortKey="win_prob" className={`text-right ${AI_SURFACE}`} {...headerProps} />
-          <SortableHeader label="複勝確率" sortKey="place_prob" className={`text-right ${AI_SURFACE}`} {...headerProps} />
+          <SortableHeader
+            label="3着内率"
+            sortKey="place_prob"
+            className={`text-right ${AI_SURFACE}`}
+            title="この馬が3着以内に入る確率"
+            {...headerProps}
+          />
           <SortableHeader
             label="スコア"
             sortKey="score"
             className={`text-right ${AI_SURFACE}`}
+            title="モデルの生の出力。確率に変換する前の順位づけの元"
+            {...headerProps}
+          />
+          <SortableHeader
+            label="参考EV"
+            sortKey="win_ev"
+            className={`text-right ${AI_SURFACE} text-subtle-foreground`}
+            title={EV_FORMULA}
             {...headerProps}
           />
           <SortableHeader label="単勝オッズ" sortKey="odds_win" className="text-right" {...headerProps} />
@@ -438,13 +446,7 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
                   <span className="font-mono text-xs text-muted-foreground">{entry.horse_id}</span>
                 )}
               </TableCell>
-              {/* ── AI の根拠 ── */}
-              <TableCell
-                className={`cell-num ${AI_SURFACE} ${winEvClass(winEv(pred, entry))}`}
-                title={buyTip}
-              >
-                {pred != null ? formatRatio(winEv(pred, entry)) : <Pending />}
-              </TableCell>
+              {/* ── AI の根拠 ── 買う順序を決めているのは確率。EV は参考値なので最後 */}
               <TableCell className={`cell-num ${AI_SURFACE}`}>
                 <ProbCell value={pred?.win_prob} />
               </TableCell>
@@ -453,6 +455,9 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
               </TableCell>
               <TableCell className={`cell-num ${AI_SURFACE}`}>
                 {pred != null ? formatScore(pred.score) : <Pending />}
+              </TableCell>
+              <TableCell className={`cell-num ${AI_SURFACE} text-subtle-foreground`} title={buyTip}>
+                {pred != null ? formatRatio(winEv(pred, entry)) : <Pending />}
               </TableCell>
               {/* ── 実績 (無彩色) ── */}
               <TableCell className="cell-num">

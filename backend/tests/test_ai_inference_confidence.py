@@ -63,3 +63,30 @@ class TestIsPlaceWorthBuying:
         「設定していないのに挙動が変わる」ことになる。
         """
         assert conf.is_place_worth_buying(None, 0.30) is True
+
+
+def test_place_stake_multiplier_tiers():
+    """確信度が高いほど複勝を厚く買う。しきい値を超えた先の厚みを決める部分。"""
+    from ai.inference.confidence import place_stake_multiplier
+
+    assert place_stake_multiplier(0.31) == 1
+    assert place_stake_multiplier(0.39) == 1
+    assert place_stake_multiplier(0.40) == 2
+    assert place_stake_multiplier(0.54) == 2
+    assert place_stake_multiplier(0.55) == 3
+    assert place_stake_multiplier(0.99) == 3
+
+
+def test_place_stake_multiplier_none_is_flat():
+    """確率が取れないときは 1 倍。壊れたときに賭け金が動くと挙動が読めない。"""
+    from ai.inference.confidence import place_stake_multiplier
+
+    assert place_stake_multiplier(None) == 1
+
+
+def test_place_stake_multiplier_is_monotonic():
+    """単調でないと「確信度が上がったのに賭け金が減る」が起きる。"""
+    from ai.inference.confidence import place_stake_multiplier
+
+    values = [place_stake_multiplier(c / 100) for c in range(0, 100)]
+    assert values == sorted(values)
