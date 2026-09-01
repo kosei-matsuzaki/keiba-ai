@@ -260,6 +260,7 @@ export function RecommendationsCard({
               <TabsContent value="purchase" className="pt-3">
                 <PurchaseTable
                   candidates={data.candidates}
+                  raceId={raceId}
                   runners={runners}
                   renderBuy={(c) => <StakeInputAndBuy candidate={c} raceId={raceId} />}
                 />

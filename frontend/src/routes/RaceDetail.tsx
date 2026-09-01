@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/table';
 import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
 import { formatOdds, formatPercent, formatRatio, formatScore, formatYen } from '@/lib/formatters';
+import { labelClass } from '@/lib/labels';
 import { toast } from '@/components/ui/toast';
 import type { EntrySummary, HorsePrediction, RaceInfoCoverage } from '@/types/api';
 
@@ -278,8 +279,12 @@ function ProbCell({ value }: { value: number | null | undefined }) {
  * Unified table merging entry data and prediction scores.
  *
  * 列は「結論 → 根拠 → 事実」の順に並べる:
- *   推奨 | 馬番 | 馬名 ‖ 単勝EV 単勝確率 複勝確率 スコア ‖ オッズ 人気 騎手 年齢/性別 (着順) 馬体重
- *   └ AI の結論 ┘        └──── AI の根拠 (淡い primary 面) ────┘  └──── 実績 (無彩色) ────┘
+ *   馬番 | 馬名 ‖ 1着確率 3着内率 スコア 参考EV ‖ オッズ 人気 騎手 年齢/性別 (着順) 馬体重
+ *              └──── AI の根拠 (淡い primary 面) ────┘  └──── 実績 (無彩色) ────┘
+ *
+ * 買う馬は「推奨」カードに出す。表の行に BUY バッジを付けていたが、**買うのは
+ * 常にモデル 1 位の 1 頭**で、バッジは 1 行にしか付かない。列を 1 つ使って
+ * 「1 位かどうか」を二重に示していただけなので外した。
  *
  * 着順はレース後にしか確定しないので、結果が入るまで列ごと出さない
  * (「—」で埋まった列があると作りかけに見えるため)。
@@ -318,12 +323,6 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
   const sortedRows = useMemo(() => sortRows(rows, sort), [rows, sort]);
   const minOdds = useWinMinOdds();
   const buyTip = buyTooltip(minOdds);
-  // モデル 1 位 = score 最大の馬 (predict_race は score 降順で返すが、表は並べ替え可)
-  const topPickId = useMemo(() => {
-    if (!predictions || predictions.length === 0) return null;
-    return predictions.reduce((a, b) => (b.score > a.score ? b : a)).horse_id;
-  }, [predictions]);
-
   // レース後 (= 着順が 1 頭でも確定している) かどうか。未確定なら着順列は出さない。
   const hasResults = useMemo(
     () => entries.some((e) => e.finish_position != null),
@@ -336,13 +335,10 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
   const runners = entries.length;
 
   return (
-    <Table>
+    <Table aria-label="出走馬">
       <TableHeader>
-        {/* AI の出力 (結論 / 根拠) と実績データを面で分離するためのグループ行 */}
+        {/* AI の出力 (根拠) と実績データを面で分離するためのグループ行 */}
         <TableRow>
-          <TableHead className={`text-center text-[11px] font-medium text-primary ${AI_SURFACE}`}>
-            AI の結論
-          </TableHead>
           <TableHead colSpan={2} />
           <TableHead
             colSpan={4}
@@ -358,7 +354,7 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
           </TableHead>
         </TableRow>
         <TableRow>
-          <TableHead className={`w-20 text-center ${AI_SURFACE}`}>推奨</TableHead>
+
           <SortableHeader
             label="馬番"
             sortKey="post_position"
@@ -411,31 +407,12 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
       </TableHeader>
       <TableBody>
         {sortedRows.map(({ entry, pred }) => {
-          const buy = pred != null && isBuy(entry, pred.horse_id === topPickId, minOdds);
           return (
             <TableRow
               key={entry.horse_id}
-              // BUY 行だけ左端に色帯を出す。スキャンが一瞬で終わる。
               // bg-background は sticky セルの bg-inherit の土台 (hover もここで切替わる)
-              className={`bg-background hover:bg-card-elevated ${
-                buy ? 'border-l-2 border-l-success' : 'border-l-2 border-l-transparent'
-              }`}
+              className="bg-background hover:bg-card-elevated"
             >
-              {/* ── AI の結論 ── */}
-              <TableCell className={`text-center ${AI_SURFACE}`}>
-                {buy ? (
-                  <Badge
-                    variant="solid"
-                    tone="success"
-                    className="rounded-sm border border-success/35 bg-success/10 text-success"
-                    title={buyTip}
-                  >
-                    BUY
-                  </Badge>
-                ) : (
-                  <Pending />
-                )}
-              </TableCell>
               {/* ── 識別 ── */}
               {/* 横スクロールしても «どの馬か» を見失わないよう馬番・馬名を固定 */}
               <TableCell className="sticky left-0 z-10 bg-inherit text-center">
@@ -540,16 +517,61 @@ function LowInformationNotice({ coverage }: { coverage: RaceInfoCoverage }) {
   );
 }
 
-function BuyBadgeNote() {
+/**
+ * 買い方を 1 箇所で説明する。
+ *
+ * 以前は「BUY バッジの説明」「オッズの出所」「確信度」「買い目の並び順」が別々の
+ * 注記として散らばり、EV / 期待値 / 確信度 / 的中確率 が混在していた。読む側は
+ * **どの数字がどの判断に使われるのか**を知りたいので、券種ごとに条件と金額を並べ、
+ * 使う数字を 2 つに絞って示す。
+ */
+function BettingRuleNote() {
   const minOdds = useWinMinOdds();
   return (
-    <p className="mt-3 text-xs text-muted-foreground">
-      BUY バッジは<strong>モデル1位の馬</strong>（オッズ {minOdds} 超）に付きます。期待値が
-      1.0 を超えた馬ではありません — 較正済み確率で EV 条件にすると大穴を買い込んで回収率が
-      0.931→0.698 に落ちるためです。本番モデルの OOS 単勝回収率は 0.931（人気1番 0.792 を
-      上回るものの 1.0 未満）なので実買いは慎重に。スコアはオッズ込み（value head）の総合
-      評価、EV は単勝確率 × オッズ。
-    </p>
+    <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 text-xs">
+      <p className={labelClass('mb-0')}>買い方</p>
+      <table className="w-full max-w-2xl text-left">
+        <thead className="text-subtle-foreground">
+          <tr>
+            <th className="py-0.5 pr-4 font-normal">券種</th>
+            <th className="py-0.5 pr-4 font-normal">買う条件</th>
+            <th className="py-0.5 font-normal">点数</th>
+          </tr>
+        </thead>
+        <tbody className="text-muted-foreground">
+          <tr>
+            <td className="py-0.5 pr-4 text-foreground">単勝</td>
+            <td className="py-0.5 pr-4">モデル1位の馬。オッズ {minOdds} 倍超のときだけ</td>
+            <td className="py-0.5">1 点</td>
+          </tr>
+          <tr>
+            <td className="py-0.5 pr-4 text-foreground">複勝</td>
+            <td className="py-0.5 pr-4">モデル1位の馬。確信度が下限以上のとき</td>
+            <td className="py-0.5">確信度が高いほど厚く (1〜3 倍)</td>
+          </tr>
+          <tr>
+            <td className="py-0.5 pr-4 text-foreground">連系</td>
+            <td className="py-0.5 pr-4">上位数頭の組合せを、的中確率の高い順に</td>
+            <td className="py-0.5">予算が尽きるまで</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="text-subtle-foreground">
+        使う数字は 2 つだけです。<strong className="font-medium">的中確率</strong>
+        （その馬・その組合せが当たる確率。買う順序を決める）と
+        <strong className="font-medium">確信度</strong>
+        （確率専用モデルが「モデル1位の馬は3着以内」と見た確率。複勝の可否と厚みを決める）。
+        <span className="ml-1">
+          期待値（EV）は買う判断に使っていません — 較正済みの確率で EV を条件にすると
+          大穴に寄り、実測で単勝回収率が 0.93 → 0.70 に落ちるためです。表の「参考EV」は
+          値を見せているだけです。
+        </span>
+      </p>
+      <p className="text-subtle-foreground">
+        実測の回収率は単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.85〜0.88。
+        <strong className="font-medium">いずれも 1.0 未満</strong>で、控除率の内側です。
+      </p>
+    </div>
   );
 }
 
@@ -1091,7 +1113,7 @@ export function RaceDetail() {
                   「予想を見る」で予想スコア（単勝/複勝確率）と推奨買い目を取得します。
                 </p>
                 <EntryPredictionTable entries={race.entries} predictions={null} />
-                <BuyBadgeNote />
+                <BettingRuleNote />
               </>
             ) : predQuery.isPending ? (
               <TableSkeleton rows={race.entries.length || 8} />
@@ -1103,12 +1125,12 @@ export function RaceDetail() {
                     : '予想データを取得できません。予想スコア列は非表示です。'}
                 </p>
                 <EntryPredictionTable entries={race.entries} predictions={null} />
-                <BuyBadgeNote />
+                <BettingRuleNote />
               </>
             ) : (
               <>
                 <EntryPredictionTable entries={race.entries} predictions={predictions} />
-                <BuyBadgeNote />
+                <BettingRuleNote />
               </>
             )}
           </CardContent>

@@ -9,6 +9,7 @@ import type { BetRecordOut, RecommendationsResponse } from '../types/api';
 // Prevent actual API calls from useCreateBet
 vi.mock('../lib/api', () => ({
   createBet: vi.fn(),
+  createBetsBulk: vi.fn(),
   fetchRecommendations: vi.fn(),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
   formatErrorMessageSync: vi.fn().mockReturnValue('エラーが発生しました'),
@@ -16,7 +17,12 @@ vi.mock('../lib/api', () => ({
   isServiceUnavailableError: vi.fn().mockReturnValue(false),
 }));
 
-import { createBet, isNotFoundError, isServiceUnavailableError } from '../lib/api';
+import {
+  createBet,
+  createBetsBulk,
+  isNotFoundError,
+  isServiceUnavailableError,
+} from '../lib/api';
 
 beforeEach(() => {
   // 呼び出し回数と、テスト個別で true にした判定がリークしないようリセット
@@ -672,5 +678,58 @@ describe('RecommendationsCard', () => {
     expect(panel.getByText('700 円')).toBeInTheDocument();
     expect(panel.getByText('2 点')).toBeInTheDocument();
     expect(panel.queryByText('2-3')).not.toBeInTheDocument();
+  });
+
+  it('購入用タブから券種ごとにまとめて買える', async () => {
+    const user = userEvent.setup();
+    vi.mocked(createBetsBulk).mockResolvedValue({ items: [], total: 2 } as never);
+    const data: RecommendationsResponse = {
+      ...mockData,
+      candidates: [
+        {
+          bet_type: '馬連',
+          combo: '1-3',
+          pattern: 'nagashi',
+          prob: 0.2,
+          est_odds: 12,
+          ev: 2.4,
+          stake: 100,
+          post_positions: [1, 3],
+        },
+        {
+          bet_type: '馬連',
+          combo: '3-5',
+          pattern: 'nagashi',
+          prob: 0.15,
+          est_odds: 20,
+          ev: 3.0,
+          stake: 100,
+          post_positions: [3, 5],
+        },
+      ],
+    };
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={data}
+        isPending={false}
+        isError={false}
+        error={null}
+        runners={12}
+      />
+    );
+    await user.click(screen.getByRole('tab', { name: '購入用' }));
+    await user.click(await screen.findByRole('button', { name: '2 点を買う' }));
+    await waitFor(() => {
+      expect(vi.mocked(createBetsBulk)).toHaveBeenCalledWith({
+        race_id: '202406010101',
+        bet_type: '馬連',
+        source: 'recommendation',
+        combos: [
+          { combo: '1-3', stake: 100 },
+          { combo: '3-5', stake: 100 },
+        ],
+      });
+    });
   });
 });

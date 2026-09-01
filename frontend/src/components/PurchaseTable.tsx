@@ -15,7 +15,8 @@ import { Umaban } from '@/components/Umaban';
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { buildPurchaseGroups } from '@/lib/purchaseGroups';
 import type { PurchaseGroup } from '@/lib/purchaseGroups';
-import type { RecommendationCandidate } from '@/types/api';
+import { useCreateBetsBulk } from '@/hooks/useCreateBetsBulk';
+import type { BetType, RecommendationCandidate } from '@/types/api';
 
 /**
  * 買い目を **窓口で買う単位** で出す表。
@@ -30,6 +31,7 @@ import type { RecommendationCandidate } from '@/types/api';
 interface PurchaseTableProps {
   candidates: RecommendationCandidate[];
   runners: number;
+  raceId: string;
   /** 明細行に出す購入 UI。1 点ずつ買う導線は既存のものを渡す。 */
   renderBuy: (candidate: RecommendationCandidate) => ReactNode;
 }
@@ -82,9 +84,24 @@ function Formula({ group, runners }: { group: PurchaseGroup; runners: number }) 
   return <span className="text-xs text-muted-foreground">{group.formula}</span>;
 }
 
-export function PurchaseTable({ candidates, runners, renderBuy }: PurchaseTableProps) {
+export function PurchaseTable({ candidates, runners, raceId, renderBuy }: PurchaseTableProps) {
   const groups = buildPurchaseGroups(candidates);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const bulk = useCreateBetsBulk();
+
+  /** 1 グループ = 1 券種なので、そのまま bulk API の 1 リクエストになる。 */
+  function buyGroup(group: PurchaseGroup) {
+    bulk.mutate({
+      race_id: raceId,
+      bet_type: group.betType as BetType,
+      source: 'recommendation',
+      combos: group.candidates.map((c) => ({ combo: c.combo, stake: c.stake })),
+    });
+  }
+
+  function buyAll() {
+    for (const g of groups) buyGroup(g);
+  }
 
   function toggle(key: string) {
     setOpen((prev) => {
@@ -109,6 +126,7 @@ export function PurchaseTable({ candidates, runners, renderBuy }: PurchaseTableP
             <TableHead>買い目</TableHead>
             <TableHead className="text-right">点数</TableHead>
             <TableHead className="text-right">合計</TableHead>
+            <TableHead className="text-right">購入</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -137,12 +155,24 @@ export function PurchaseTable({ candidates, runners, renderBuy }: PurchaseTableP
                 <TableCell className="text-right tabular-nums">
                   {formatYen(g.totalStake)}
                 </TableCell>
+                {/* 行クリックは開閉なので、購入は伝播を止める */}
+                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={bulk.isPending}
+                    onClick={() => buyGroup(g)}
+                    title={`${g.betType} ${g.points} 点 (${formatYen(g.totalStake)}) をまとめて記録します`}
+                  >
+                    {g.points} 点を買う
+                  </Button>
+                </TableCell>
               </TableRow>,
               ...(isOpen
                 ? [
                     <TableRow key={`${g.key}-detail`} className="bg-muted/20">
                       <TableCell />
-                      <TableCell colSpan={5} className="py-2">
+                      <TableCell colSpan={6} className="py-2">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -208,6 +238,15 @@ export function PurchaseTable({ candidates, runners, renderBuy }: PurchaseTableP
           }
         >
           {open.size === groups.length && groups.length > 0 ? 'すべて閉じる' : 'すべて開く'}
+        </Button>
+        <Button
+          size="sm"
+          className="ml-auto h-7"
+          disabled={bulk.isPending || groups.length === 0}
+          onClick={buyAll}
+          title="表示されている買い目をすべて購入記録に入れます"
+        >
+          {bulk.isPending ? '記録中…' : `全部買う (${formatYen(total)})`}
         </Button>
       </div>
     </section>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -251,28 +251,25 @@ describe('RaceDetail', () => {
   it('結論 → 根拠 (確率) → 事実 の順に並べ、EV は根拠の最後に置く', async () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    const headers = screen.getAllByRole('columnheader').map((t) => t.textContent ?? '');
-    const rec = headers.findIndex((t) => t.includes('推奨'));
+    const table = within(screen.getByRole('table', { name: '出走馬' }));
+    const headers = table.getAllByRole('columnheader').map((t) => t.textContent ?? '');
     const winProb = headers.findIndex((t) => t.includes('1着確率'));
     const ev = headers.findIndex((t) => t.includes('参考EV'));
     const odds = headers.findIndex((t) => t.includes('単勝オッズ'));
-    expect(rec).toBeGreaterThanOrEqual(0);
-    // 買う順序を決めているのは確率なので、確率を EV より前に置く
-    expect(rec).toBeLessThan(winProb);
+    // 根拠 (確率 → スコア → 参考EV) → 事実 (オッズ) の順。買う順序を決めているのは確率
+    expect(winProb).toBeGreaterThanOrEqual(0);
     expect(winProb).toBeLessThan(ev);
     expect(ev).toBeLessThan(odds);
   });
 
-  it('shows BUY badge when win EV > 1.1 after running AI', async () => {
-    // テスト馬A: win_prob=0.45 * odds_win=3.5 = 1.575 > 1.1
-    // テスト馬B: win_prob=0.20 * odds_win=8.0 = 1.60  > 1.1
+  it('BUY バッジは出さない (買うのは常にモデル1位の 1 頭で、列を使う意味がない)', async () => {
     const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
-    await screen.findByText('2.500'); // wait for predictions
-    const buyBadges = screen.getAllByText('BUY');
-    expect(buyBadges.length).toBeGreaterThan(0);
+    await screen.findByText('2.500');
+    expect(screen.queryByText('BUY')).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: '推奨' })).not.toBeInTheDocument();
   });
 
   it('does not render a separate 予想スコア card (tables merged)', async () => {
@@ -387,35 +384,23 @@ describe('RaceDetail', () => {
     // Second click → asc (1着 first, null last)
     fireEvent.click(finishHeader);
 
-    // header は 2 行 (実績/AI 予想グループ行 + カラム行) あるため slice(2)
-    const rows = screen.getAllByRole('row').slice(2);
+    // header は 2 行 (グループ行 + カラム行) あるため slice(2)
+    const rows = within(screen.getByRole('table', { name: '出走馬' })).getAllByRole('row').slice(2);
     // テスト馬B has finish_position=1, should be first in asc
     expect(rows[0]).toHaveTextContent('テスト馬B');
     // テスト馬A has null finish_position, should be last
     expect(rows[rows.length - 1]).toHaveTextContent('テスト馬A');
   });
 
-  it('BUY badge has descriptive title attribute', async () => {
-    const user = userEvent.setup();
+  it('買い方を券種ごとの表で 1 箇所にまとめて出す', async () => {
+    // EV / 期待値 / 確信度 / 的中確率 が別々の注記に散っていて、どの数字が
+    // どの判断に使われるのか読み取れなかった。券種 × 条件 × 点数の表にする。
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    await user.click(screen.getByRole('button', { name: '予想を見る' }));
-    await screen.findByText('2.500'); // wait for predictions
-    const buyBadges = screen.getAllByText('BUY');
-    expect(buyBadges.length).toBeGreaterThan(0);
-    // Each BUY badge should carry a tooltip explaining the criterion
-    buyBadges.forEach((badge) => {
-      expect(badge).toHaveAttribute('title');
-      expect(badge.getAttribute('title')).toContain('EV');
-    });
-  });
-
-  it('shows BUY badge note below the entry table', async () => {
-    // BUY は「EV が閾値を超えた馬」ではなく「モデル1位の馬」。較正済み確率で EV 条件に
-    // すると大穴を買い込んで回収率が落ちるため (docs/ai-model.md「推奨ベットルール」)。
-    renderRaceDetail();
-    await screen.findByText('出走馬一覧');
-    expect(screen.getByText(/BUY バッジは/)).toHaveTextContent('モデル1位の馬');
+    expect(screen.getByText('買い方')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '買う条件' })).toBeInTheDocument();
+    expect(screen.getByText(/モデル1位の馬。オッズ/)).toBeInTheDocument();
+    expect(screen.getByText(/期待値（EV）は買う判断に使っていません/)).toBeInTheDocument();
   });
 
   it('shows race name in PageHeader title when name is set', async () => {
