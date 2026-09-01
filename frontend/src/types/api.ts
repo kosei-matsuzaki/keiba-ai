@@ -321,6 +321,11 @@ export interface RecommendationCandidate {
   combo: string;
   pattern: string;
   prob: number;
+  /**
+   * 確信度 = 確率モデルから見た「この買い目が当たる確率」。券種をまたいで同じ意味
+   * (単勝=1着 / 複勝=3着以内 / 連系=組合せ的中)。確率モデル未設定なら null。
+   */
+  confidence?: number | null;
   /** 推定込みのオッズ。確定オッズが取れなければ単勝由来の推定値。 */
   est_odds: number | null;
   /**

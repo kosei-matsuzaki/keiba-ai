@@ -28,7 +28,7 @@ from ai.betting.odds import (
     compute_past_race_odds,
     compute_race_odds_with_sources,
 )
-from ai.betting.strategy import recommend_for_race
+from ai.betting.strategy import DEFAULT_MAX_POINTS_PER_BET_TYPE, recommend_for_race
 from ai.inference.confidence import (
     is_place_worth_buying,
     pick_confidence,
@@ -317,11 +317,12 @@ def simulate_active_model(
     strategy: StrategyName = "balanced",
     max_stake_per_race_pct: float = 0.05,
     enabled_bet_types: list[str] | None = None,
-    top_n_horses: int = 3,
+    top_n_horses: int | None = None,
     max_stake_per_race_yen: int | None = None,
     staking: StakingMode = "flat",
     stake_unit_by_bet_type: dict[str, int] | None = None,
     exclude_low_information: bool = False,
+    max_points_per_bet_type: int | None = DEFAULT_MAX_POINTS_PER_BET_TYPE,
     probability_model_path: Path | None = None,
     place_min_confidence: float = 0.30,
     *,
@@ -366,6 +367,9 @@ def simulate_active_model(
         final_bankroll, peak_bankroll, and bankroll_timeseries (日次推移).
     """
     preset = STRATEGY_PRESETS[strategy]
+    # **引数が渡されたらそちらを使う。** 以前は宣言だけあって常にプリセットが
+    # 勝っており、API から狙い方を指定しても効いていなかった。
+    eff_top_n = int(top_n_horses) if top_n_horses else int(preset["top_n_horses"])
     types = enabled_bet_types or DEFAULT_BET_TYPES
 
     # Allow callers (notably ad-hoc experiments) to pass a pre-built bundle
@@ -412,7 +416,7 @@ def simulate_active_model(
             "stake_unit_by_bet_type": dict(stake_unit_by_bet_type or {}),
             "max_stake_per_race_pct": max_stake_per_race_pct,
             "max_stake_per_race_yen": max_stake_per_race_yen,
-            "top_n_horses": int(preset["top_n_horses"]),
+            "top_n_horses": eff_top_n,
             "staking": staking,
         },
     )
@@ -556,8 +560,9 @@ def simulate_active_model(
             race_budget=race_budget,
             stake_unit=stake_unit,
             stake_unit_by_bet_type=units,
-            top_n_horses=int(preset["top_n_horses"]),
+            top_n_horses=eff_top_n,
             enabled_bet_types=race_types,
+            max_points_per_bet_type=max_points_per_bet_type,
         )
 
         # Determine finish_position map (only finished races settle)

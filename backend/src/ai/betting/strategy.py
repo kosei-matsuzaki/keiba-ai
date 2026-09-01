@@ -241,6 +241,22 @@ def generate_formation(
 _BET_TYPE_PRIORITY: dict[str, int] = {"単勝": 0, "複勝": 1}
 _DEFAULT_PRIORITY = 9
 
+#: 連系を 1 券種あたり何点まで買うか。**予算は上限であって使い切る目標ではない。**
+#:
+#: 買い目は的中確率の高い順に並ぶ。その順序は本物で、順位が下がるほど的中率が
+#: きれいに落ちる (実測 5,404 レース: 1 点目 0.155 → 10 点目 0.037)。深く買うほど
+#: 当たりにくい買い目に金を足すことになる。累積の回収率:
+#:
+#:   上位 1 点まで   0.903   (連系に使う金の 25%)
+#:   上位 2 点まで   0.898   (44%)
+#:   上位 3 点まで   0.872   (59%)
+#:   全部買う        0.877   (100%)
+#:
+#: 半期に割ると 4 期中 3 期でプラス、1 期 (2024-H2・551 レース) で −0.145 と
+#: 揺れるので「回収率が上がる」とまでは言えない。確かなのは**同じかやや良い成績を
+#: 半分以下の金で得られる**こと。単勝・複勝は元から 1 点なので影響しない。
+DEFAULT_MAX_POINTS_PER_BET_TYPE = 2
+
 
 def assign_flat_stakes(
     candidates: list[BetCandidate],
@@ -248,6 +264,7 @@ def assign_flat_stakes(
     stake_unit: int = 100,
     stake_unit_by_bet_type: dict[str, int] | None = None,
     keep_zero_stake: bool = False,
+    max_points_per_bet_type: int | None = DEFAULT_MAX_POINTS_PER_BET_TYPE,
 ) -> list[BetCandidate]:
     """券種ごとに定額で、単複を優先して予算の範囲で賭ける。
 
@@ -300,11 +317,19 @@ def assign_flat_stakes(
 
     out: list[BetCandidate] = []
     budget_left = race_budget
+    taken: dict[str, int] = {}
     for c in eligible:
         unit = _unit(c)
+        # **予算が余っていても、券種ごとの上限で止める。**
+        # 深い順位の買い目ほど当たりにくく、足すほど期待は薄くなる。
+        if max_points_per_bet_type is not None and taken.get(c.bet_type, 0) >= max_points_per_bet_type:
+            if keep_zero_stake:
+                out.append(c.model_copy(update={"stake": 0}))
+            continue
         if budget_left >= unit:
             out.append(c.model_copy(update={"stake": unit}))
             budget_left -= unit
+            taken[c.bet_type] = taken.get(c.bet_type, 0) + 1
         elif keep_zero_stake:
             out.append(c.model_copy(update={"stake": 0}))
 
@@ -327,6 +352,7 @@ def recommend_for_race(
     win_min_odds: float = 1.1,
     top_n_horses: int = 3,
     enabled_bet_types: list[str] | None = None,
+    max_points_per_bet_type: int | None = DEFAULT_MAX_POINTS_PER_BET_TYPE,
 ) -> RecommendationResult:
     """Generate a bet recommendation for one race.
 
@@ -480,6 +506,7 @@ def recommend_for_race(
         stake_unit=stake_unit,
         stake_unit_by_bet_type=stake_unit_by_bet_type,
         keep_zero_stake=True,
+        max_points_per_bet_type=max_points_per_bet_type,
     )
 
     return RecommendationResult(

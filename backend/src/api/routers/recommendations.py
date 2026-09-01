@@ -44,6 +44,14 @@ class RecommendationCandidate(BaseModel):
     combo: str
     pattern: str
     prob: float
+    #: **確信度 = 確率モデルから見た「この買い目が当たる確率」。**
+    #:
+    #: 券種をまたいで同じ意味にしてある: 単勝なら 1 着になる確率、複勝なら
+    #: 3 着以内に入る確率、連系なら組合せの的中確率。`prob` は単複だと active
+    #: (買う馬を決めるモデル) の確率で、確率としての精度は保証されない
+    #: (本命の win_prob と勝敗の相関は 0.073)。判断に使うのはこちら。
+    #: 確率モデル未設定なら None。
+    confidence: float | None = None
     est_odds: float | None
     est_odds_source: Literal["confirmed", "scraped", "implied", "unknown"] = "unknown"
     ev: float | None
@@ -208,6 +216,11 @@ def get_recommendations(
     # Step 6: load settings and run recommendation logic
     # クエリで渡された分だけ、このレースに限って設定を上書きする。
     settings = store.load()
+    # 券種ごとの点数上限。**予算は上限であって使い切る目標ではない。**
+    # 0 / 未設定なら無制限 (従来どおり予算まで買う)。
+    _max_points = settings.get("max_points_per_bet_type", 2)
+    eff_max_points: int | None = int(_max_points) if _max_points else None
+
     eff_budget: int = (
         race_budget if race_budget is not None else int(settings.get("race_budget", 5_000))
     )
@@ -251,7 +264,15 @@ def get_recommendations(
     # 実測 (前進検証 4.5 年): しきい値 0.30 で複勝回収率 0.866 → 0.907
     # (ai/inference/confidence.py に根拠)。未設定なら何もしない。
     confidence: float | None = None
+    win_confidence: float | None = None
     conf_threshold: float | None = None
+    if prob_bundle is not None and not predictions.empty:
+        # 単勝の確信度 = 確率モデルの 1 着確率。**買う/買わないには使わない**
+        # (実測で回収率が反応しない) が、画面には同じ意味の数字として出す。
+        win_confidence = pick_confidence(
+            prob_bundle, frame, predictions.iloc[0]["horse_id"],
+            session=session, bet_type="単勝",
+        )
     if prob_bundle is not None and "複勝" in eff_bet_types and not predictions.empty:
         confidence = pick_confidence(
             prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
@@ -284,7 +305,20 @@ def get_recommendations(
         win_min_odds=eff_win_min_odds,
         top_n_horses=top_n_horses,
         enabled_bet_types=eff_bet_types,
+        max_points_per_bet_type=eff_max_points,
     )
+
+    def _confidence_for(c) -> float | None:  # noqa: ANN001
+        """券種横断の確信度。
+
+        連系の `prob` はもともと確率モデル由来 (`merge_combination_sources`) なので
+        そのまま使える。単複は active の確率なので、確率モデルに引き直した値を返す。
+        """
+        if c.bet_type == "単勝":
+            return win_confidence
+        if c.bet_type == "複勝":
+            return confidence
+        return c.prob
 
     candidates = [
         RecommendationCandidate(
@@ -292,6 +326,7 @@ def get_recommendations(
             combo=c.combo,
             pattern=c.pattern,
             prob=c.prob,
+            confidence=_confidence_for(c),
             est_odds=c.est_odds,
             est_odds_source=c.est_odds_source,
             ev=c.ev,

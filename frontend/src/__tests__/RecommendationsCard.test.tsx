@@ -732,4 +732,61 @@ describe('RecommendationsCard', () => {
       });
     });
   });
+
+  it('確信度を券種横断の列として出す (単勝=1着 / 複勝=3着以内 / 連系=組合せ的中)', async () => {
+    const data: RecommendationsResponse = {
+      ...mockData,
+      candidates: [
+        {
+          bet_type: '単勝',
+          combo: '1',
+          pattern: 'box',
+          prob: 0.4,
+          confidence: 0.31,
+          est_odds: 10,
+          ev: 4.0,
+          stake: 500,
+          post_positions: [1],
+        },
+        {
+          bet_type: '複勝',
+          combo: '1',
+          pattern: 'box',
+          prob: 0.7,
+          confidence: 0.68,
+          est_odds: 1.5,
+          ev: 1.05,
+          stake: 900,
+          post_positions: [1],
+        },
+      ],
+    };
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={data}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+    expect(await screen.findByRole('columnheader', { name: '確信度' })).toBeInTheDocument();
+    expect(screen.getByText('31.0%')).toBeInTheDocument();
+    expect(screen.getByText('68.0%')).toBeInTheDocument();
+  });
+
+  it('確率モデルが無いときは確信度を「—」にする (prob で代用しない)', async () => {
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+    await screen.findByRole('columnheader', { name: '確信度' });
+    // mockData の候補は confidence を持たない
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
 });

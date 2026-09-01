@@ -552,7 +552,7 @@ function BettingRuleNote() {
           <tr>
             <td className="py-0.5 pr-4 text-foreground">連系</td>
             <td className="py-0.5 pr-4">上位数頭の組合せを、的中確率の高い順に</td>
-            <td className="py-0.5">予算が尽きるまで</td>
+            <td className="py-0.5">券種ごとに上位数点まで</td>
           </tr>
         </tbody>
       </table>
@@ -566,6 +566,12 @@ function BettingRuleNote() {
           大穴に寄り、実測で単勝回収率が 0.93 → 0.70 に落ちるためです。表の「参考EV」は
           値を見せているだけです。
         </span>
+      </p>
+      <p className="text-subtle-foreground">
+        <strong className="font-medium">予算は上限であって、使い切る目標ではありません。</strong>
+        連系は的中確率の高い順に並ぶので、深く買うほど当たりにくい買い目に金を足すことに
+        なります（実測 5,404 レース: 1 点目の的中率 15.5% → 10 点目 3.7%）。上位数点で
+        止めると、連系に使う金が半分以下になって回収率は同じかやや良くなります。
       </p>
       <p className="text-subtle-foreground">
         実測の回収率は単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.85〜0.88。

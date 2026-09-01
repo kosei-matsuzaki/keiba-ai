@@ -284,6 +284,12 @@ export function RecommendationsCard({
                   >
                     的中確率
                   </TableHead>
+                  <TableHead
+                    className="text-right"
+                    title="確率モデルから見た「この買い目が当たる確率」。券種をまたいで同じ意味 (単勝=1着 / 複勝=3着以内 / 連系=組合せ的中)。複勝の可否と厚みはこれで決めている"
+                  >
+                    確信度
+                  </TableHead>
                   <TableHead className="text-right">推定オッズ</TableHead>
                   <TableHead className="text-right">推奨 stake</TableHead>
                   <TableHead
@@ -306,6 +312,13 @@ export function RecommendationsCard({
                         <ComboMarks combo={c.combo} runners={runners} />
                       </TableCell>
                       <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {c.confidence == null ? (
+                          <span className="text-subtle-foreground">—</span>
+                        ) : (
+                          formatPercent(c.confidence)
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         {c.est_odds === null ? (
                           <span className="text-muted-foreground">—</span>

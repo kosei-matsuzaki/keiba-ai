@@ -188,6 +188,7 @@ backend/data/models/
 | `win_min_odds` | 単勝で買うオッズ下限 | 1.1 |
 | `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
 | `place_min_hit_prob` | 複勝を買う 3 着内率の下限 | 0.60 |
+| `max_points_per_bet_type` | 連系を 1 券種あたり何点まで買うか（0 で無制限） | 2 |
 | `race_budget` | 1 レースに使う上限（円） | 5000 |
 | `stake_unit` | 1 点あたりの既定額（円） | 100 |
 | `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |

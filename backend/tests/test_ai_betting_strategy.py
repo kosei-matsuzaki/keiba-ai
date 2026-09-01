@@ -109,7 +109,10 @@ class TestAssignFlatStakes:
 
     def test_each_eligible_candidate_gets_one_unit(self):
         cands = [self._c("1", 1.5), self._c("2", 1.3), self._c("3", 1.2)]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        # 点数上限は別のテストで見る。ここは「対象は 1 点ずつ」だけを確かめる
+        out = assign_flat_stakes(
+            cands, race_budget=1000, stake_unit=100, max_points_per_bet_type=None
+        )
         assert [c.stake for c in out] == [100, 100, 100]
 
     def test_orders_by_prob_desc_within_a_bet_type(self):
@@ -119,7 +122,9 @@ class TestAssignFlatStakes:
             self._c("2", 1.9, prob=0.30),
             self._c("3", 1.5, prob=0.20),
         ]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        out = assign_flat_stakes(
+            cands, race_budget=1000, stake_unit=100, max_points_per_bet_type=None
+        )
         assert [c.combo for c in out] == ["2", "3", "1"]
 
     def test_win_and_place_come_before_exotics(self):
@@ -154,7 +159,9 @@ class TestAssignFlatStakes:
 
     def test_budget_caps_the_number_of_bets(self):
         cands = [self._c(str(i), 2.0 - i * 0.1) for i in range(1, 11)]
-        out = assign_flat_stakes(cands, race_budget=300, stake_unit=100)
+        out = assign_flat_stakes(
+            cands, race_budget=300, stake_unit=100, max_points_per_bet_type=None
+        )
         assert len(out) == 3
         assert sum(c.stake for c in out) == 300
 
@@ -561,3 +568,67 @@ class TestRecommendForRace:
         # nagashi with n=2 would have 1 combo; with n=4 the pattern selection
         # may pick differently.  At minimum, larger top_n should not reduce output.
         assert len(result_n4.candidates) >= len(result_n2.candidates)
+
+
+class TestMaxPointsPerBetType:
+    """**予算は上限であって使い切る目標ではない。**
+
+    買い目は的中確率の高い順に並ぶので、深く買うほど当たりにくい買い目に金を
+    足すことになる (実測 5,404 レース: 1 点目の的中率 0.155 → 10 点目 0.037)。
+    """
+
+    @staticmethod
+    def _combo(combo: str, prob: float) -> BetCandidate:
+        return BetCandidate(
+            bet_type="ワイド", combo=combo, pattern="box", prob=prob,
+            est_odds=10.0, est_odds_source="implied", ev=prob * 10.0, stake=0,
+            post_positions=[int(x) for x in combo.split("-")],
+        )
+
+    def test_stops_at_the_cap_even_with_budget_left(self):
+        cands = [self._combo(f"1-{i}", 0.3 - i * 0.01) for i in range(2, 8)]
+        out = assign_flat_stakes(
+            cands, race_budget=10_000, stake_unit=100, max_points_per_bet_type=2
+        )
+        assert len(out) == 2
+        # 残るのは的中確率の高い 2 点
+        assert [c.combo for c in out] == ["1-2", "1-3"]
+
+    def test_cap_is_per_bet_type(self):
+        wide = [self._combo(f"1-{i}", 0.3 - i * 0.01) for i in range(2, 6)]
+        umaren = [
+            BetCandidate(
+                bet_type="馬連", combo=f"2-{i}", pattern="box", prob=0.2 - i * 0.01,
+                est_odds=20.0, est_odds_source="implied", ev=1.0, stake=0,
+                post_positions=[2, i],
+            )
+            for i in range(3, 7)
+        ]
+        out = assign_flat_stakes(
+            wide + umaren, race_budget=10_000, stake_unit=100, max_points_per_bet_type=2
+        )
+        by_type: dict[str, int] = {}
+        for c in out:
+            by_type[c.bet_type] = by_type.get(c.bet_type, 0) + 1
+        assert by_type == {"ワイド": 2, "馬連": 2}
+
+    def test_none_means_unlimited(self):
+        cands = [self._combo(f"1-{i}", 0.3 - i * 0.01) for i in range(2, 8)]
+        out = assign_flat_stakes(
+            cands, race_budget=10_000, stake_unit=100, max_points_per_bet_type=None
+        )
+        assert len(out) == 6
+
+    def test_win_and_place_are_unaffected(self):
+        """単複は元から 1 点なので、上限を入れても買い目が減らない。"""
+        cands = [
+            BetCandidate(
+                bet_type=bt, combo="3", pattern="box", prob=0.4, est_odds=3.0,
+                est_odds_source="confirmed", ev=1.2, stake=0, post_positions=[3],
+            )
+            for bt in ("単勝", "複勝")
+        ]
+        out = assign_flat_stakes(
+            cands, race_budget=10_000, stake_unit=100, max_points_per_bet_type=2
+        )
+        assert {c.bet_type for c in out} == {"単勝", "複勝"}

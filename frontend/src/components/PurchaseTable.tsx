@@ -183,6 +183,12 @@ export function PurchaseTable({ candidates, runners, raceId, renderBuy }: Purcha
                               >
                                 的中確率
                               </TableHead>
+                              <TableHead
+                                className="text-right"
+                                title="確率モデルから見た「この買い目が当たる確率」"
+                              >
+                                確信度
+                              </TableHead>
                               <TableHead className="text-right">オッズ</TableHead>
                               <TableHead className="text-right">賭け金 / 購入</TableHead>
                             </TableRow>
@@ -206,6 +212,9 @@ export function PurchaseTable({ candidates, runners, raceId, renderBuy }: Purcha
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
                                   {formatPercent(c.prob)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {c.confidence == null ? '—' : formatPercent(c.confidence)}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
                                   {c.est_odds === null ? '—' : formatRatio(c.est_odds)}
