@@ -353,7 +353,7 @@ def run_simulation(
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
     # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
     prob_model_path = resolve_model_path(settings.get("probability_model_path"))
-    place_min_confidence = float(settings.get("place_min_confidence", 0.30))
+    place_min_confidence = float(settings.get("place_min_hit_prob", 0.60))
 
     logger.info(
         "Simulation request: model_run_id=%d, window=%s..%s, budget=%d, "
@@ -532,6 +532,14 @@ async def start_simulation_job(
         int | None,
         Query(description="対象モデル (model_runs.id)。未指定で active モデル。"),
     ] = None,
+    bet_types: Annotated[
+        str | None,
+        Query(description="このシミュレーションだけの対象券種 (カンマ区切り)。未指定なら設定値"),
+    ] = None,
+    top_n_horses: Annotated[
+        int | None,
+        Query(ge=1, le=18, description="連系を組む上位頭数。未指定なら戦略プリセット"),
+    ] = None,
 ) -> JobAccepted:
     """シミュレーションをバックグラウンド job として実行する。
 
@@ -548,13 +556,18 @@ async def start_simulation_job(
     model_path, model_run_id = _resolve_target_model(session, model_id)
 
     settings = settings_store.load()
-    enabled_bet_types = supported_bet_types(settings.get("enabled_bet_types"))
+    # 券種は RACE 画面と同じく「この実行だけ」上書きできる。未指定なら設定値。
+    enabled_bet_types = supported_bet_types(
+        [b.strip() for b in bet_types.split(",") if b.strip()]
+        if bet_types
+        else settings.get("enabled_bet_types")
+    )
     # 券種ごとの 1 点あたり金額。推奨 API (AI 予想) と同じ配分でシミュレーションする
     # ため、Settings の stake_units をそのまま渡す (docs/ai-model.md「賭け金の配分」)。
     stake_units = {k: int(v) for k, v in (settings.get("stake_units") or {}).items()} or None
     # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
     prob_model_path = resolve_model_path(settings.get("probability_model_path"))
-    place_min_confidence = float(settings.get("place_min_confidence", 0.30))
+    place_min_confidence = float(settings.get("place_min_hit_prob", 0.60))
 
     logger.info(
         "Simulation job submit: model_run_id=%d, window=%s..%s, budget=%d, "
@@ -581,6 +594,7 @@ async def start_simulation_job(
                 strategy=strategy,  # type: ignore[arg-type]
                 max_stake_per_race_yen=max_stake_per_race_yen,
                 stake_unit_by_bet_type=stake_units,
+                **({"top_n_horses": top_n_horses} if top_n_horses else {}),
             probability_model_path=prob_model_path,
             place_min_confidence=place_min_confidence,
             staking=staking,

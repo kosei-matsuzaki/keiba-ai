@@ -27,7 +27,7 @@ const schema = z
     night_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     // 確率モデルの割り当ては Models 画面で行うので、ここでは扱わない。
-    place_min_confidence: z.coerce
+    place_min_hit_prob: z.coerce
       .number()
       .min(0, '0 以上の値を入力してください')
       .max(1, '1 以下の値を入力してください'),
@@ -191,15 +191,15 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
               <div className="flex flex-col gap-4">
                 <FieldRow
                   label="複勝を買う確信度の下限"
-                  id="place_min_confidence"
-                  help="確率モデル（Models 画面で設定）が AI の本命に与える単勝確率がこの値を下回るレースでは、複勝を見送ります。0 にすると全レースで買います。上げるほど買うレースは減り、的中率は上がります。確率モデル未設定なら効きません。"
-                  error={errors.place_min_confidence?.message}
+                  id="place_min_hit_prob"
+                  help="確率モデル（Dashboard で設定）が AI の本命に与える 3 着内率がこの値を下回るレースでは、複勝を見送ります。0 にすると全レースで買います。上げるほど買うレースは減り、的中率は上がります（実測: 0.60 で買う割合 25%・回収率 0.907）。確率モデル未設定なら効きません。"
+                  error={errors.place_min_hit_prob?.message}
                 >
                   <Input
-                    id="place_min_confidence"
+                    id="place_min_hit_prob"
                     type="number"
                     step="0.05"
-                    {...register('place_min_confidence')}
+                    {...register('place_min_hit_prob')}
                   />
                 </FieldRow>
                 <FieldRow

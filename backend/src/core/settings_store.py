@@ -38,13 +38,17 @@ _DEFAULTS: dict = {
     },
     "enabled_bet_types": list(DEFAULT_ENABLED_BET_TYPES),
     # 複勝の確信度フィルタ。proper scoring rule で学習した「確率専用モデル」の
-    # ディレクトリを指定すると、AI の本命に対するそのモデルの単勝確率が
-    # place_min_confidence 未満のレースでは複勝を買わなくなる。
+    # ディレクトリを指定すると、AI の本命に対するそのモデルの **3 着内率** が
+    # place_min_hit_prob 未満のレースでは複勝を買わなくなる。
     # 未設定 (None) なら従来どおり全レースで複勝を買う。
-    # 実測 (前進検証 4.5 年・15,073 点): しきい値 0.30 で複勝回収率 0.866 → 0.907、
-    # 的中率 0.501 → 0.744。詳細は ai/inference/confidence.py と docs/ai-model.md。
+    #
+    # **キー名を place_min_confidence から変えたのは、しきい値の目盛りが変わったため。**
+    # 旧実装は 1 着確率で判定していて 0.30 = 買う割合 22% だったが、3 着内率では
+    # 0.30 はほぼ全レースが通ってしまい、**設定を引き継ぐと黙ってフィルタが消える**。
+    # 同じ選別度は 3 着内率 0.60 前後 (OOF 14,619 レースで買う割合 25% は 0.655)。
+    # 成績は同等 (25% 選別で 0.904 → 0.907)、意味は「複勝が当たる確率」で通る。
     "probability_model_path": None,
-    "place_min_confidence": 0.30,
+    "place_min_hit_prob": 0.60,
 }
 
 # 旧 Kelly 設定 (bankroll × max_stake_per_race_pct) から race_budget を復元する。

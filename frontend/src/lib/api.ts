@@ -362,6 +362,9 @@ export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted>
   if (req.model_id != null) searchParams.model_id = req.model_id;
   if (req.exclude_low_information) searchParams.exclude_low_information = 'true';
   if (req.staking) searchParams.staking = req.staking;
+  // RACE 画面と同じ条件でシミュレーションできるようにする
+  if (req.bet_types?.length) searchParams.bet_types = req.bet_types.join(',');
+  if (req.top_n_horses) searchParams.top_n_horses = req.top_n_horses;
   return getClient().then((c) =>
     c
       .post('simulation/start', { searchParams })

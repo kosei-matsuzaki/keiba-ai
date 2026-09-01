@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ALL_BET_TYPES } from '@/lib/betTypes';
 import { cn } from '@/lib/cn';
-import { formatYen } from '@/lib/formatters';
 import type { BetType } from '@/types/api';
 
 /**
@@ -17,8 +16,6 @@ import type { BetType } from '@/types/api';
 export interface RecommendationOverrides {
   /** このレースに使う上限 (円)。 */
   race_budget?: number;
-  /** 1 点あたりの賭け金 (円)。 */
-  stake_unit?: number;
   bet_types?: string[];
   /** 買い目に含める頭数 = 狙い方。 */
   top_n_horses?: number;
@@ -44,23 +41,16 @@ const AIM_PRESETS = [
 
 const DEFAULT_AIM = 3;
 
-const UNIT_PRESETS = [100, 200, 500, 1000] as const;
-
 export function RecommendationParamsBar({ value, onChange }: RecommendationParamsBarProps) {
   const { data: settings } = useSettings();
 
   const defaultBetTypes = (settings?.enabled_bet_types ?? []) as BetType[];
   const defaultBudget = settings?.race_budget ?? null;
-  const defaultUnit = settings?.stake_unit ?? 100;
 
   const selected = (value.bet_types ?? defaultBetTypes) as BetType[];
   const aim = value.top_n_horses ?? DEFAULT_AIM;
-  const unit = value.stake_unit ?? defaultUnit;
   const overridden =
-    value.bet_types != null ||
-    value.race_budget != null ||
-    value.stake_unit != null ||
-    value.top_n_horses != null;
+    value.bet_types != null || value.race_budget != null || value.top_n_horses != null;
 
   function toggle(betType: BetType) {
     const next = selected.includes(betType)
@@ -71,8 +61,6 @@ export function RecommendationParamsBar({ value, onChange }: RecommendationParam
     onChange({ ...value, bet_types: next });
   }
 
-  const budget = value.race_budget ?? defaultBudget;
-  const maxPoints = budget != null && unit > 0 ? Math.floor(budget / unit) : null;
 
   return (
     <div className="flex flex-col gap-3 border-b border-border pb-4">
@@ -125,32 +113,6 @@ export function RecommendationParamsBar({ value, onChange }: RecommendationParam
             まで
             {value.race_budget == null && defaultBudget != null && '（いつもの設定）'}
           </span>
-        </div>
-
-        {/* 1 点あたり */}
-        <span className="text-label-ja self-center">1 点あたり</span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {UNIT_PRESETS.map((u) => (
-            <button
-              key={u}
-              type="button"
-              onClick={() => onChange({ ...value, stake_unit: u })}
-              aria-pressed={unit === u}
-              className={cn(
-                'rounded-sm border px-2 py-1 font-mono text-xs tabular-nums transition-colors',
-                unit === u
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground'
-              )}
-            >
-              ¥{u}
-            </button>
-          ))}
-          {maxPoints != null && (
-            <span className="ml-1 text-xs text-subtle-foreground">
-              最大 {maxPoints} 点まで（基準を超えた買い目が少なければ使い切りません）
-            </span>
-          )}
         </div>
 
         {/* 買う馬券 */}
@@ -207,10 +169,10 @@ export function RecommendationParamsBar({ value, onChange }: RecommendationParam
       </div>
 
       <p className="text-xs leading-relaxed text-subtle-foreground">
-        <strong>単勝・複勝は AI の本命（予想 1 位）</strong>を 1 点{formatYen(unit)}ずつ買います
-        （期待値では選びません — 期待値で絞ると大穴に寄って回収率が落ちるため）。連系は期待値が
-        基準を超えた買い目を、期待値の高い順に 1 点{formatYen(unit)}ずつ。基準を超える買い目が
-        無ければ賭けません。
+        <strong>1 点 = 100 円</strong>。単勝・複勝は AI の本命に、連系は上位 {aim} 頭で組んだ
+        買い目に、<strong>的中確率の高い順</strong>で予算まで賭けます。券種ごとの点数は設定で
+        決まり、複勝だけ確信度に応じて増えます。
+        <span className="ml-1">条件の詳細は表の下の「買い方」。</span>
       </p>
     </div>
   );

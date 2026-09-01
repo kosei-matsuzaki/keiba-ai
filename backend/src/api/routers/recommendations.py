@@ -14,7 +14,7 @@ from ai.betting.strategy import recommend_for_race
 from ai.inference.confidence import (
     is_place_worth_buying,
     pick_confidence,
-    place_stake_multiplier,
+    points_for_confidence,
 )
 from ai.inference.predict import (
     _combinations_from_base,
@@ -256,7 +256,7 @@ def get_recommendations(
         confidence = pick_confidence(
             prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
         )
-        conf_threshold = float(settings.get("place_min_confidence", 0.30))
+        conf_threshold = float(settings.get("place_min_hit_prob", 0.60))
         if not is_place_worth_buying(confidence, conf_threshold):
             eff_bet_types = [b for b in eff_bet_types if b != "複勝"]
             logger.info(
@@ -264,12 +264,14 @@ def get_recommendations(
                 race_id, confidence, conf_threshold,
             )
         else:
-            # しきい値を超えた先も確信度で厚みを変える (前進検証 5/5 年でプラス)。
-            mult = place_stake_multiplier(confidence)
-            if mult > 1 and "複勝" in eff_stake_units:
-                eff_stake_units["複勝"] = eff_stake_units["複勝"] * mult
+            # しきい値を超えた先も確信度で厚みを変える。点数 = 基準 × (確信度/0.5)^2。
+            # 1 点は eff_unit 円なので、点数を金額に直して stake_units に入れる。
+            if "複勝" in eff_stake_units and eff_unit > 0:
+                base_points = max(1, round(eff_stake_units["複勝"] / eff_unit))
+                points = points_for_confidence("複勝", confidence, base_points)
+                eff_stake_units["複勝"] = points * eff_unit
                 logger.info(
-                    "race %s: 複勝 stake x%d (confidence %.3f)", race_id, mult, confidence
+                    "race %s: 複勝 %d 点 (確信度 %.3f)", race_id, points, confidence
                 )
 
     result = recommend_for_race(

@@ -26,47 +26,26 @@ import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
 import { useSettings } from '@/hooks/useSettings';
 import { labelClass } from '@/lib/labels';
+import { ALL_BET_TYPES } from '@/lib/betTypes';
 import type {
+  BetType,
   SimulationGroupStats,
   SimulationConditions,
   SimulationResponse,
   SimulationRunSummary,
-  SimulationStrategy,
 } from '@/types/api';
 
-// ── Strategy preset metadata ─────────────────────────────────────────────────
+// ── 狙い方 ────────────────────────────────────────────────────────────────────
 
-interface StrategyPreset {
-  key: SimulationStrategy;
-  emoji: string;
-  label: string;
-  description: string;
-}
-
-// 戦略が変えるのは 2 つだけ:「1 点いくら賭けるか」と「連系を上位何頭から組むか」。
-// **期待値の閾値は 2026-08-28 に廃止した** (根拠の無い 1.1 で、入力の確率も壊れて
-// いたため実質「推定オッズの高い順」に退化していた)。買い目はどの戦略でも
-// 「的中確率の高い順に、予算の限り」選ぶ。
-const STRATEGY_PRESETS: StrategyPreset[] = [
-  {
-    key: 'conservative',
-    emoji: '🛡',
-    label: '安定',
-    description: '1 点 = 予算の 20%。連系は上位 2 頭から組む（点数少なめ・堅め）。',
-  },
-  {
-    key: 'balanced',
-    emoji: '⚖',
-    label: '標準',
-    description: '1 点 = 予算の 20%。連系は上位 3 頭から組む（既定）。',
-  },
-  {
-    key: 'aggressive',
-    emoji: '🔥',
-    label: '積極的',
-    description: '1 点 = 予算の 50%。連系は上位 4 頭から組む（点数多め）。',
-  },
-];
+// **RACE 画面と同じ選択肢にする。** シミュレーションは「RACE 画面の予想を全レースで
+// やったらどうなるか」を見るものなので、条件の呼び名も刻みも揃っていないと比べられない。
+// 以前は「戦略 (安定・標準・積極的)」で 1 点の額と頭数をまとめて動かしていたが、
+// 1 点 = 100 円に固定した今、動くのは頭数だけになった。
+const AIM_PRESETS = [
+  { value: 3, label: '本命中心', hint: '予想上位 3 頭だけで買い目を組む' },
+  { value: 5, label: '標準', hint: '予想上位 5 頭で買い目を組む' },
+  { value: 8, label: '穴も拾う', hint: '予想上位 8 頭まで広げ、人気薄も買い目に入れる' },
+] as const;
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -392,7 +371,8 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   const [start, setStart] = useState(defaultStart);
   const [end, setEnd] = useState(defaultEnd);
   const [budget, setBudget] = useState(100_000);
-  const [strategy, setStrategy] = useState<SimulationStrategy>('balanced');
+  const [aim, setAim] = useState<number>(3);
+  const [betTypes, setBetTypes] = useState<BetType[] | null>(null);
   // 1 race 絶対上限 (円)。0 で無効。default 5000 円 (= 100k 元手の 5%)。
   const [maxStakePerRaceYen, setMaxStakePerRaceYen] = useState(5_000);
   // 既定は flat。compound は払戻 1.0 未満の券種を数百レース買うと破産し、
@@ -478,7 +458,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         start: start || undefined,
         end: end || undefined,
         budget,
-        strategy,
+        strategy: 'balanced',
+        top_n_horses: aim,
+        ...(betTypes ? { bet_types: betTypes } : {}),
         max_stake_per_race_yen: maxStakePerRaceYen,
         exclude_low_information: excludeLowInfo,
         staking,
@@ -605,7 +587,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                       </span>
                       <span className="text-xs text-subtle-foreground">
                         複勝は確信度{' '}
-                        {((settings.place_min_confidence ?? 0.3) * 100).toFixed(0)}% 以上の
+                        {((settings.place_min_hit_prob ?? 0.6) * 100).toFixed(0)}% 以上の
                         レースだけ / 連系の確率もこのモデル由来
                       </span>
                     </>
@@ -676,25 +658,61 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
           )}
 
           <div className="flex flex-col gap-2">
-            <Label>戦略</Label>
-            <div className="flex flex-wrap gap-2">
-              {STRATEGY_PRESETS.map((p) => (
+            <Label>買う馬券</Label>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {ALL_BET_TYPES.map((betType) => {
+                const current = betTypes ?? (settings?.enabled_bet_types as BetType[] | undefined) ?? [];
+                const on = current.includes(betType);
+                return (
+                  <button
+                    key={betType}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => {
+                      const next = on
+                        ? current.filter((b) => b !== betType)
+                        : [...current, betType];
+                      if (next.length === 0) return; // 全部外すと候補が空になる
+                      setBetTypes(next);
+                    }}
+                    className={`rounded-sm border px-2 py-1 text-xs transition-colors ${
+                      on
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground'
+                    }`}
+                  >
+                    {betType}
+                  </button>
+                );
+              })}
+              {betTypes == null && (
+                <span className="ml-1 text-xs text-subtle-foreground">（いつもの設定）</span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label>狙い方</Label>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {AIM_PRESETS.map((preset) => (
                 <button
-                  key={p.key}
+                  key={preset.value}
                   type="button"
-                  onClick={() => setStrategy(p.key)}
-                  className={`flex flex-col items-start gap-1 rounded-sm border px-4 py-3 text-left transition-colors ${
-                    strategy === p.key
-                      ? 'border-primary bg-primary/15 text-foreground ring-1 ring-primary/40'
-                      : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:bg-card-elevated/40 hover:text-foreground'
+                  aria-pressed={aim === preset.value}
+                  title={preset.hint}
+                  onClick={() => setAim(preset.value)}
+                  className={`rounded-sm border px-2 py-1 text-xs transition-colors ${
+                    aim === preset.value
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground'
                   }`}
                 >
-                  <span className="text-sm font-medium">
-                    {p.emoji} {p.label}
-                  </span>
-                  <span className="text-xs text-muted-foreground">{p.description}</span>
+                  {preset.label}
                 </button>
               ))}
+              <span className="ml-1 text-xs text-subtle-foreground">
+                {AIM_PRESETS.find((p) => p.value === aim)?.hint}・1 点 = 100 円
+              </span>
             </div>
           </div>
 

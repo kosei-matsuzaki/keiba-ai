@@ -22,7 +22,7 @@ def client_with_settings(app_with_temp_db: FastAPI, tmp_path: Path):
     store = SettingsStore(tmp_path / "settings.json")
     store.save({
         "probability_model_path": "models/20260827T140017-nn",
-        "place_min_confidence": 0.3,
+        "place_min_hit_prob": 0.6,
         "win_min_odds": 1.1,
         "stake_units": {"単勝": 500},
     })
@@ -56,7 +56,7 @@ def test_single_bet_records_the_conditions(client_with_settings: TestClient):
     cond = resp.json()["conditions"]
     assert cond is not None
     assert cond["probability_model"] == "20260827T140017-nn"
-    assert cond["place_min_confidence"] == 0.3
+    assert cond["place_min_hit_prob"] == 0.6
     assert cond["win_min_odds"] == 1.1
 
 
@@ -80,7 +80,7 @@ def test_probability_model_unset_records_none(app_with_temp_db: FastAPI, tmp_pat
     しきい値だけ残すと「0.30 で絞ったのか、絞っていないのか」が判別できない。
     """
     store = SettingsStore(tmp_path / "settings.json")
-    store.save({"probability_model_path": None, "place_min_confidence": 0.3})
+    store.save({"probability_model_path": None, "place_min_hit_prob": 0.6})
     app_with_temp_db.dependency_overrides[get_settings_store] = lambda: store
     try:
         with TestClient(app_with_temp_db) as client:
@@ -94,4 +94,4 @@ def test_probability_model_unset_records_none(app_with_temp_db: FastAPI, tmp_pat
 
     cond = resp.json()["conditions"]
     assert cond["probability_model"] is None
-    assert cond["place_min_confidence"] is None
+    assert cond["place_min_hit_prob"] is None

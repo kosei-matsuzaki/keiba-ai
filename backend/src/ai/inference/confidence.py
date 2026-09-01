@@ -38,19 +38,34 @@ from core.logging import get_logger
 log = get_logger(__name__)
 
 
+#: 券種 → 確率モデルのどの確率を「確信度」とするか。
+#:
+#: **確信度は券種をまたいで同じ意味にする**: 「その買い目が当たる確率」。
+#: 単勝なら 1 着になる確率、複勝なら 3 着以内に入る確率、連系なら組合せの的中確率
+#: (連系は `merge_combination_sources` が既に確率モデル由来の値を入れている)。
+#:
+#: 以前は複勝の判定にも **1 着確率** を使っていた。前進検証で効くことは確かめて
+#: あったが、「複勝を買うかを 1 着確率で決める」は意味が通らず、画面に出しても
+#: 読み手が解釈できない。3 着内率に替えても成績は同等 (OOF 14,619 レース、
+#: 買う割合 25% で 0.904 → 0.907、10% で 0.925 → 0.930)。
+_CONFIDENCE_COLUMN: dict[str, str] = {"単勝": "win_prob", "複勝": "place_prob"}
+
+
 def pick_confidence(
     prob_bundle: ModelBundle,
     frame: pd.DataFrame,
     horse_id: str,
     session: Session | None = None,
+    bet_type: str = "複勝",
 ) -> float | None:
-    """確率モデルが ``horse_id`` に与える単勝確率。取れなければ None。
+    """確率モデルから見た「その買い目が当たる確率」。取れなければ None。
 
     Args:
         prob_bundle: proper scoring rule で学習したモデル (`loss_type="plackett_luce"`)。
         frame: 1 レース分の feature frame。
         horse_id: **active が選んだ馬**。確率モデル自身の本命ではない。
         session: 履歴 GRU 用。**必ず渡すこと** (None だと履歴が zero に degrade する)。
+        bet_type: 単勝なら 1 着確率、複勝 (既定) なら 3 着内率を返す。
 
     Returns:
         0.0〜1.0 の確率、または算出できないとき None。
@@ -63,7 +78,10 @@ def pick_confidence(
     row = preds[preds["horse_id"] == horse_id]
     if row.empty:
         return None
-    value = float(row.iloc[0]["win_prob"])
+    column = _CONFIDENCE_COLUMN.get(bet_type, "place_prob")
+    if column not in row.columns:
+        return None
+    value = float(row.iloc[0][column])
     return value if 0.0 <= value <= 1.0 else None
 
 
@@ -79,29 +97,42 @@ def is_place_worth_buying(confidence: float | None, threshold: float) -> bool:
     return confidence >= threshold
 
 
-#: 確信度 → 複勝の 1 点額の倍率。**しきい値を超えた先も確信度で厚みを変える。**
+#: 確信度に対する賭け金の反応。**券種で形が違うのは実測に基づく。**
 #:
-#: 前進検証 (OOF 14,619 レース・2020-05〜2024-10) の実測:
+#: OOF 14,619 レース (2020-05〜2024-10) を確信度で 5 分位に割ったときの回収率:
 #:
-#:   定額 (全レース)              0.850
-#:   確信度 0.30 以上だけ定額       0.875   ← 従来
-#:   段階 x1/x2/x3               0.882   ← これ
+#:   単勝 (1着確率)  0.875 / 0.923 / 0.851 / 0.843 / 0.859   相関 −0.005
+#:   複勝 (3着内率)  0.749 / 0.843 / 0.870 / 0.875 / 0.911   相関 +0.041
 #:
-#: 5 年すべてでプラス (+0.019 / +0.001 / +0.013 / +0.005 / +0.001)。効果は小さいが
-#: 符号が安定している。**単勝と連系には使わない** — 単勝は確信度で絞ると回収率が
-#: 下がり (0.870 → 0.854)、連系は無相関 (0.877 → 0.879)。
-PLACE_STAKE_TIERS: tuple[tuple[float, int], ...] = ((0.55, 3), (0.40, 2), (0.0, 1))
+#: **単勝は的中率が 6% → 37% と動くのに回収率が動かない** = 市場が正しく値付けして
+#: いる。確信度で賭け金を動かしても取り分は増えない。複勝だけ単調に上がるので、
+#: 複勝の点数だけを確信度に比例させる (連系も無相関: 0.877 → 0.879)。
+PLACE_CONFIDENCE_REFERENCE = 0.50
+PLACE_CONFIDENCE_EXPONENT = 2
+PLACE_MAX_POINTS = 15
 
 
-def place_stake_multiplier(confidence: float | None) -> int:
-    """複勝の 1 点額を何倍にするか。確率が取れないときは 1 倍 (従来どおり)。
+def points_for_confidence(
+    bet_type: str,
+    confidence: float | None,
+    base_points: int,
+) -> int:
+    """確信度に応じた点数 (1 点 = stake_unit)。
 
-    ここは「買うかどうか」ではなく「いくら賭けるか」。買うかどうかは
-    ``is_place_worth_buying`` が ``place_min_confidence`` で決める。
+    複勝は ``base × (確信度 / 0.50)^2`` を 1〜15 点に丸める。基準 0.50 は
+    「3 着以内に入る確率が半々」の位置。実測 (OOF・基準 5 点):
+
+        定額 5 点          0.875   3.80 点/レース
+        段階 x1/x2/x3      0.882   8.87 点/レース   ← 旧実装
+        連続 (p/0.5)^2     0.891   5.42 点/レース   ← これ
+
+    **連続のほうが回収率が高く、使う点数も少ない。** 5 年すべてでプラス
+    (+0.037 / +0.007 / +0.019 / +0.008 / +0.016)。
+
+    単勝・連系は確信度で動かさない (上のコメントの実測どおり、回収率が反応しない)。
+    確率が取れないときも基準のまま — 壊れたときに賭け金が動くと挙動が読めない。
     """
-    if confidence is None:
-        return 1
-    for lo, mult in PLACE_STAKE_TIERS:
-        if confidence >= lo:
-            return mult
-    return 1
+    if bet_type != "複勝" or confidence is None:
+        return base_points
+    raw = round(base_points * (confidence / PLACE_CONFIDENCE_REFERENCE) ** PLACE_CONFIDENCE_EXPONENT)
+    return max(1, min(PLACE_MAX_POINTS, int(raw)))

@@ -502,7 +502,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 買い方は券種で異なる（`ai/betting/strategy.py`、根拠は `docs/ai-model.md`）:
 
 - **単勝**: モデル 1 位の 1 頭のみ。オッズ下限 `win_min_odds` だけ見る
-- **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば確信度 `place_min_confidence` 未満は見送る
+- **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば 3 着内率 `place_min_hit_prob` 未満は見送る。点数は確信度に比例 (1〜15 点)
 - **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 `top_n_horses` 頭から組む
 
 **EV（期待値）はどの券種でも買う/買わないの判定に使わない。**
@@ -541,7 +541,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | GET | `/api/bets/timeseries` | 200 | 損益推移（グラフ用）|
 | GET | `/api/bets/export.csv` | 200 | CSV 書き出し |
 
-登録時の条件は記録に残る（`conditions`）。買い目を決めたモデル・確率モデルの有無・`place_min_confidence`・`win_min_odds`・券種別の金額を、クライアントの申告ではなく**サーバ側で写す**。取得できなくても購入記録そのものは残す。
+登録時の条件は記録に残る（`conditions`）。買い目を決めたモデル・確率モデルの有無・`place_min_hit_prob`・`win_min_odds`・券種別の金額を、クライアントの申告ではなく**サーバ側で写す**。取得できなくても購入記録そのものは残す。
 
 ### 設定
 
@@ -560,7 +560,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | `scraper_stopped` | 緊急停止フラグ | `false` |
 | `win_min_odds` | 単勝で買うオッズ下限（EV 条件の代わり） | 1.1 |
 | `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
-| `place_min_confidence` | 複勝を買う確信度の下限 | 0.30 |
+| `place_min_hit_prob` | 複勝を買う 3 着内率の下限 | 0.60 |
 | `race_budget` | 1 レースに使う上限（円） | 5000 |
 | `stake_unit` | 1 点あたりの既定額（円） | 100 |
 | `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |

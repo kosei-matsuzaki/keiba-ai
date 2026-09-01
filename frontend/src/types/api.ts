@@ -286,7 +286,8 @@ export interface SettingsResponse {
    */
   probability_model_path: string | null;
   /** 複勝を買う確信度の下限。AI の本命に対する確率モデルの単勝確率がこれ未満なら見送る */
-  place_min_confidence: number;
+  /** 複勝を買う下限。確率モデルが本命に付けた 3 着内率 */
+  place_min_hit_prob: number;
 }
 
 export interface SettingsUpdate {
@@ -301,7 +302,7 @@ export interface SettingsUpdate {
   stake_units?: Record<string, number>;
   enabled_bet_types?: BetType[];
   probability_model_path?: string | null;
-  place_min_confidence?: number;
+  place_min_hit_prob?: number;
 }
 
 // ── Recommendations ───────────────────────────────────────────────────────────
@@ -564,6 +565,10 @@ export interface SimulationRequest {
   model_id?: number;
   /** 履歴の無いレース (新馬戦など) を除外する。 */
   exclude_low_information?: boolean;
+  /** この実行だけの対象券種。未指定なら設定値 (RACE 画面と同じ意味)。 */
+  bet_types?: string[];
+  /** 連系を組む上位頭数 = 狙い方。未指定なら戦略プリセット。 */
+  top_n_horses?: number;
   /**
    * 賭け金の決め方。flat=1 レースの予算を固定（既定）/ compound=残資産の一定割合。
    * compound は払戻 1.0 未満の券種を数百レース買うと破産し、以降を実質評価しなく

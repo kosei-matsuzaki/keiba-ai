@@ -971,7 +971,7 @@ def _cli() -> None:
     place_min_conf = (
         args.place_min_confidence
         if args.place_min_confidence is not None
-        else float(_settings.get("place_min_confidence", 0.30))
+        else float(_settings.get("place_min_hit_prob", 0.60))
     )
     if prob_model_path is not None:
         print(f"確率モデル: {prob_model_path.name} (複勝は確信度 {place_min_conf:.2f} 以上)")

@@ -176,7 +176,7 @@ async def evaluate_model(
 
     settings = store.load()
     prob_model_path = resolve_model_path(settings.get("probability_model_path"))
-    place_min_conf = float(settings.get("place_min_confidence", 0.30))
+    place_min_conf = float(settings.get("place_min_hit_prob", 0.60))
 
     async def _coro() -> None:
         await asyncio.to_thread(

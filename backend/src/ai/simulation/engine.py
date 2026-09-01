@@ -32,7 +32,7 @@ from ai.betting.strategy import recommend_for_race
 from ai.inference.confidence import (
     is_place_worth_buying,
     pick_confidence,
-    place_stake_multiplier,
+    points_for_confidence,
 )
 from ai.inference.predict import (
     _combinations_from_base,
@@ -477,7 +477,7 @@ def simulate_active_model(
 
         # 複勝の確信度フィルタ (確率専用モデルが指定されているときだけ)
         race_types = types
-        place_mult = 1
+        place_conf: float | None = None
         if prob_bundle is not None and "複勝" in types:
             conf = pick_confidence(
                 prob_bundle, race_frame, preds.iloc[0]["horse_id"], session=session
@@ -487,7 +487,7 @@ def simulate_active_model(
                 n_skipped_place += 1
             else:
                 # 買うと決めた後の厚み。確信度の高いレースに厚く賭ける。
-                place_mult = place_stake_multiplier(conf)
+                place_conf = conf
 
         # Combination predictions + odds (with implied fill)
         race_odds, race_odds_sources = compute_race_odds_with_sources(
@@ -535,18 +535,19 @@ def simulate_active_model(
             )
         if race_budget < _MIN_STAKE:
             n_races_broke += 1
-        stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
-        # 券種別の 1 点あたり金額。設定は「単勝 500 / 連系 100」のような比率で
-        # 持つので、シミュレーションでは stake_unit を基準にその比で割り当てる。
+        # **券種別の 1 点あたり金額は設定をそのまま使う。**
+        # 以前は戦略プリセットの stake_ratio で予算比に潰してから、券種比で割り直して
+        # いた。同じ設定でも RACE 画面と金額が変わり、「この予想を全レースでやったら」
+        # という問いに答えられていなかった。
         units: dict[str, int] | None = None
         if stake_unit_by_bet_type:
-            base = max(stake_unit_by_bet_type.values())
-            units = {
-                bt: max(100, int(stake_unit * (v / base) / 100) * 100)
-                for bt, v in stake_unit_by_bet_type.items()
-            }
-            if place_mult > 1 and "複勝" in units:
-                units["複勝"] = units["複勝"] * place_mult
+            units = {bt: max(100, int(v)) for bt, v in stake_unit_by_bet_type.items()}
+            stake_unit = min(units.values())
+        else:
+            stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
+            if place_conf is not None and "複勝" in units:
+                base_points = max(1, round(units["複勝"] / stake_unit)) if stake_unit else 1
+                units["複勝"] = points_for_confidence("複勝", place_conf, base_points) * stake_unit
 
         rec = recommend_for_race(
             predictions=preds,

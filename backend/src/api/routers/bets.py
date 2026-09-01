@@ -251,8 +251,8 @@ def _capture_conditions(session: Session, store: SettingsStore) -> str | None:
             {
                 "bet_model": Path(str(active)).name if active else None,
                 "probability_model": Path(str(prob)).name if prob else None,
-                "place_min_confidence": (
-                    float(settings.get("place_min_confidence", 0.30)) if prob else None
+                "place_min_hit_prob": (
+                    float(settings.get("place_min_hit_prob", 0.60)) if prob else None
                 ),
                 "win_min_odds": float(settings.get("win_min_odds", 1.1)),
                 "stake_units": settings.get("stake_units") or {},

@@ -31,7 +31,7 @@ def _dict_to_response(data: dict) -> SettingsResponse:
             data.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)
         ),
         probability_model_path=data.get("probability_model_path"),
-        place_min_confidence=float(data.get("place_min_confidence", 0.30)),
+        place_min_confidence=float(data.get("place_min_hit_prob", 0.60)),
     )
 
 
