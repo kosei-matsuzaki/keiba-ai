@@ -76,6 +76,13 @@ function edgeNote(logLoss: number | null, market: number | null): string | undef
   }`;
 }
 
+/**
+ * 運用中の 2 つのモデルを縦に並べる。
+ *
+ * 役割が違う: active が買い目を決め、確率モデルが確からしさを答える。
+ * 確率モデルに馬を選ばせない (的中率は上がるが人気馬に寄って回収率が落ちる) ので、
+ * 同じ指標を横並びにせず、何を担っているかが読める形にしてある。
+ */
 export function OperatingModels({ models, summary }: OperatingModelsProps) {
   const active = models?.find((m) => m.is_active) ?? null;
   const probability = models?.find((m) => m.is_probability_model) ?? null;

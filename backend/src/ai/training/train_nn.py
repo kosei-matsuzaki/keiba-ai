@@ -577,6 +577,29 @@ def _build_loss_fn(
     )
 
 
+def apply_odds_dropout(
+    odds_features: torch.Tensor, mask: torch.Tensor, p: float
+) -> torch.Tensor:
+    """確率 p で **レースまるごと** の odds をそのレースの平均値に置き換える。
+
+    odds_features は標準化済みなので、レース平均で埋める = 「どの馬も同じオッズ」
+    = head から見て情報ゼロ。1 頭ずつ落とすのではなくレース単位で落とすのは、
+    head が使うのがレース内の相対値だからで、一部の馬だけ潰すと存在しない
+    人気順を教えることになる。
+
+    padding 位置も一緒に書き換わるが、model 側で mask されるので影響しない。
+    """
+    if p <= 0.0:
+        return odds_features
+    drop = torch.rand(odds_features.size(0), device=odds_features.device) < p
+    if not bool(drop.any()):
+        return odds_features
+    m = mask.unsqueeze(-1).to(odds_features.dtype)
+    race_mean = (odds_features * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
+    flat = race_mean.unsqueeze(1).expand_as(odds_features)
+    return torch.where(drop.view(-1, 1, 1), flat, odds_features)
+
+
 class RaceLitModule(pl.LightningModule):
     """Lightning wrapper around RaceTransformerModel.
 
@@ -602,6 +625,7 @@ class RaceLitModule(pl.LightningModule):
         flat_ev_max_bets: float = 0.0,
         pl_top_k: int | None = None,
         place_temp: float = 0.5,
+        odds_dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.model = model
@@ -619,17 +643,24 @@ class RaceLitModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.max_epochs = max_epochs
+        self.odds_dropout = odds_dropout
 
     def _compute_loss(self, batch: dict) -> torch.Tensor:
         # history_seq/history_lengths は履歴有効時のみ batch に存在 (Lightning が
         # device 転送済み)。無い場合 None → model は現行パス。
+        odds_features = batch.get("odds_features")
+        # 学習中だけ odds を潰す。validation / 推論はそのまま (deploy と同じ入力)。
+        if odds_features is not None and self.training and self.odds_dropout > 0.0:
+            odds_features = apply_odds_dropout(
+                odds_features, batch["mask"], self.odds_dropout
+            )
         scores = self.model(
             batch["horse_features"],
             batch["race_features"],
             batch["mask"],
             history_seq=batch.get("history_seq"),
             history_lengths=batch.get("history_lengths"),
-            odds_features=batch.get("odds_features"),
+            odds_features=odds_features,
         )
         if self.loss_fn_name == "place_growth":
             loss = self.loss_fn(scores, batch["place_ret"], batch["mask"])
@@ -797,6 +828,8 @@ def train_nn(
     flat_ev_max_bets: float = 0.0,
     pl_top_k: int | None = None,
     place_temp: float = 0.5,
+    odds_dropout: float = 0.0,
+    head_norm: str = "ability",
     persist: bool = True,
     history_seq_len: int = 15,
     prebuilt_history=None,
@@ -996,6 +1029,7 @@ def train_nn(
         n_transformer_layers=n_transformer_layers,
         history_feat_dim=history_feat_dim,
         odds_feat_dim=len(odds_feature_cols),
+        head_norm_mode=head_norm,
     )
 
     # Two-stage / fine-tuning: warm-start weights from a previously saved model.
@@ -1023,6 +1057,7 @@ def train_nn(
         flat_ev_max_bets=flat_ev_max_bets,
         pl_top_k=pl_top_k,
         place_temp=place_temp,
+        odds_dropout=odds_dropout,
     )
 
     # Trainer callbacks
@@ -1252,6 +1287,11 @@ def train_nn(
             else None
         ),
         "combo_weight": combo_weight if loss == "multi" else None,
+        # 学習時だけ head の odds を潰した割合 (推論には影響しないが、
+        # どの条件で学習したかが分からないと比較できないので残す)。
+        "odds_dropout": odds_dropout,
+        # head の正規化の掛け方。serving の再構築に必要 (層の形が変わる)。
+        "head_norm_mode": head_norm,
         # flat_ev の決定ルールは推論側では使わないが、どの EV 閾値・gate 温度で
         # 学習したかが分からないと再現も比較もできないので meta に残す。
         "flat_ev": (
@@ -1332,6 +1372,8 @@ def train_nn(
 
 
 def _cli() -> None:
+    """コマンドラインの入口。引数はそのまま train_nn() に渡り、再現に要るものは
+    meta.json に記録される (どの条件で学習したか分からないと比較できない)。"""
     parser = argparse.ArgumentParser(
         description="Train keiba-ai NN (Set Transformer); default objective is "
         "ROI-targeted (log_growth + valid_tansho_roi)."
@@ -1411,6 +1453,22 @@ def _cli() -> None:
         help=(
             "--loss place_growth: softmax の温度 (既定 0.5)。実運用は score 最大の 1 頭に"
             "賭けるので、低いほど argmax に整合する。1.0 は配分を全馬に散らす旧挙動。"
+        ),
+    )
+    parser.add_argument(
+        "--odds-dropout", type=float, default=0.0,
+        help=(
+            "学習中にレース単位で odds をレース平均に潰す確率 (既定 0.0 = 無効)。"
+            "head の odds concat が強すぎて ability エンコーダが育たない問題への対策。"
+            "推論は常に実オッズを使うので、この値は学習時のみ効く。"
+        ),
+    )
+    parser.add_argument(
+        "--head-norm", choices=("ability", "joint"), default="ability",
+        help=(
+            "head の LayerNorm の掛け方。ability (既定) は ability だけ正規化して odds を"
+            "素のまま concat する。joint は concat してからまとめて正規化する — odds 2 列"
+            "だけが正規化を免れている非対称が、odds を効かせすぎている疑いを測るため。"
         ),
     )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
@@ -1531,6 +1589,8 @@ def _cli() -> None:
         flat_ev_max_bets=args.flat_ev_max_bets,
         pl_top_k=args.pl_top_k,
         place_temp=args.place_temp,
+        odds_dropout=args.odds_dropout,
+        head_norm=args.head_norm,
         history_seq_len=args.history_seq_len,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

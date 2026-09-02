@@ -56,6 +56,11 @@ interface SettingsFormProps {
   activeSection?: SettingsSection;
 }
 
+/**
+ * 設定フォーム。**保存した値がそのまま返ってくるかは画面では分からない** —
+ * バックエンドの _dict_to_response でキー名を間違えると pydantic が黙って捨て、
+ * 既定値が返る (「保存したのに戻る」に見える)。項目を足すときは応答側も確かめる。
+ */
 export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: SettingsFormProps) {
   const toForm = (d: SettingsResponse) => ({
     ...d,

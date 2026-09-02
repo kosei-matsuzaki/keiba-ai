@@ -172,6 +172,13 @@ function MetaItem({ label, value, mono }: MetaItemProps) {
   );
 }
 
+/**
+ * 1 レースの画面。出走馬・AI の根拠・推奨買目・答え合わせをこの 1 枚に集める。
+ *
+ * 買うかどうかを決めているのは推奨買目のカードで、表は根拠を見るためのもの。
+ * 表の行に BUY バッジは出さない (買うのは常にモデル 1 位の 1 頭なので、
+ * 列を 1 つ使って「1 位かどうか」を二重に示すだけになる)。
+ */
 export function RaceDetail() {
   const { race_id = '' } = useParams<{ race_id: string }>();
   const [searchParams] = useSearchParams();

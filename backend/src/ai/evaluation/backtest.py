@@ -839,6 +839,8 @@ def evaluate(
 
 
 def _cli() -> None:
+    """コマンドラインの入口。--persist を付けたときだけ model_runs.metrics_json に
+    書き戻す (評価しただけで DB を汚さないため)。"""
     parser = argparse.ArgumentParser(description="Evaluate keiba-ai model via backtest")
     parser.add_argument("--model", type=Path, required=True, help="Path to model directory")
     parser.add_argument("--db", type=Path, default=None, help="Path to SQLite DB")

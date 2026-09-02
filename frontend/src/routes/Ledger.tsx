@@ -226,6 +226,9 @@ function ProfitCell({ group }: { group: BetGroup }) {
   );
 }
 
+/**
+ * 購入記録の内訳表。行を開くと同じ買い方の点をまとめて見せる。
+ */
 function DetailTable({ params }: { params: BetFilterParams }) {
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

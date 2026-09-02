@@ -26,7 +26,7 @@ import {
   startSimulationJob,
 } from '@/lib/api';
 import { formatPercent, formatRatio, formatSignedYen, formatYen } from '@/lib/formatters';
-import { toast } from '@/components/ui/toast';
+import { toast } from '@/lib/toast';
 import { ALL_BET_TYPES } from '@/lib/betTypes';
 import type {
   BetType,
@@ -127,6 +127,10 @@ function _formatRunTimestamp(iso: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
+/**
+ * 保存済みの実行を並べる。設定を変えて回し直しても後から見分けられるよう、
+ * 実行時の条件 (conditions_json) を結果の見出しに一緒に出す。
+ */
 function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPanelProps) {
   const queryClient = useQueryClient();
   const listQuery = useQuery({
@@ -267,6 +271,13 @@ interface ModelSimulationPanelProps {
   modelId: number;
 }
 
+/**
+ * モデルを過去のレースに当てて損益を見るパネル。
+ *
+ * RACE 画面の推奨買目とまったく同じ仕組みで回す。入力は 1 レースに使う上限だけで、
+ * 初期資産も賭け金の決め方も持たない — 賭け金が残高に依存しないので破産が起きず、
+ * 評価が途中で止まらない。結果は資産残高ではなく 0 から始まる累計損益で出す。
+ */
 export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   const today = new Date();
   const defaultEnd = _isoDate(today);
