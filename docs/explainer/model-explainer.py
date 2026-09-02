@@ -11,8 +11,8 @@ Palette (consistent throughout):
   ability(a_i)=fuchsia / Query=cyan / Key=yellow / Value=lime / score=rose
 
 Render (run from the repository root so docs/images resolves for act7):
-  manim -ql docs/model-explainer.py ModelMath                      # preview
-  manim -r 1920,1080 --fps 30 docs/model-explainer.py ModelMath    # 1080p30 final
+  manim -ql docs/explainer/model-explainer.py ModelMath                      # preview
+  manim -r 1920,1080 --fps 30 docs/explainer/model-explainer.py ModelMath    # 1080p30 final
 
 Text uses manim's default Text (plain serif) so captions match the Computer Modern math.
 Requires the optional [nn] extra is NOT needed — only `manim` (and its deps).

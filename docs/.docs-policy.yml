@@ -29,6 +29,8 @@ layout:
     role: モデル設計 (問題定義・Set Transformer・損失・確率変換・特徴量・学習評価フロー・ベットルール・改善実験)
   - path: docs/operations.md
     role: 運用 (セットアップ・データ取り込み・再学習サイクル・モデル世代管理・バックアップ・トラブルシューティング)
+  - path: docs/explainer/
+    role: 解説動画 (manim のソースと書き出し)。散文ではなくコードとビルド生成物
   - path: docs/archive/
     role: 記録。いまの仕様として読まない
 

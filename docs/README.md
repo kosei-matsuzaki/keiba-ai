@@ -14,7 +14,7 @@ README の `<!-- portfolio:begin -->` 〜 `<!-- portfolio:end -->` の内側は�
 | [ai-model.md](ai-model.md) | モデル設計（問題定義・Set Transformer・損失・確率変換・特徴量・学習評価フロー・ベットルール・実験の記録） | 学習・評価・買い方を変える前。**否定済みの仮説を再訪しないため** |
 | [operations.md](operations.md) | 運用（セットアップ・データ取り込み・再学習サイクル・モデル世代管理・バックアップ・トラブルシューティング） | 動かすとき・壊れたとき |
 | [archive/](archive/README.md) | 記録（打ち切った系統・過去の設計メモ）。[2026.md](archive/2026.md) と [design-review-2026-08-23.md](archive/design-review-2026-08-23.md) | 「なぜこうなっているか」を辿るとき。**いまの仕様として読まない** |
-| `model-explainer.py` / `.mp4` | モデルの計算過程を manim で可視化した解説動画とそのソース | 人に説明するとき |
+| [explainer/](explainer/README.md) | モデルの計算過程を manim で可視化した解説動画とそのソース。書き出し手順もここ | 人に説明するとき / 動画を撮り直すとき |
 | `images/` | 画面キャプチャ。直下の README とポートフォリオサイトの両方がここを参照する | 画面を撮り直したとき |
 
 ## クイックスタート

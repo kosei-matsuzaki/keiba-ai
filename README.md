@@ -26,7 +26,7 @@
 
 *レース詳細 — 予想と推奨買目、買い方の条件設定、レース後の答え合わせ*
 
-[![モデルの計算過程（能力推定 → self-attention → 確率導出 → 買目提案）を manim で可視化した自作の解説動画](docs/images/model-explainer-poster.png)](docs/model-explainer.mp4)
+[![モデルの計算過程（能力推定 → self-attention → 確率導出 → 買目提案）を manim で可視化した自作の解説動画](docs/images/model-explainer-poster.png)](docs/explainer/model-explainer.mp4)
 
 *モデルの計算過程（能力推定 → self-attention → 確率導出 → 買目提案）を manim で可視化した自作の解説動画（サムネイルをクリックで再生・ダウンロード）*
 
