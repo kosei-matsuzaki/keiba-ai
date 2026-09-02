@@ -89,6 +89,17 @@ api → jobs → ai / features / scraper → db (SQLAlchemy models)
 
 循環依存は禁止。`ai` は `scraper` を直接呼び出さない。
 
+フロント側も同じ向きを持つ。
+
+```text
+routes / App / router → components → lib / hooks / store / types
+```
+
+`hooks` から `components` を呼ばない。両方向とも `.code-policy.yml` の `layers` に
+書き起こしてあり、`/code-keeper:check` が実際の import を数えて逸脱を出す。
+sonner の `toast` を `components/ui/` に置いていた頃はここが 5 本逆流していた
+（中身は関数であってコンポーネントではないので `lib/toast.ts` へ移した）。
+
 ### DI 構成
 
 FastAPI の依存注入（`api/deps.py`）で以下を提供する。
@@ -254,6 +265,11 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 └─────────────────────────────────────────┘
 ```
 
+出走馬表は `components/EntryPredictionTable.tsx`、並べ替えの規則は
+`lib/entrySort.ts` に分けてある（`routes/RaceDetail.tsx` が 958 行に伸びたため）。
+表は props だけで完結していて画面側の状態を見ない。`LowInformationNotice` /
+`RunProgress` / `RaceStepper` はこの画面固有のつくりものなので置いたまま。
+
 #### Ledger
 
 ```text
@@ -334,8 +350,9 @@ FieldRow には help text を添える。
 
 - **TanStack Query（React Query v5）**: サーバーデータのフェッチ・キャッシュ・再取得を管理。API 呼び出しは `src/hooks/` のカスタムフックに集約
 - **Zustand**: ページをまたいで保持する UI 状態のみ管理。サーバーデータは一切持たない
-- **sonner**: Toast 通知ライブラリ。`src/components/ui/toast.tsx` / `toaster.tsx` を sonner ラッパとして手書き配置。`main.tsx` で `<Toaster />` をマウント
-- **react-hook-form + zod**: SettingsForm / TrainModelDialog の共通フォームバリデーションパターン。`zodResolver` + `mode: 'onChange'` で inline error を表示し、submit ボタンを自動 disable する。ダイアログは `open` のたびに `reset` で初期値を復元する。`src/components/ui/form.tsx` で react-hook-form と shadcn フォームコンポーネントを統合
+- **sonner**: Toast 通知ライブラリ。`toast` は関数なので `src/lib/toast.ts`、画面に出す `<Toaster />` は `src/components/ui/toaster.tsx` に置き、`main.tsx` でマウントする
+- **react-hook-form + zod**: SettingsForm / TrainModelDialog の共通フォームバリデーションパターン。`zodResolver` + `mode: 'onChange'` で inline error を表示し、submit ボタンを自動 disable する。ダイアログは `open` のたびに `reset` で初期値を復元する。ライブラリを直接使う（shadcn の `ui/form.tsx` ラッパは使っていないので 2026-09-02 に削除した）
+- **購入記録を変える mutation は `useBetMutation` に集約**（`hooks/useBetMutation.ts`）。記録・まとめ記録・削除の 3 つは成功トーストの文言以外が同じで、失敗時の扱いと無効化するキー `['bets']` は 3 つとも同時に変わる
 - API クライアントは `src/lib/api.ts` の `ky` インスタンスに集約し、各フックから呼び出す
 
 ### React Query（TanStack Query）

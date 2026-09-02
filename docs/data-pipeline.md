@@ -129,6 +129,20 @@ data/raw/misc/<sha256(url)[:16]>.html      — その他 HTML（馬詳細 / 馬�
 - `KEIBA_KEEP_MISC_CACHE=1` 環境変数を設定するとデバッグ用に misc キャッシュを削除しない（opt-out）
 - `data/raw/` は `.gitignore` 対象
 
+### キャッシュから DB を直す（retro-fill）
+
+parser を直したあと、**通信せずに**キャッシュ済み HTML を読み直して DB を更新するジョブが 2 つある。
+
+```bash
+uv run python -m jobs.refill_race_meta --start 2024-01-01 --end 2024-12-31   # name / race_class / 馬場 / 距離
+uv run python -m jobs.refill_payouts   --limit 100                            # payouts テーブル
+```
+
+- 走査は両方とも `jobs/cache_scan.py` の `select_cached_races()` に一本化されている。`data/raw/<yyyy>/<mm>/<race_id>.html` を列挙し、`races` に行のあるものだけを対象にする（行が無いと FK 制約に触るため、走らせる前に落として件数だけ数える）
+- **期間は必ず `races.date` で判定する。race_id から日付を作らない**（年+場+回+日+R で、`race_id[4:6]` は月ではなく競馬場コード）。競馬場は 01〜10、回次は 1〜6 なので `datetime.date()` は例外を出さず**静かに違う日付になり**、`--start` / `--end` を付けるとほとんどのレースが範囲外に落ちる。2 つのジョブが同じ走査を別々に持っていたため、同じバグを 2 つ抱えていた
+- `--limit` は**期間で絞ったあと**に掛ける。先に掛けると範囲外のファイルで枠を使い切り、1 件も処理されないことがある（ファイルは race_id 順 = 古い年から並ぶ）
+- `refill_race_meta` は name / race_class を無条件で上書きし、surface / distance / track_condition は**解析できたときだけ**上書きする。直すためのジョブが解析漏れで既存の値を空にしないため
+
 ---
 
 ## 増分取得アルゴリズム
@@ -189,7 +203,7 @@ uv run python -m jobs.ingest_range \
 - 未取得日数は `GET /api/scraper/status?range=N`（デフォルト 30 日）の `missing_dates_count` で確認できる（ok ログ 0 件の日数をカウント）
 - `scrape_log` は UI 監視用途でも参照される。`GET /api/scraper/recent_activity?minutes=N` が直近 N 分のレコードを集計し、status 内訳・rate_per_min・最新 race_id を返す。CLI 実行中の進捗確認に使う。現在この集計を出す画面は無い（`curl` で叩く）
 - `scrape_log.fetched_at` には `ix_scrape_log_fetched_at` インデックスが設定されている（migration 0003）。Phase 2 の大規模 ingest で行数が数万に達しても `recent_activity` の `WHERE fetched_at >= cutoff` が full scan にならないよう保護している
-- `recent_activity` エンドポイントは直近 N 分を最大 2000 行に制限して取得する（約 3 時間分のピーク fetch 量に相当）。UI 側は集計値と最新の `latest_race_id` のみを参照するため、この上限で実運用上の問題は生じない
+- `recent_activity` エンドポイントは直近 N 分を最大 2000 行に制限して取得する（約 3 時間分のピーク fetch 量に相当）。返すのは集計値と最新の `latest_race_id` だけなので、この上限で実運用上の問題は生じない。**フロントにこれを叩くフックは無い**（2026-09-02 に未使用のまま残っていた `useScraperRecentActivity` を削除した）。API クライアント `lib/api.ts` の `fetchScraperRecentActivity` は残してあるので、画面を作るときはそこから使う
 
 ---
 
