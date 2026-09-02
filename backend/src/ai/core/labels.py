@@ -20,13 +20,3 @@ def assign_relevance(finish_position: int | None) -> int:
         return 1
     return 0
 
-
-def assign_is_winner(finish_position: int | None) -> int:
-    """Map finish_position to 0/1 binary "won the race" label.
-
-    Maps finish_position to a 0/1 "won the race" label (win-rate eval helper).
-
-    Returns:
-        1 if finish_position == 1, else 0 (including None / DNF).
-    """
-    return 1 if finish_position == 1 else 0

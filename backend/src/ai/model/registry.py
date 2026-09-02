@@ -28,20 +28,6 @@ if TYPE_CHECKING:
     from ai.model.preprocess import NNPreprocessor
 
 
-@dataclass
-class ModelMeta:
-    path: Path
-    timestamp: str
-    params: dict
-    train_range: str | None
-    valid_range: str | None
-    metrics: dict
-    feature_columns: list[str]
-    loss_type: str | None = None
-    conditional_calibration: bool = False
-    model_type: str = "nn"
-
-
 def _models_dir() -> Path:
     d = data_dir() / "models"
     d.mkdir(parents=True, exist_ok=True)
@@ -85,33 +71,6 @@ def save_nn_model(
         encoding="utf-8",
     )
     return model_dir
-
-
-def list_models() -> list[ModelMeta]:
-    """Return all model generations found in data/models/, sorted by timestamp."""
-    base = _models_dir()
-    results: list[ModelMeta] = []
-    for candidate in sorted(base.iterdir()):
-        meta_file = candidate / "meta.json"
-        if not meta_file.exists():
-            continue
-        meta = json.loads(meta_file.read_text(encoding="utf-8"))
-        results.append(
-            ModelMeta(
-                path=candidate,
-                timestamp=meta.get("timestamp", candidate.name),
-                params=meta.get("params", {}),
-                train_range=meta.get("train_range"),
-                valid_range=meta.get("valid_range"),
-                metrics=meta.get("metrics", {}),
-                feature_columns=meta.get("feature_columns", FEATURE_COLUMNS),
-                loss_type=meta.get("loss_type"),
-                conditional_calibration=bool(meta.get("conditional_calibration", False)),
-                model_type=meta.get("model_type", "nn"),
-            )
-        )
-    return results
-
 
 @dataclass
 class ModelBundle:
@@ -184,21 +143,6 @@ def load_model_full(path: Path) -> ModelBundle:
         nn_history_feat_dim=nn_artifacts.get("nn_history_feat_dim", 0),
         nn_speed_model=nn_artifacts.get("nn_speed_model"),
     )
-
-
-def set_active(model_path: Path, session: Session) -> None:
-    """Mark the model at model_path as active; deactivate all others.
-
-    パス比較は basename (timestamp ディレクトリ名) ベースで行う。これにより
-    WSL で保存した `/mnt/c/...` を Windows サイドカーから activate しても
-    正しく一致する (Path() の str() 化で起こる区切り文字の差を回避)。
-    """
-    target_name = Path(model_path).name
-    runs = session.query(ModelRun).all()
-    for run in runs:
-        run.is_active = 1 if Path(run.model_path).name == target_name else 0
-    session.flush()
-
 
 def set_active_by_id(model_id: int, session: Session) -> None:
     """Activate by ModelRun.id directly. パス比較不要なので最も堅牢。"""
