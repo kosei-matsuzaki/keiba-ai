@@ -18,7 +18,6 @@ type TabKey = SettingsSection;
 const TABS: { value: TabKey; label: string }[] = [
   { value: 'scraper', label: 'SCRAPER' },
   { value: 'betting', label: 'BETTING' },
-  { value: 'bet_types', label: 'BET TYPES' },
 ];
 
 export function Settings() {
@@ -75,11 +74,6 @@ export function Settings() {
           activeSection={activeTab}
         />
       )}
-
-      <p className="text-xs leading-relaxed text-subtle-foreground">
-        券種・予算・EV 閾値はここが既定値です。レースごとに変えたいときは、
-        レース詳細の「推奨買目」で上書きできます。
-      </p>
     </div>
   );
 }

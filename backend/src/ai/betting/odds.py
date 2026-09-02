@@ -18,6 +18,7 @@ from ai.core.probabilities import (
     compute_all_combination_probs,
     compute_analytical_combo_probs,
 )
+from core.bet_types import normalize_combo
 from db.models.entry import Entry
 from db.models.payout import Payout
 from db.models.race import Race
@@ -34,19 +35,9 @@ _ODDS_SENTINEL_PREFIX = "__"
 _PRE_RACE_CONFIRMED_BET_TYPES = frozenset({"単勝"})
 
 
-def _normalize_combo(combo: str) -> str:
-    """payouts テーブルの combo 文字列を predict 側と同じ表記に正規化する。
-
-    netkeiba HTML から来た combo は ``10 - 14`` / ``14 → 10`` のように
-    区切り文字の前後に **半角/全角空白** が入っていることがある一方、
-    predict_race_with_combinations は空白なし (``10-14`` / ``14→10``) を生成する。
-    そのままだと _settle_candidates の dict ルックアップで全部 miss して
-    連系 (馬連/ワイド/馬単/三連複/三連単) の payback_rate が常に 0% になる。
-
-    全種類に共通で「すべての whitespace を除去」する正規化を適用すれば足りる。
-    """
-    # str.translate より小規模 string では join + split が読みやすい
-    return "".join(combo.split())
+#: payouts の combo 表記ゆれ (``10 - 14``) を買い目側 (``10-14``) に揃える。
+#: 実装は core.bet_types に 1 つだけ置く (決済側も同じものを使う)。
+_normalize_combo = normalize_combo
 
 
 def compute_past_race_odds(

@@ -19,6 +19,7 @@ from api.jobs import JobRegistry
 from api.routers import (
     bets,
     health,
+    horses,
     jobs,
     metrics,
     models,
@@ -93,6 +94,7 @@ def create_app() -> FastAPI:
 
     application.include_router(health.router, prefix="/api")
     application.include_router(races.router, prefix="/api")
+    application.include_router(horses.router, prefix="/api")
     application.include_router(bets.router, prefix="/api")
     application.include_router(predictions.router, prefix="/api")
     application.include_router(metrics.router, prefix="/api")

@@ -22,3 +22,17 @@ export const ALL_BET_TYPES = [
 
 /** UI で選べる馬券種。`BetType` は枠連を含むが、こちらは含まない。 */
 export type SelectableBetType = (typeof ALL_BET_TYPES)[number];
+
+/**
+ * 連系（2 頭以上の組合せ）。単複と扱いが違う場所で使う。
+ *
+ * 単複は「AI の本命を買う」ルールで点数が固定だが、連系は**的中確率の下限**で
+ * 買う点数がレースごとに変わる（combo_min_hit_prob）。
+ */
+export const COMBO_BET_TYPES = [
+  '馬連',
+  'ワイド',
+  '馬単',
+  '三連複',
+  '三連単',
+] as const satisfies readonly BetType[];

@@ -38,6 +38,7 @@ import type {
   ScraperStatus,
   SettingsResponse,
   SettingsUpdate,
+  HorseHistoryResponse,
   SimulationRequest,
   SimulationResponse,
   SimulationRunListResponse,
@@ -288,10 +289,27 @@ export async function buildBetExportUrl(params: BetFilterParams): Promise<string
   return `${baseUrl}/api/bets/export.csv${qs ? '?' + qs : ''}`;
 }
 
+// ── 馬の過去走 ────────────────────────────────────────────────────────────────
+
+/**
+ * その馬の過去走。`before` を渡すとその日より**厳密に前**だけが返る。
+ * 出走馬一覧から「前走どうだったか」を引くのに使う。
+ */
+export function fetchHorseHistory(
+  horseId: string,
+  params?: { before?: string; limit?: number },
+): Promise<HorseHistoryResponse> {
+  const searchParams: Record<string, string | number> = {};
+  if (params?.before) searchParams.before = params.before;
+  if (params?.limit != null) searchParams.limit = params.limit;
+  return getClient().then((c) =>
+    c.get(`horses/${horseId}/history`, { searchParams }).json<HorseHistoryResponse>(),
+  );
+}
+
 // ── Recommendations / Bet creation ────────────────────────────────────────────
 
 export interface RecommendationParams {
-  top_n_horses?: number;
   top_k?: number;
   /** このレースだけの上書き。未指定なら Settings の値が使われる。 */
   race_budget?: number;
@@ -305,7 +323,6 @@ export function fetchRecommendations(
   params?: RecommendationParams,
 ): Promise<RecommendationsResponse> {
   const searchParams: Record<string, string | number> = {};
-  if (params?.top_n_horses != null) searchParams.top_n_horses = params.top_n_horses;
   if (params?.top_k != null) searchParams.top_k = params.top_k;
   if (params?.race_budget != null) searchParams.race_budget = params.race_budget;
   if (params?.stake_unit != null) searchParams.stake_unit = params.stake_unit;
@@ -351,20 +368,13 @@ export function createBetsBulk(body: BetRecordBulkIn): Promise<BetRecordList> {
  */
 export function startSimulationJob(req: SimulationRequest): Promise<JobAccepted> {
   const searchParams: Record<string, string | number> = {
-    budget: req.budget,
-    strategy: req.strategy,
+    race_budget: req.race_budget,
   };
   if (req.start) searchParams.start = req.start;
   if (req.end) searchParams.end = req.end;
-  if (req.max_stake_per_race_yen && req.max_stake_per_race_yen > 0) {
-    searchParams.max_stake_per_race_yen = req.max_stake_per_race_yen;
-  }
   if (req.model_id != null) searchParams.model_id = req.model_id;
-  if (req.exclude_low_information) searchParams.exclude_low_information = 'true';
-  if (req.staking) searchParams.staking = req.staking;
   // RACE 画面と同じ条件でシミュレーションできるようにする
   if (req.bet_types?.length) searchParams.bet_types = req.bet_types.join(',');
-  if (req.top_n_horses) searchParams.top_n_horses = req.top_n_horses;
   return getClient().then((c) =>
     c
       .post('simulation/start', { searchParams })

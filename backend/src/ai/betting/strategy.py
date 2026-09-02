@@ -29,6 +29,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ai.core.types import BetCandidate, CombinationPrediction, RecommendationResult
+from core.bet_types import DEFAULT_COMBO_MIN_HIT_PROB
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -241,40 +242,44 @@ def generate_formation(
 _BET_TYPE_PRIORITY: dict[str, int] = {"単勝": 0, "複勝": 1}
 _DEFAULT_PRIORITY = 9
 
-#: 連系を 1 券種あたり何点まで買うか。**予算は上限であって使い切る目標ではない。**
+#: 連系の買い目を組む上位何頭か。**選択肢にはしない。**
 #:
-#: 買い目は的中確率の高い順に並ぶ。その順序は本物で、順位が下がるほど的中率が
-#: きれいに落ちる (実測 5,404 レース: 1 点目 0.155 → 10 点目 0.037)。深く買うほど
-#: 当たりにくい買い目に金を足すことになる。累積の回収率:
+#: 以前は「狙い方 (本命中心 / 標準 / 穴も拾う)」として 3 / 5 / 8 を選ばせていたが、
+#: 買うかどうかは的中確率の下限 (`combo_min_hit_prob`) が決めるので、頭数を広げても
+#: 線を超えない買い目が候補に増えるだけで**買い目は変わらない**。選べるのに何も
+#: 起きない選択肢を残さない。
+TOP_N_HORSES = 3
+
+#: 1 レースに使う上限 (円) の既定値。**使い切る目標ではない。**
+DEFAULT_RACE_BUDGET = 5_000
+
+#: 1 点あたりの賭け金 (円)。**設定ではない。**
 #:
-#:   上位 1 点まで   0.903   (連系に使う金の 25%)
-#:   上位 2 点まで   0.898   (44%)
-#:   上位 3 点まで   0.872   (59%)
-#:   全部買う        0.877   (100%)
-#:
-#: 半期に割ると 4 期中 3 期でプラス、1 期 (2024-H2・551 レース) で −0.145 と
-#: 揺れるので「回収率が上がる」とまでは言えない。確かなのは**同じかやや良い成績を
-#: 半分以下の金で得られる**こと。単勝・複勝は元から 1 点なので影響しない。
-DEFAULT_MAX_POINTS_PER_BET_TYPE = 2
+#: 券種ごとに 1 点の額を変える仕組み (旧 `stake_units`) は廃止した。厚みは
+#: 「1 点いくらか」ではなく **何点買うか** で表す方が、買い方としても素直で、
+#: 確信度との対応も 1 つの式で書ける (`ai.inference.confidence.points_for_confidence`)。
+STAKE_UNIT = 100
 
 
 def assign_flat_stakes(
     candidates: list[BetCandidate],
     race_budget: int,
-    stake_unit: int = 100,
-    stake_unit_by_bet_type: dict[str, int] | None = None,
+    points_by_bet_type: dict[str, int] | None = None,
     keep_zero_stake: bool = False,
-    max_points_per_bet_type: int | None = DEFAULT_MAX_POINTS_PER_BET_TYPE,
+    min_hit_prob_by_bet_type: dict[str, float] | None = None,
 ) -> list[BetCandidate]:
-    """券種ごとに定額で、単複を優先して予算の範囲で賭ける。
-
-    Kelly（資金の何%を賭けるか）ではなく、人が実際にやる買い方に合わせた配分:
+    """買い目に賭け金を割り当てる。**1 点 = 100 円**。
 
       1. 券種ごとの買い条件を満たす買い目だけを対象にする
       2. **単勝 → 複勝 → 連系**の順に並べ、同じ券種内では的中確率の高い順
-      3. 1 点あたり **その券種の** 金額を、``race_budget`` を超えない範囲で賭ける
+      3. 券種ごとの点数 × 100 円を、``race_budget`` を超えない範囲で賭ける
 
     **予算は使い切らなくてよい。** 対象が少なければ賭け金の合計も少なくなる。
+
+    厚みは **点数** で表す。単勝・複勝は 1 頭に対する点数を確信度から決め
+    (`points_for_confidence`)、連系は 1 組合せ = 1 点で、**何点買うかは的中確率の
+    下限を超えた買い目の数**が決める。券種ごとの点数上限は持たない — ワイドが効く
+    レース・三連単が効くレースを一律の点数で潰さないため。
 
     **EV の高い順には並べない。** 確率を正直に較正すると単勝の EV は 0.6 前後に
     なり、連系 (EV 5〜9) の後ろに回る。その状態で予算が足りないと、回収率の推定が
@@ -284,29 +289,36 @@ def assign_flat_stakes(
     Args:
         candidates: BetCandidate list (stake field is ignored on input).
         race_budget: このレースに使ってよい上限 (円)。
-        stake_unit: 1 点あたりの賭け金 (円)。券種別指定が無いときの既定。
-        stake_unit_by_bet_type: 券種ごとの 1 点あたり金額。単勝を厚く、連系を
-            薄く、といった配分に使う。無い券種は ``stake_unit`` にフォールバック。
+        points_by_bet_type: 券種ごとの点数 (1 買い目あたり)。未指定の券種は 1 点。
+            単複はここに確信度から出した点数が入る。
         keep_zero_stake: True なら賭けない買い目も stake=0 で返す。
+        min_hit_prob_by_bet_type: 券種ごとの **的中確率の下限**。この線を下回る
+            買い目は買わない。**連系の点数はこれだけで決まる** (確信度の高い
+            レースほど深く買い、低いレースでは 0 点)。
+            既定は `DEFAULT_COMBO_MIN_HIT_PROB` (連系のみ・単複には掛けない)。
 
     Returns:
         New list of BetCandidate (copies) with updated stake values。
         keep_zero_stake=False なら stake>0 のものだけ。
     """
-    units = stake_unit_by_bet_type or {}
+    points = points_by_bet_type or {}
+    floors = (
+        DEFAULT_COMBO_MIN_HIT_PROB
+        if min_hit_prob_by_bet_type is None
+        else min_hit_prob_by_bet_type
+    )
 
-    def _unit(c: BetCandidate) -> int:
-        return int(units.get(c.bet_type, stake_unit))
+    def _stake(c: BetCandidate) -> int:
+        return max(1, int(points.get(c.bet_type, 1))) * STAKE_UNIT
 
-    if race_budget < min([*(units.values() or []), stake_unit], default=stake_unit):
-        # どの券種の 1 点分にも満たないなら何も買えない
+    if race_budget < STAKE_UNIT:
+        # 1 点分にも満たないなら何も買えない
         return [c.model_copy(update={"stake": 0}) for c in candidates] if keep_zero_stake else []
 
     def _passes(c: BetCandidate) -> bool:
         # **EV 閾値は使わない。** est_odds が取れない買い目だけを落とす (値段が
-        # 分からないものは買えないため)。並び順は assign_flat_stakes が
-        # 券種の優先度 → 的中確率の順で決める。
-        return _unit(c) > 0 and c.est_odds is not None
+        # 分からないものは買えないため)。
+        return c.est_odds is not None
 
     def _sort_key(c: BetCandidate) -> tuple[int, float]:
         # 単勝 → 複勝 → 連系。同じ券種内は的中確率の高い順 (EV 順にはしない)
@@ -317,19 +329,18 @@ def assign_flat_stakes(
 
     out: list[BetCandidate] = []
     budget_left = race_budget
-    taken: dict[str, int] = {}
     for c in eligible:
-        unit = _unit(c)
-        # **予算が余っていても、券種ごとの上限で止める。**
-        # 深い順位の買い目ほど当たりにくく、足すほど期待は薄くなる。
-        if max_points_per_bet_type is not None and taken.get(c.bet_type, 0) >= max_points_per_bet_type:
+        # **確信度が足りない買い目は買わない。** ここが「点数がレースごとに
+        # 変わる」仕組み: 線を超えた買い目の数だけ買う。
+        floor = floors.get(c.bet_type)
+        if floor is not None and c.prob < floor:
             if keep_zero_stake:
                 out.append(c.model_copy(update={"stake": 0}))
             continue
-        if budget_left >= unit:
-            out.append(c.model_copy(update={"stake": unit}))
-            budget_left -= unit
-            taken[c.bet_type] = taken.get(c.bet_type, 0) + 1
+        stake = _stake(c)
+        if budget_left >= stake:
+            out.append(c.model_copy(update={"stake": stake}))
+            budget_left -= stake
         elif keep_zero_stake:
             out.append(c.model_copy(update={"stake": 0}))
 
@@ -347,12 +358,11 @@ def recommend_for_race(
     combinations_by_type: dict[str, list[CombinationPrediction]],
     race_id: str,
     race_budget: int,
-    stake_unit: int = 100,
-    stake_unit_by_bet_type: dict[str, int] | None = None,
+    points_by_bet_type: dict[str, int] | None = None,
     win_min_odds: float = 1.1,
     top_n_horses: int = 3,
     enabled_bet_types: list[str] | None = None,
-    max_points_per_bet_type: int | None = DEFAULT_MAX_POINTS_PER_BET_TYPE,
+    min_hit_prob_by_bet_type: dict[str, float] | None = None,
 ) -> RecommendationResult:
     """Generate a bet recommendation for one race.
 
@@ -371,9 +381,8 @@ def recommend_for_race(
             (output of predict_race_with_combinations).
         race_id: Identifier for the race.
         race_budget: このレースに使ってよい上限 (円)。使い切らなくてよい。
-        stake_unit: 1 点あたりの賭け金 (円、既定 100)。券種別指定が無いときの既定。
-        stake_unit_by_bet_type: 券種ごとの 1 点あたり金額。回収率の推定が確かな
-            単複を厚く、測定不能な連系を薄く、といった配分ができる。
+        points_by_bet_type: 券種ごとの点数 (1 買い目あたり)。1 点 = 100 円。
+            単複は確信度から決めた点数を入れる。未指定の券種は 1 点。
         win_min_odds: **単勝・複勝は EV 条件を使わず「モデルの本命 (1 位) を買う」**。
             単勝はこのオッズ下限を下回る場合だけ見送る (複勝に下限は無い)。
             理由は較正済み確率での実測 (test 19ヶ月・5,404 レース):
@@ -503,10 +512,9 @@ def recommend_for_race(
     final_candidates = assign_flat_stakes(
         deduped,
         race_budget=race_budget,
-        stake_unit=stake_unit,
-        stake_unit_by_bet_type=stake_unit_by_bet_type,
+        points_by_bet_type=points_by_bet_type,
         keep_zero_stake=True,
-        max_points_per_bet_type=max_points_per_bet_type,
+        min_hit_prob_by_bet_type=min_hit_prob_by_bet_type,
     )
 
     return RecommendationResult(

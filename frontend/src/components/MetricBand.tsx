@@ -2,42 +2,38 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import { formatPercent, formatRatio, formatScore, formatYen } from '@/lib/formatters';
-import { labelClass } from '@/lib/labels';
+import {
+  METRIC_ACCENT_CLASS,
+  METRIC_CARD_CLASS,
+  METRIC_VALUE_CLASS,
+} from '@/lib/metricStyles';
 
 /**
- * 指標の並び。箱を 4 つ並べるのではなく、**罫線で仕切った 1 本の計器帯**にする。
+ * 指標の並び。**1 つずつカードにして並べる。**
+ *
+ * 以前は罫線で仕切った 1 本の帯にしていたが、隣の値との境が細く、どこまでが
+ * 1 つの指標か読み取りにくかった。指標は「それぞれ独立した 1 つの答え」なので、
+ * 箱で 1 つずつ区切る方が素直 (表やグラフを囲わないのとは逆)。
  *
  * 数値は等幅 + tabular-nums。`0.535` `47.6%` `1.05` が桁で揃うことで
  * 「計測した値」に見える。プロポーショナル数字だと「ただの大きい文字」になる。
  */
 interface MetricBandProps {
-  /** lg 以上での列数。項目数と合わせると 1 行に収まり、区切りが素直に出る。 */
+  /** lg 以上での列数。項目数と合わせると 1 行に収まる。 */
   cols?: 3 | 4 | 5;
   children: ReactNode;
   className?: string;
 }
 
-/**
- * 縦罫線は「行頭の項目には付けない」。単純な divide-x だと折り返した行の
- * 先頭にも縦線が出て、帯の左端に線が浮いて見える。
- */
 const COLS_CLASS: Record<NonNullable<MetricBandProps['cols']>, string> = {
-  3: 'lg:grid-cols-3 lg:[&>*:nth-child(2n+1)]:border-l lg:[&>*:nth-child(3n+1)]:border-l-0 lg:[&>*:nth-child(n+3)]:border-t-0',
-  4: 'lg:grid-cols-4 lg:[&>*:nth-child(2n+1)]:border-l lg:[&>*:nth-child(4n+1)]:border-l-0 lg:[&>*:nth-child(n+3)]:border-t-0',
-  5: 'lg:grid-cols-5 lg:[&>*:nth-child(2n+1)]:border-l lg:[&>*:nth-child(5n+1)]:border-l-0 lg:[&>*:nth-child(n+3)]:border-t-0',
+  3: 'sm:grid-cols-2 lg:grid-cols-3',
+  4: 'sm:grid-cols-2 lg:grid-cols-4',
+  5: 'sm:grid-cols-3 lg:grid-cols-5',
 };
 
 export function MetricBand({ cols = 4, children, className }: MetricBandProps) {
   return (
-    <dl
-      className={cn(
-        'grid grid-cols-2 border-y border-border',
-        '[&>*]:border-l [&>*]:border-border [&>*:nth-child(2n+1)]:border-l-0',
-        '[&>*:nth-child(n+3)]:border-t',
-        COLS_CLASS[cols],
-        className
-      )}
-    >
+    <dl className={cn('grid grid-cols-1 gap-3', COLS_CLASS[cols], className)}>
       {children}
     </dl>
   );
@@ -80,14 +76,6 @@ const _TONE_CLASS: Record<NonNullable<MetricItemProps['tone']>, string> = {
   muted: 'text-subtle-foreground',
 };
 
-/** 値の色。損益だけ色を持ち、それ以外は通常の前景色。 */
-const _VALUE_TONE_CLASS: Record<NonNullable<MetricItemProps['tone']>, string> = {
-  default: 'text-foreground',
-  positive: 'text-success',
-  negative: 'text-destructive',
-  muted: 'text-foreground',
-};
-
 function isMeasured(value: number | null): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -103,9 +91,16 @@ export function MetricItem({
   to,
 }: MetricItemProps) {
   const body = (
-    <div className="flex h-full flex-col gap-1.5 px-5 py-5">
+    <div
+      className={cn(
+        METRIC_CARD_CLASS,
+        METRIC_ACCENT_CLASS[tone],
+        'h-full',
+        to && 'transition-colors hover:bg-card-elevated'
+      )}
+    >
       <div className="flex items-start justify-between gap-2">
-        <dt className={labelClass(title)} title={hint}>
+        <dt className="text-xs text-muted-foreground" title={hint}>
           {title}
           {hint && <span className="ml-1 text-subtle-foreground/60">?</span>}
         </dt>
@@ -116,12 +111,24 @@ export function MetricItem({
       {isMeasured(value) ? (
         // 損益 (positive / negative) は値そのものに色を持たせる。
         // 「勝っているか負けているか」は一目で分かるべき情報。
-        <dd className={cn('text-kpi', _VALUE_TONE_CLASS[tone])}>{formatValue(value, format)}</dd>
+        <dd
+          className={cn(
+            'font-mono text-[26px] leading-none tabular-nums',
+            METRIC_VALUE_CLASS[tone]
+          )}
+        >
+          {formatValue(value, format)}
+        </dd>
       ) : (
-        <dd className="text-2xl font-medium text-subtle-foreground/50">未算出</dd>
+        <dd className="font-mono text-xl text-subtle-foreground/50">未算出</dd>
       )}
       {description && (
-        <p className={cn('text-xs', isMeasured(value) ? _TONE_CLASS[tone] : 'text-subtle-foreground')}>
+        <p
+          className={cn(
+            'text-[11px] leading-snug',
+            isMeasured(value) ? _TONE_CLASS[tone] : 'text-subtle-foreground'
+          )}
+        >
           {description}
         </p>
       )}
@@ -130,7 +137,7 @@ export function MetricItem({
 
   if (!to) return body;
   return (
-    <Link to={to} className="block transition-colors hover:bg-card-elevated">
+    <Link to={to} className="block h-full">
       {body}
     </Link>
   );

@@ -16,8 +16,7 @@ def test_simulation_rejects_window_too_long(api_client: TestClient):
         params={
             "start": "2024-01-01",
             "end": "2024-12-31",  # 365 日
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     assert response.status_code == 400
@@ -31,8 +30,7 @@ def test_simulation_rejects_invalid_date_format(api_client: TestClient):
         params={
             "start": "2024/01/01",
             "end": "2024-06-30",
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     assert response.status_code == 400
@@ -45,8 +43,7 @@ def test_simulation_rejects_end_before_start(api_client: TestClient):
         params={
             "start": "2024-06-30",
             "end": "2024-01-01",
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     assert response.status_code == 400
@@ -63,8 +60,7 @@ def test_simulation_window_within_cap_proceeds(api_client: TestClient):
         params={
             "start": "2024-01-01",
             "end": "2024-06-30",  # 181 日
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     # 期間 OK だが active model がないので 503
@@ -82,8 +78,7 @@ def test_simulation_start_rejects_window_too_long(api_client: TestClient):
         params={
             "start": "2023-01-01",
             "end": "2024-12-31",  # 730 日
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     assert response.status_code == 400
@@ -97,26 +92,20 @@ def test_simulation_start_returns_503_without_active_model(api_client: TestClien
         params={
             "start": "2024-01-01",
             "end": "2024-06-30",
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     assert response.status_code == 503
     assert "アクティブなモデル" in response.json()["detail"]
 
 
-def test_simulation_start_rejects_invalid_strategy(api_client: TestClient):
+def test_simulation_start_rejects_budget_below_one_point(api_client: TestClient):
+    """1 点も買えない予算は受け付けない (戦略プリセットは廃止した)。"""
     response = api_client.post(
         "/api/simulation/start",
-        params={
-            "start": "2024-01-01",
-            "end": "2024-03-01",
-            "budget": 100_000,
-            "strategy": "ultra",  # 未定義
-        },
+        params={"start": "2024-01-01", "end": "2024-03-01", "race_budget": 50},
     )
-    # FastAPI Query の Literal 検証が先に走り 422 を返す
-    assert response.status_code in (400, 422)
+    assert response.status_code == 422
 
 
 def test_simulation_start_accepts_full_year_window(api_client: TestClient):
@@ -126,8 +115,7 @@ def test_simulation_start_accepts_full_year_window(api_client: TestClient):
         params={
             "start": "2024-01-01",
             "end": "2024-12-31",  # 365 日
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
         },
     )
     # 期間 OK で先に進む → active model がないので 503
@@ -144,8 +132,7 @@ def test_simulation_sync_unknown_model_id_404(api_client: TestClient):
         params={
             "start": "2024-01-01",
             "end": "2024-06-30",
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
             "model_id": 99999,
         },
     )
@@ -159,8 +146,7 @@ def test_simulation_start_unknown_model_id_404(api_client: TestClient):
         params={
             "start": "2024-01-01",
             "end": "2024-06-30",
-            "budget": 100_000,
-            "strategy": "balanced",
+            "race_budget": 5_000,
             "model_id": 99999,
         },
     )

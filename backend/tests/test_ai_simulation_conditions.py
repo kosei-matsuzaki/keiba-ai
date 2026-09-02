@@ -61,7 +61,7 @@ def _run(engine, **kwargs):
     with Session(engine) as session:
         return sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
-            start=None, end=None, budget=10_000, **kwargs,
+            start=None, end=None, race_budget=5_000, **kwargs,
         )
 
 
@@ -83,13 +83,14 @@ class TestConditionsAreRecorded:
         assert r.conditions["place_min_confidence"] is None
 
     def test_records_the_options_that_change_the_result(self, stub_engine):
-        r = _run(stub_engine, exclude_low_information=True,
-                 enabled_bet_types=["単勝", "複勝"], max_stake_per_race_yen=2_000)
+        r = _run(stub_engine, enabled_bet_types=["単勝", "複勝"],
+                 min_hit_prob_by_bet_type={"馬連": 0.05})
         c = r.conditions
-        assert c["exclude_low_information"] is True
         assert c["enabled_bet_types"] == ["単勝", "複勝"]
-        assert c["max_stake_per_race_yen"] == 2_000
-        assert c["top_n_horses"] == 3          # balanced のプリセット
+        assert c["race_budget"] == 5_000
+        # 連系の点数は下限だけで決まる (券種ごとの上限は持たない)
+        assert "max_points_per_bet_type" not in c
+        assert c["combo_min_hit_prob"] == {"馬連": 0.05}
 
     def test_conditions_survive_as_dict(self, stub_engine):
         """API / 永続化は as_dict 経由なので、そこに載ることを固定する。"""

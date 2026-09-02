@@ -23,6 +23,7 @@ vi.mock('../lib/api', () => ({
   fetchRaceDetail: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
+  fetchHorseHistory: vi.fn(),
   runShutubaScraper: vi.fn(),
   fetchJob: vi.fn(),
   createBet: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('../lib/api', () => ({
 }));
 
 import {
+  fetchHorseHistory,
   fetchRaceDetail,
   fetchPredictions,
   fetchRecommendations,
@@ -164,10 +166,110 @@ beforeEach(() => {
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
+  vi.mocked(fetchHorseHistory).mockResolvedValue({
+    horse_id: '2019100001',
+    before: '2024-06-01',
+    runs: [
+      {
+        race_id: '202405050101',
+        date: '2024-05-05',
+        course: '京都',
+        race_name: '前走レース',
+        race_class: '1勝クラス',
+        surface: '芝',
+        distance: 2000,
+        track_condition: '良',
+        n_runners: 14,
+        post_position: 3,
+        finish_position: 2,
+        odds_win: 4.2,
+        popularity: 2,
+        jockey_name: 'テスト騎手',
+        weight_carried: 55,
+        horse_weight: 480,
+        finish_time: 119.4,
+        agari_3f: 34.8,
+        passing: '5-5-4',
+        margin: 'クビ',
+      },
+    ],
+  });
   vi.mocked(runShutubaScraper).mockResolvedValue(mockJobAccepted);
   vi.mocked(fetchJob).mockResolvedValue(mockJobCompleted);
   // テスト個別で true にした値が後続テストへ漏れないよう毎回リセット
   vi.mocked(isNotFoundError).mockReturnValue(false);
+});
+
+describe('RaceDetail — 答え合わせ', () => {
+  // 推奨は単勝 1 点 (500 円) + 複勝 1 点 (500 円) + ワイド 2 点 (各 100 円)。
+  // payouts は単勝的中 (350 円/100 円) と ワイド 1 点的中 (900 円/100 円)。
+  const recs = {
+    ...mockRecommendations,
+    stake_unit: 100,
+    candidates: [
+      { ...mockRecommendations.candidates[0], bet_type: '単勝', combo: '1', stake: 500 },
+      { ...mockRecommendations.candidates[0], bet_type: '複勝', combo: '1', stake: 500 },
+      {
+        ...mockRecommendations.candidates[0],
+        bet_type: 'ワイド',
+        combo: '1-2',
+        stake: 100,
+        post_positions: [1, 2],
+      },
+      {
+        ...mockRecommendations.candidates[0],
+        bet_type: 'ワイド',
+        combo: '1-3',
+        stake: 100,
+        post_positions: [1, 3],
+      },
+    ],
+  };
+  const paid: RaceDetailType = {
+    ...mockRace,
+    payouts: [
+      { bet_type: '単勝', combo: '1', amount: 350, popularity: 1 },
+      { bet_type: '複勝', combo: '1', amount: 150, popularity: 1 },
+      { bet_type: 'ワイド', combo: '1-2', amount: 900, popularity: 4 },
+    ],
+  };
+
+  it('推奨買目をすべて買った場合の収支を券種別に出す', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchRaceDetail).mockResolvedValue(paid);
+    vi.mocked(fetchRecommendations).mockResolvedValue(recs);
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
+
+    // 答え合わせは推奨買目のタブの 1 つ (買い目と同じ場所で振り返る)
+    const tab = await screen.findByRole('tab', { name: '答え合わせ' });
+    await user.click(tab);
+
+    const table = await screen.findByRole('table', { name: '券種別の答え合わせ' });
+    // 投資 1,200 円 / 払戻 = 単勝 1,750 + 複勝 750 + ワイド 900 = 3,400 → 283% (+2,200 円)
+    expect(within(table).getByText('ワイド')).toBeInTheDocument();
+    expect(screen.getByText('283%')).toBeInTheDocument();
+    expect(screen.getByText('+2,200 円')).toBeInTheDocument();
+    expect(screen.getByText('1,200 円')).toBeInTheDocument();
+    expect(screen.getAllByText('3,400 円').length).toBeGreaterThan(0);
+    // 的中は 3 点 (単勝・複勝・ワイド 1-2) / 全 4 点
+    expect(screen.getAllByText('3 / 4').length).toBeGreaterThan(0);
+  });
+
+  it('外れた買い目は払戻 0 として数える', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchRaceDetail).mockResolvedValue({ ...paid, payouts: [] });
+    vi.mocked(fetchRecommendations).mockResolvedValue(recs);
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
+    await screen.findByText('推奨買目');
+    // 払戻が 1 行も無い = 未確定なので、答え合わせタブそのものを出さない
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: '答え合わせ' })).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe('RaceDetail', () => {
@@ -338,9 +440,8 @@ describe('RaceDetail', () => {
     await screen.findByText('出走馬一覧');
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
     await screen.findByText('推奨買目');
-    expect(await screen.findByText('5,000 円')).toBeInTheDocument();
     // 「単勝」は条件バーの券種チップにも出るので、買い目の combo で特定する
-    expect(screen.getByTitle('1')).toBeInTheDocument();
+    expect(await screen.findByTitle('1')).toBeInTheDocument();
   });
 
   it('column header click toggles sort direction', async () => {
@@ -392,15 +493,27 @@ describe('RaceDetail', () => {
     expect(rows[rows.length - 1]).toHaveTextContent('テスト馬A');
   });
 
-  it('買い方を券種ごとの表で 1 箇所にまとめて出す', async () => {
-    // EV / 期待値 / 確信度 / 的中確率 が別々の注記に散っていて、どの数字が
-    // どの判断に使われるのか読み取れなかった。券種 × 条件 × 点数の表にする。
+  it('買い方の説明は 1 箇所にまとめ、既定では畳んでおく', async () => {
+    // EV / 期待値 / 確信度 / 的中確率 の注記が画面のあちこちに散っていて、
+    // 肝心の買い目が埋もれていた。推奨買目の下の折り畳み 1 つに集約する。
+    const user = userEvent.setup();
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
-    expect(screen.getByText('買い方')).toBeInTheDocument();
+    // 予想を出す前は買い方の説明そのものが無い
+    expect(screen.queryByText(/券種ごとの条件と点数/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
+    const summary = await screen.findByText(/券種ごとの条件と点数/);
+    // 畳んだ状態で置く (毎回読むものではない)
+    expect(summary.closest('details')).not.toHaveAttribute('open');
     expect(screen.getByRole('columnheader', { name: '買う条件' })).toBeInTheDocument();
     expect(screen.getByText(/モデル1位の馬。オッズ/)).toBeInTheDocument();
-    expect(screen.getByText(/期待値（EV）は買う判断に使っていません/)).toBeInTheDocument();
+    // **表の中身は実装と揃っていること。** 1 点 = 100 円で、点数は確信度が決め、
+    // 連系に点数の上限は無い (ここが古いままだと画面が嘘をつく)
+    expect(screen.getByRole('columnheader', { name: /1 点 = 100 円/ })).toBeInTheDocument();
+    expect(screen.getByText(/1着確率で 1〜15 点/)).toBeInTheDocument();
+    expect(screen.getByText(/3着内率で 1〜15 点/)).toBeInTheDocument();
+    expect(screen.getByText(/1 点ずつ（上限なし）/)).toBeInTheDocument();
   });
 
   it('shows race name in PageHeader title when name is set', async () => {
@@ -482,5 +595,23 @@ describe('RaceDetail', () => {
     await waitFor(() => {
       expect(vi.mocked(fetchRaceDetail).mock.calls.length).toBeGreaterThan(1);
     });
+  });
+
+  it('出走馬の行を開くと、そのレース日より前の過去走が出る', async () => {
+    const user = userEvent.setup();
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+
+    // 開く前は過去走を取りに行かない (18 頭ぶん先に引くと重い)
+    expect(vi.mocked(fetchHorseHistory)).not.toHaveBeenCalled();
+
+    await user.click(screen.getByText('テスト馬A'));
+
+    expect(await screen.findByText('前走レース')).toBeInTheDocument();
+    // **レース当日より前**だけを引く (当日の結果は根拠にできない)
+    expect(vi.mocked(fetchHorseHistory)).toHaveBeenCalledWith(
+      '2019100001',
+      expect.objectContaining({ before: '2024-06-01' })
+    );
   });
 });

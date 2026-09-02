@@ -15,6 +15,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { BettingRuleDetails } from '@/components/BettingRuleDetails';
+import { ResultReviewTab } from '@/components/ResultReviewTab';
 import { EmptyState } from '@/components/EmptyState';
 import { PurchaseTable } from '@/components/PurchaseTable';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -26,7 +28,12 @@ import {
 import { formatErrorMessageSync, isNotFoundError, isServiceUnavailableError } from '@/lib/api';
 import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
 import { useCreateBet } from '@/hooks/useCreateBet';
-import type { RecommendationCandidate, RecommendationsResponse, BetType } from '@/types/api';
+import type {
+  BetType,
+  PayoutEntry,
+  RecommendationCandidate,
+  RecommendationsResponse,
+} from '@/types/api';
 
 // ── Odds source badge ─────────────────────────────────────────────────────────
 
@@ -194,6 +201,8 @@ interface RecommendationsCardProps {
   /** このレースだけの上書き条件 (券種・予算)。 */
   overrides?: RecommendationOverrides;
   onOverridesChange?: (next: RecommendationOverrides) => void;
+  /** 全券種の確定払戻。あれば「答え合わせ」タブを出す。 */
+  payouts?: PayoutEntry[];
 }
 
 export function RecommendationsCard({
@@ -205,7 +214,10 @@ export function RecommendationsCard({
   runners = 0,
   overrides,
   onOverridesChange,
+  payouts = [],
 }: RecommendationsCardProps) {
+  // 1 点あたりの金額。賭け金は必ずこの倍数なので、点数は stake / unit で戻せる。
+  const unit = data?.stake_unit || 100;
   return (
     <Card className="border-t border-border pt-6">
       <CardHeader>
@@ -213,7 +225,12 @@ export function RecommendationsCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {overrides != null && onOverridesChange != null && (
-          <RecommendationParamsBar value={overrides} onChange={onOverridesChange} />
+          <>
+            <RecommendationParamsBar value={overrides} onChange={onOverridesChange} />
+            {/* 買い方は「買う馬券」の直下に置く。何を買うかを決めたすぐ後に
+                「どういう条件で買うのか」を読めるようにする。 */}
+            <BettingRuleDetails />
+          </>
         )}
         {isPending ? (
           <Skeleton className="h-40 w-full" />
@@ -236,26 +253,17 @@ export function RecommendationsCard({
           />
         ) : (
           <>
-            <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <p className="text-sm text-muted-foreground">
-                このレースの予算:{' '}
-                <span className="font-medium text-foreground">
-                  {formatYen(data.race_budget)}
-                </span>
-                <span className="ml-2 text-xs">
-                  （実際の合計 {formatYen(data.candidates.reduce((n, c) => n + c.stake, 0))}）
-                </span>
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {data.candidates.length} 候補
-                （うち {data.candidates.filter((c) => c.stake > 0).length} 件が推奨）
-              </p>
-            </div>
             <Tabs defaultValue="detail">
               <TabsList>
                 <TabsTrigger value="detail">1 点ずつ</TabsTrigger>
                 <TabsTrigger value="purchase">購入用</TabsTrigger>
+                {/* 結果が出ているレースだけ。買い目と同じ場所で振り返れるようにする */}
+                {payouts.length > 0 && <TabsTrigger value="review">答え合わせ</TabsTrigger>}
               </TabsList>
+
+              <TabsContent value="review" className="pt-3">
+                <ResultReviewTab candidates={data.candidates} payouts={payouts} />
+              </TabsContent>
 
               <TabsContent value="purchase" className="pt-3">
                 <PurchaseTable
@@ -264,16 +272,10 @@ export function RecommendationsCard({
                   runners={runners}
                   renderBuy={(c) => <StakeInputAndBuy candidate={c} raceId={raceId} />}
                 />
-                <p className="mt-2 text-xs text-subtle-foreground">
-                  同じ買い目を、窓口・ネット投票の 1 操作にまとめています。行を開くと 1 点ずつ出ます。
-                  流し / ボックス / フォーメーションと呼べるのは
-                  <strong>その形で買うと推奨と点数が一致するとき</strong>だけで、
-                  一致しないものは「個別」として出します。
-                </p>
               </TabsContent>
 
               <TabsContent value="detail" className="pt-3">
-            <Table>
+            <Table aria-label="推奨買目の一覧">
               <TableHeader>
                 <TableRow>
                   <TableHead>券種</TableHead>
@@ -291,14 +293,19 @@ export function RecommendationsCard({
                     確信度
                   </TableHead>
                   <TableHead className="text-right">推定オッズ</TableHead>
-                  <TableHead className="text-right">推奨 stake</TableHead>
+                  <TableHead
+                    className="text-right"
+                    title="この買い目に賭ける金額。1 点あたりの金額 × 点数。単勝・複勝は基準 5 点で、複勝だけ確信度に応じて 1〜15 点に増減する。連系は 1 点ずつ"
+                  >
+                    賭け金
+                  </TableHead>
                   <TableHead
                     className="text-right text-subtle-foreground"
                     title="参考値。的中確率 × オッズ。買う / 買わないの判定には使っていない (使うと大穴に寄り、実測で回収率が落ちる)"
                   >
                     参考 EV
                   </TableHead>
-                  <TableHead className="text-right">賭け金 / 購入</TableHead>
+                  <TableHead className="text-right">購入</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -329,8 +336,17 @@ export function RecommendationsCard({
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        {isZeroStake ? '—' : formatYen(c.stake)}
+                      <TableCell className="text-right">
+                        {isZeroStake ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <span className="inline-flex items-baseline gap-1 tabular-nums">
+                            <span className="font-medium">{formatYen(c.stake)}</span>
+                            <span className="text-xs text-subtle-foreground">
+                              {Math.round(c.stake / unit)} 点
+                            </span>
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right text-subtle-foreground">
                         {c.ev === null ? '—' : formatRatio(c.ev)}
@@ -345,39 +361,6 @@ export function RecommendationsCard({
             </Table>
               </TabsContent>
             </Tabs>
-            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-              <p>
-                {data.odds_source === 'live'
-                  ? '※ 当日のライブ市場オッズ（全馬券の実オッズ。未公開の組合せは単勝由来で推定）。'
-                  : data.odds_source === 'past'
-                    ? '※ 確定オッズ。外れ combo は確定払戻が無いため推定で補完。'
-                    : '※ オッズ取得待ち or 該当データなし。'}
-                <span className="ml-1">
-                  未取得の combo は単勝由来 Plackett-Luce 推定で補完
-                  (バッジ「推定」、控除率込み)。
-                </span>
-              </p>
-              {data.place_confidence != null && (
-                <p>
-                  ※ この予想の確信度 {(data.place_confidence * 100).toFixed(1)}%
-                  {data.place_confidence_threshold != null && (
-                    <>
-                      （複勝を買う下限 {(data.place_confidence_threshold * 100).toFixed(0)}%）。
-                      {data.place_confidence < data.place_confidence_threshold
-                        ? '下回るため複勝は見送っています。'
-                        : '上回るため複勝も買います。'}
-                    </>
-                  )}
-                </p>
-              )}
-              <p>
-                ※ 買い目は<strong>単勝 → 複勝 → 連系</strong>の順に、同じ券種内は
-                <strong>的中確率の高い順</strong>で予算まで選んでいます（期待値は使っていません。
-                期待値で絞ると大穴に寄り、実測で回収率が落ちるため）。
-                実測の回収率は単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.85〜0.88 で、
-                <strong>いずれも 1.0 未満</strong>です。控除率の内側なので実買いは慎重に。
-              </p>
-            </div>
           </>
         )}
       </CardContent>

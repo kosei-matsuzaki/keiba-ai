@@ -314,12 +314,17 @@ def test_recommendations_enabled_bet_types_filter(
     assert bet_types == {"単勝"}
 
 
-def test_recommendations_top_n_horses_param(
+def test_recommendations_use_a_fixed_top_n(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """top_n_horses query param is forwarded to recommend_for_race."""
+    """**狙い方 (上位何頭から組むか) は選択肢にしない。**
+
+    買うかどうかは的中確率の下限が決めるので、頭数を広げても線を超えない
+    買い目が候補に増えるだけで買い目は変わらない。常に固定値を渡す。
+    """
     race_id = "REC_RACE4"
+    from ai.betting.strategy import TOP_N_HORSES
     from core.paths import db_path
     from db.session import make_engine, session_scope
 
@@ -331,15 +336,10 @@ def test_recommendations_top_n_horses_param(
     fake_df = _fake_predictions_df(race_id, n=4)
     captured_args: dict = {}
 
-    def _capture_recommend(predictions, combinations_by_type, race_id,
-                           race_budget, stake_unit, stake_unit_by_bet_type,
-                           win_min_odds, top_n_horses, enabled_bet_types,
-                           max_points_per_bet_type=None):
-        captured_args["top_n_horses"] = top_n_horses
+    def _capture_recommend(**kwargs):
+        captured_args.update(kwargs)
         return RecommendationResult(
-            race_id=race_id,
-            race_budget=race_budget,
-            candidates=[],
+            race_id=race_id, race_budget=kwargs["race_budget"], candidates=[]
         )
 
     with (
@@ -354,7 +354,8 @@ def test_recommendations_top_n_horses_param(
         resp = client.get(f"/api/recommendations/{race_id}?top_n_horses=2")
 
     assert resp.status_code == 200
-    assert captured_args.get("top_n_horses") == 2
+    # 受け取らないクエリは無視され、常に固定値が使われる
+    assert captured_args.get("top_n_horses") == TOP_N_HORSES
 
 
 def test_recommendations_candidates_include_zero_stake(
@@ -763,7 +764,8 @@ def test_recommendations_uses_settings_when_no_override(
 
     assert resp.status_code == 200
     assert captured["race_budget"] == 5_000  # settings 既定
-    assert captured["stake_unit"] == 100
+    # 点数は確信度から決まる (確率モデル未設定なら基準の 5 点)
+    assert captured["points_by_bet_type"] == {"単勝": 5, "複勝": 5}
 
 
 def test_recommendations_race_budget_override(
@@ -793,18 +795,20 @@ def test_recommendations_bet_types_override(
     assert captured["enabled_bet_types"] == ["単勝", "複勝"]
 
 
-def test_recommendations_stake_unit_override(
+def test_recommendations_no_longer_takes_a_stake_unit(
     app_with_temp_db: FastAPI,
     tmp_path: Path,
 ) -> None:
-    """1 点あたりの賭け金だけをこのレースで変える。"""
+    """**1 点 = 100 円は固定。** 厚みは金額ではなく点数で表す。"""
     captured: dict = {}
     resp = _run_with_query(
         app_with_temp_db, tmp_path, "REC_OVR4", "?stake_unit=500", captured
     )
 
     assert resp.status_code == 200
-    assert captured["stake_unit"] == 500
+    # 受け取らないクエリなので無視される
+    assert "stake_unit" not in captured
+    assert resp.json()["stake_unit"] == 100
 
 
 def test_recommendations_no_longer_takes_an_ev_threshold(
@@ -904,3 +908,45 @@ def test_recommendations_do_not_use_any_ev_threshold(
     assert captured["win_min_odds"] == 1.5
     assert "min_ev" not in captured
     assert "min_ev_by_bet_type" not in captured
+
+
+def test_recommendations_pass_combo_floor_from_settings(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """連系の点数は固定値ではなく **的中確率の下限** で決まる。
+
+    設定した下限がそのまま recommend_for_race に渡ること (= レースごとに
+    買う点数が変わる仕組みが効いていること) を確かめる。
+    """
+    race_id = "REC_RACE_FLOOR"
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_floor"))
+
+    fake_df = _fake_predictions_df(race_id, n=4)
+    captured: dict = {}
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+        return RecommendationResult(
+            race_id=race_id, race_budget=kwargs["race_budget"], candidates=[]
+        )
+
+    with (
+        patch("api.routers.recommendations.load_model_full", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race", return_value=fake_df),
+        patch("api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("api.routers.recommendations.recommend_for_race", side_effect=_capture),
+        TestClient(app_with_temp_db) as client,
+    ):
+        client.put("/api/settings", json={"combo_min_hit_prob": {"馬連": 0.09}})
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    assert captured["min_hit_prob_by_bet_type"] == {"馬連": 0.09}

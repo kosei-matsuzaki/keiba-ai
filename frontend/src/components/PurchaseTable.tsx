@@ -52,7 +52,7 @@ function Formula({ group, runners }: { group: PurchaseGroup; runners: number }) 
   if (shape.kind === 'nagashi') {
     return (
       <span className="inline-flex flex-wrap items-center gap-1">
-        <HorseList horses={[shape.axis]} runners={runners} />
+        <HorseList horses={shape.axes} runners={runners} />
         <span className="text-xs text-subtle-foreground">軸から</span>
         <HorseList horses={shape.partners} runners={runners} />
       </span>

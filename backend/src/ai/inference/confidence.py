@@ -97,42 +97,57 @@ def is_place_worth_buying(confidence: float | None, threshold: float) -> bool:
     return confidence >= threshold
 
 
-#: 確信度に対する賭け金の反応。**券種で形が違うのは実測に基づく。**
+#: 確信度から点数を出すときの基準 (券種ごと)。**確信度の桁が券種で違う**ため
+#: 1 つの基準では表せない: 単勝の確信度は 1 着確率 (中央値 0.18)、複勝は 3 着内率
+#: (0.5 前後)。基準はその券種の典型値に置き、そこで base 点になるようにする。
 #:
-#: OOF 14,619 レース (2020-05〜2024-10) を確信度で 5 分位に割ったときの回収率:
-#:
-#:   単勝 (1着確率)  0.875 / 0.923 / 0.851 / 0.843 / 0.859   相関 −0.005
-#:   複勝 (3着内率)  0.749 / 0.843 / 0.870 / 0.875 / 0.911   相関 +0.041
-#:
-#: **単勝は的中率が 6% → 37% と動くのに回収率が動かない** = 市場が正しく値付けして
-#: いる。確信度で賭け金を動かしても取り分は増えない。複勝だけ単調に上がるので、
-#: 複勝の点数だけを確信度に比例させる (連系も無相関: 0.877 → 0.879)。
-PLACE_CONFIDENCE_REFERENCE = 0.50
-PLACE_CONFIDENCE_EXPONENT = 2
-PLACE_MAX_POINTS = 15
+#: 連系はここに載せない。連系の「点数」は 1 組合せ = 1 点で、**何点買うかは
+#: 的中確率の下限を超えた買い目の数**が決める (`DEFAULT_COMBO_MIN_HIT_PROB`)。
+CONFIDENCE_REFERENCE: dict[str, float] = {"単勝": 0.25, "複勝": 0.50}
+
+#: 基準の確信度のときに買う点数 (1 点 = 100 円)。
+BASE_POINTS = 5
+
+#: 点数の上限。確信度が高くても 1 レースに突っ込みすぎないための歯止め。
+MAX_POINTS = 15
+
+#: 確信度に対する反応の強さ。2 = 二乗。
+CONFIDENCE_EXPONENT = 2
 
 
 def points_for_confidence(
     bet_type: str,
     confidence: float | None,
-    base_points: int,
+    base_points: int = BASE_POINTS,
 ) -> int:
-    """確信度に応じた点数 (1 点 = stake_unit)。
+    """確信度に応じた点数 (1 点 = 100 円)。
 
-    複勝は ``base × (確信度 / 0.50)^2`` を 1〜15 点に丸める。基準 0.50 は
-    「3 着以内に入る確率が半々」の位置。実測 (OOF・基準 5 点):
+    ``base × (確信度 / 基準)^2`` を 1〜15 点に丸める。実測 (前進検証 9 fold・
+    OOF 14,700 レース):
+
+    **複勝** (基準 0.50 = 3 着以内が半々の位置) — 効く。
 
         定額 5 点          0.875   3.80 点/レース
         段階 x1/x2/x3      0.882   8.87 点/レース   ← 旧実装
         連続 (p/0.5)^2     0.891   5.42 点/レース   ← これ
 
-    **連続のほうが回収率が高く、使う点数も少ない。** 5 年すべてでプラス
-    (+0.037 / +0.007 / +0.019 / +0.008 / +0.016)。
+    5 年すべてでプラス (+0.037 / +0.007 / +0.019 / +0.008 / +0.016)。
 
-    単勝・連系は確信度で動かさない (上のコメントの実測どおり、回収率が反応しない)。
-    確率が取れないときも基準のまま — 壊れたときに賭け金が動くと挙動が読めない。
+    **単勝** (基準 0.25) — ほぼ効かないが害もない。
+
+        定額 5 点              0.8438   5.00 点/レース   fold 0.767〜0.955
+        連続 (p/0.25)^2        0.8483   4.66 点/レース   fold 0.776〜0.913
+
+    回収率の差 +0.005 は誤差の範囲で、確信度と回収率の相関も −0.005 しかない
+    (的中率は 6% → 42% と動くのに回収率が動かない = 市場が正しく値付けしている)。
+    それでも同じ式にしているのは、**券種ごとに賭け金の決め方が違う理由が無い**
+    のと、fold ごとのばらつきが小さくなるため。
+
+    確信度が取れないとき (確率モデル未設定・推論失敗) は基準の点数。壊れたときに
+    賭け金が動くと挙動が読めない。
     """
-    if bet_type != "複勝" or confidence is None:
+    reference = CONFIDENCE_REFERENCE.get(bet_type)
+    if reference is None or confidence is None:
         return base_points
-    raw = round(base_points * (confidence / PLACE_CONFIDENCE_REFERENCE) ** PLACE_CONFIDENCE_EXPONENT)
-    return max(1, min(PLACE_MAX_POINTS, int(raw)))
+    raw = round(base_points * (confidence / reference) ** CONFIDENCE_EXPONENT)
+    return max(1, min(MAX_POINTS, int(raw)))

@@ -47,12 +47,28 @@ class RaceSummary(BaseModel):
     name: str | None = None
 
 
+class PayoutEntry(BaseModel):
+    """確定払戻 1 行 (100 円あたり)。
+
+    答え合わせで **推奨買目を全部買った場合** を計算するために返す。単勝だけを
+    races.payout_win で見ていたときは、実際に推奨している複勝・連系の結果が
+    画面に出なかった。
+    """
+
+    bet_type: str
+    combo: str
+    amount: int
+    popularity: int | None = None
+
+
 class RaceDetail(RaceSummary):
     weather: str | None
     track_condition: str | None
     entries: list[EntrySummary]
     payout_win: int | None
     payout_place: str | None
+    #: 全券種の確定払戻。未確定 (発走前) なら空。
+    payouts: list[PayoutEntry] = []
 
 
 class UpcomingRacesResponse(BaseModel):
@@ -266,16 +282,13 @@ class SettingsResponse(BaseModel):
     win_min_odds: float
     scraper_stopped: bool
     race_budget: int
-    stake_unit: int
-    stake_units: dict[str, int]
-    enabled_bet_types: list[str]
     probability_model_path: str | None = None
     #: 複勝を買う下限。確率モデルが本命に付けた **3 着内率**。
     #: 旧 `place_min_confidence` (1 着確率・0.30) とは目盛りが違う。
     place_min_hit_prob: float = 0.60
-    #: 連系を 1 券種あたり何点まで買うか。0 で無制限。
-    #: **予算は上限であって使い切る目標ではない。**
-    max_points_per_bet_type: int = 2
+    #: 連系を買う的中確率の下限 (券種ごと)。線を超えた買い目だけを買うので、
+    #: **買う点数がレースごとに変わる** (確信度の高いレースほど深く買う)。
+    combo_min_hit_prob: dict[str, float] = {}
 
 
 class SettingsUpdate(BaseModel):
@@ -286,12 +299,9 @@ class SettingsUpdate(BaseModel):
     win_min_odds: float | None = None
     scraper_stopped: bool | None = None
     race_budget: int | None = None
-    stake_unit: int | None = None
-    stake_units: dict[str, int] | None = None
-    enabled_bet_types: list[str] | None = None
     probability_model_path: str | None = None
     place_min_hit_prob: float | None = None
-    max_points_per_bet_type: int | None = None
+    combo_min_hit_prob: dict[str, float] | None = None
 
     @field_validator("place_min_hit_prob")
     @classmethod
@@ -301,12 +311,17 @@ class SettingsUpdate(BaseModel):
             raise ValueError("place_min_hit_prob は 0.0〜1.0 の範囲で指定してください")
         return v
 
-    @field_validator("max_points_per_bet_type")
+    @field_validator("combo_min_hit_prob")
     @classmethod
-    def max_points_non_negative(cls, v: int | None) -> int | None:
-        # 0 = 無制限 (従来どおり予算まで買う)。負の点数は無い。
-        if v is not None and v < 0:
-            raise ValueError("max_points_per_bet_type は 0 以上で指定してください")
+    def combo_floor_in_range(cls, v: dict[str, float] | None) -> dict[str, float] | None:
+        # 確率なので 0〜1。空 dict は「下限なし」= 上限点数まで買う。
+        if v is None:
+            return v
+        for bet_type, prob in v.items():
+            if not (0.0 <= prob <= 1.0):
+                raise ValueError(
+                    f"combo_min_hit_prob[{bet_type}] は 0.0〜1.0 の範囲で指定してください"
+                )
         return v
 
     @field_validator("race_budget")
@@ -315,23 +330,6 @@ class SettingsUpdate(BaseModel):
         # 100 円未満だと 1 点も買えない
         if v is not None and v < 100:
             raise ValueError("race_budget must be >= 100")
-        return v
-
-    @field_validator("stake_unit")
-    @classmethod
-    def stake_unit_valid(cls, v: int | None) -> int | None:
-        # 馬券は 100 円単位でしか買えない
-        if v is not None and (v < 100 or v % 100 != 0):
-            raise ValueError("stake_unit must be a multiple of 100 and >= 100")
-        return v
-
-    @field_validator("enabled_bet_types")
-    @classmethod
-    def valid_bet_types(cls, v: list[str] | None) -> list[str] | None:
-        if v is not None:
-            invalid = [bt for bt in v if bt not in _ALL_BET_TYPES]
-            if invalid:
-                raise ValueError(f"Unknown bet types: {invalid}")
         return v
 
 

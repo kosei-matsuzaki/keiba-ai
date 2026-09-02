@@ -1,8 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { Pencil, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/RowActionsMenu';
 import {
   Table,
   TableBody,
@@ -142,68 +141,49 @@ export function ModelTable({
               </div>
             </TableCell>
             <TableCell onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-end gap-2">
-                {!model.is_active && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={activatingId !== null}
-                    onClick={() => onActivate(model.id)}
-                    title="このモデルで買い目を決めるようにする"
-                  >
-                    {activatingId === model.id ? '切り替え中…' : 'Activate'}
-                  </Button>
-                )}
-                {/* 学習時の指標は実運用の賭けルールと別物なので、ここで測り直せる
-                    ようにする。log-loss は学習側に存在せず、これでしか埋まらない。 */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={evaluatingId !== null}
-                  onClick={() => onEvaluate(model)}
-                  title={
-                    m.source === 'backtest'
-                      ? '実運用の賭けルールで測り直します (5,000 レースで 10 分前後)'
-                      : '実運用の賭けルールで測ります。log-loss と評価窓もここで埋まります'
-                  }
-                >
-                  {evaluatingId === model.id ? '計測中…' : '計測'}
-                </Button>
-                {/* 役割の割り当ては Settings ではなくこの画面で行う。
-                    モデルを見比べている場所で選べないと意味がないため。 */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={settingProbability}
-                  onClick={() => onSetProbability(model.is_probability_model ? null : model)}
-                  title={
-                    model.is_probability_model
+              {/* **操作は三点リーダーに畳む。** ボタンを 5 つ並べると、行の主役
+                  である数字より操作の方が目立ってしまう。 */}
+              <RowActionsMenu
+                label={`モデル ${model.id} の操作`}
+                actions={[
+                  {
+                    label: activatingId === model.id ? '切り替え中…' : 'Activate',
+                    title: 'このモデルで買い目を決めるようにする',
+                    disabled: model.is_active || activatingId !== null,
+                    onSelect: () => onActivate(model.id),
+                  },
+                  {
+                    // 学習時の指標は実運用の賭けルールと別物なので、ここで測り直せる
+                    // ようにする。log-loss は学習側に存在せず、これでしか埋まらない。
+                    label: evaluatingId === model.id ? '計測中…' : '計測',
+                    title:
+                      m.source === 'backtest'
+                        ? '実運用の賭けルールで測り直します (5,000 レースで 10 分前後)'
+                        : '実運用の賭けルールで測ります。log-loss と評価窓もここで埋まります',
+                    disabled: evaluatingId !== null,
+                    onSelect: () => onEvaluate(model),
+                  },
+                  {
+                    // 役割の割り当ては Settings ではなくこの画面で行う。
+                    // モデルを見比べている場所で選べないと意味がないため。
+                    label: model.is_probability_model ? '確率を解除' : '確率に設定',
+                    title: model.is_probability_model
                       ? '確率モデルの割り当てを解除します'
-                      : '複勝の確信度と連系の確率にこのモデルを使います'
-                  }
-                >
-                  {model.is_probability_model ? '確率を解除' : '確率に設定'}
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="名称を編集"
-                  title="名称を編集"
-                  onClick={() => onEdit(model)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="削除"
-                  title={model.is_active ? 'Active モデルは削除できません' : '削除'}
-                  disabled={model.is_active}
-                  onClick={() => onDelete(model)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+                      : '複勝の確信度と連系の確率にこのモデルを使います',
+                    disabled: settingProbability,
+                    onSelect: () =>
+                      onSetProbability(model.is_probability_model ? null : model),
+                  },
+                  { label: '名称を編集', onSelect: () => onEdit(model) },
+                  {
+                    label: '削除',
+                    tone: 'destructive',
+                    title: model.is_active ? 'Active モデルは削除できません' : undefined,
+                    disabled: model.is_active,
+                    onSelect: () => onDelete(model),
+                  },
+                ]}
+              />
             </TableCell>
           </TableRow>
           );

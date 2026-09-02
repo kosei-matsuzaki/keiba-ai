@@ -45,21 +45,20 @@ def save_simulation_result(
     payload = dict(
         created_at=now,
         model_run_id=model_run_id,
-        budget=d["budget"],
-        strategy=d["strategy"],
+        race_budget=d["race_budget"],
         window_start=d["window"]["start"],
         window_end=d["window"]["end"],
         model_path=d["model_path"],
         n_races=d["n_races"],
         n_settled_races=d["n_settled_races"],
-        final_bankroll=d["final_bankroll"],
-        peak_bankroll=d["peak_bankroll"],
+        final_profit=d["final_profit"],
+        peak_profit=d["peak_profit"],
         summary_json=json.dumps(d["summary"], ensure_ascii=False),
         by_bet_type_json=json.dumps(d["by_bet_type"], ensure_ascii=False),
         by_race_class_json=json.dumps(d["by_race_class"], ensure_ascii=False),
         by_course_json=json.dumps(d["by_course"], ensure_ascii=False),
-        bankroll_timeseries_json=json.dumps(
-            d["bankroll_timeseries"], ensure_ascii=False
+        profit_timeseries_json=json.dumps(
+            d["profit_timeseries"], ensure_ascii=False
         ),
         conditions_json=(
             json.dumps(d["conditions"], ensure_ascii=False) if d.get("conditions") else None

@@ -100,7 +100,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
   const monthDays = data?.days.length ?? 0;
 
   return (
-    <div className={cn('w-full max-w-md', className)}>
+    <div className={cn('w-full', className)}>
       {/* 月送り */}
       <div className="mb-2 flex items-center justify-between gap-2">
         <Button variant="ghost" size="sm" onClick={() => shift(-1)} aria-label="前の月">
@@ -108,14 +108,14 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
         </Button>
         <div className="flex items-baseline gap-3">
           <span
-            className="font-mono text-[15px] font-bold tabular-nums"
+            className="font-mono text-lg font-bold tabular-nums"
             aria-label="表示中の月"
           >
             {month.y}
             <span className="mx-0.5 text-subtle-foreground">/</span>
             {pad(month.m)}
           </span>
-          <span className="font-mono text-[10px] tabular-nums text-subtle-foreground">
+          <span className="font-mono text-xs tabular-nums text-subtle-foreground">
             {monthDays} 開催日 / {monthRaces} R
           </span>
         </div>
@@ -130,7 +130,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
           <div
             key={d}
             className={cn(
-              'pb-1 text-center font-mono text-[10px]',
+              'pb-1.5 text-center font-mono text-xs',
               i === 0 && 'text-destructive',
               i === 6 && 'text-info',
               i !== 0 && i !== 6 && 'text-subtle-foreground'
@@ -142,7 +142,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
       </div>
 
       {isPending ? (
-        <Skeleton className="mt-2 h-56 w-full" />
+        <Skeleton className="mt-2 h-64 w-full" />
       ) : (
         <div className="grid grid-cols-7">
           {cells.map((day, i) => {
@@ -174,7 +174,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                     : undefined
                 }
                 className={cn(
-                  'flex h-14 flex-col items-start gap-0.5 border-b border-r border-border px-1.5 py-1 text-left transition-colors',
+                  'flex h-14 flex-col items-start gap-0 border-b border-r border-border px-2 py-1 text-left transition-colors sm:h-16',
                   '[&:nth-child(7n)]:border-r-0',
                   'cursor-pointer hover:bg-card-elevated',
                   // 未取得の日も選べる (選ぶと右側に取込ボタンが出る)
@@ -183,32 +183,38 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                   'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary'
                 )}
               >
-                <span
-                  className={cn(
-                    'font-mono text-[11px] tabular-nums',
-                    isToday && 'underline underline-offset-2',
-                    dow === 0 && 'text-destructive',
-                    dow === 6 && 'text-info',
-                    dow !== 0 && dow !== 6 && 'text-muted-foreground'
-                  )}
-                >
-                  {day}
-                </span>
-                {hasData && (
-                  <>
+                {/* 日付と R 数は横に並べる。縦に積むとセルの高さが要るわりに
+                    読み取れる情報は増えない (重賞名の行だけ縦を使う)。 */}
+                <span className="flex w-full items-baseline justify-between gap-1">
+                  <span
+                    className={cn(
+                      'font-mono text-sm tabular-nums',
+                      isToday && 'underline underline-offset-2',
+                      dow === 0 && 'text-destructive',
+                      dow === 6 && 'text-info',
+                      dow !== 0 && dow !== 6 && 'text-muted-foreground'
+                    )}
+                  >
+                    {day}
+                  </span>
+                  {hasData && (
                     <span
                       className={cn(
-                        'font-mono text-[10px] tabular-nums',
+                        'font-mono text-[11px] tabular-nums',
                         // 出馬表だけ = 結果がまだ、を琥珀で示す
-                        resultsPending ? 'text-primary' : 'text-foreground'
+                        resultsPending ? 'text-primary' : 'text-muted-foreground'
                       )}
                     >
                       {info.race_count}R
                     </span>
+                  )}
+                </span>
+                {hasData && (
+                  <>
                     {info.highlight_name && (
                       <span
                         className={cn(
-                          'w-full truncate text-[9px] leading-tight',
+                          'w-full truncate text-[11px] leading-tight',
                           gradeClass(info.highlight_class)
                         )}
                       >
@@ -224,7 +230,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
       )}
 
       {/* 凡例 — セルの色が何を意味するかを明示する */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] text-subtle-foreground">
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-subtle-foreground">
         <span className="flex items-center gap-1">
           <span className="inline-block h-2 w-2 border border-border-strong bg-card" />
           結果あり

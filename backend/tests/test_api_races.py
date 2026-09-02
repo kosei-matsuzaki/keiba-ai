@@ -98,6 +98,57 @@ def test_race_detail_found(
     assert len(data["entries"]) == 5
 
 
+
+def test_race_detail_returns_all_payouts(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """答え合わせで推奨買目を突き合わせるため、全券種の払戻を返す。
+
+    単勝だけ (races.payout_win) では複勝・連系の結果が画面に出せない。
+    """
+    from core.paths import db_path
+    from db.models.payout import Payout
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _insert_race(session, "RACE_PAY", date.today().isoformat(), n_horses=5)
+        session.add_all([
+            Payout(race_id="RACE_PAY", bet_type="単勝", combo="1", amount=350, popularity=1),
+            Payout(race_id="RACE_PAY", bet_type="複勝", combo="1", amount=150, popularity=1),
+            Payout(race_id="RACE_PAY", bet_type="ワイド", combo="1-2", amount=900, popularity=4),
+        ])
+        session.commit()
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/RACE_PAY")
+    assert resp.status_code == 200
+    payouts = resp.json()["payouts"]
+    assert {(p["bet_type"], p["combo"], p["amount"]) for p in payouts} == {
+        ("単勝", "1", 350),
+        ("複勝", "1", 150),
+        ("ワイド", "1-2", 900),
+    }
+
+
+def test_race_detail_payouts_empty_before_result(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """未確定 (払戻なし) では空リスト。画面は答え合わせを出さない。"""
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _insert_race(session, "RACE_NOPAY", date.today().isoformat(), n_horses=3)
+
+    with TestClient(app_with_temp_db) as client:
+        resp = client.get("/api/races/RACE_NOPAY")
+    assert resp.status_code == 200
+    assert resp.json()["payouts"] == []
+
 # ── /races/recent ─────────────────────────────────────────────────────────────
 
 def test_recent_races_empty(api_client: TestClient) -> None:

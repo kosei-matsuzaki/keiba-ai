@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
 
@@ -10,10 +11,12 @@ import { Label } from '@/components/ui/label';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { BankrollChart } from '@/components/BankrollChart';
+import { ProfitChart } from '@/components/ProfitChart';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
 import { MetricBand, MetricItem } from '@/components/MetricBand';
+import { MetricCard } from '@/components/MetricCard';
 import {
   deleteSimulationRun,
   fetchJob,
@@ -22,30 +25,15 @@ import {
   listSimulationRuns,
   startSimulationJob,
 } from '@/lib/api';
-import { formatPercent, formatRatio, formatYen } from '@/lib/formatters';
+import { formatPercent, formatRatio, formatSignedYen, formatYen } from '@/lib/formatters';
 import { toast } from '@/components/ui/toast';
-import { useSettings } from '@/hooks/useSettings';
-import { labelClass } from '@/lib/labels';
 import { ALL_BET_TYPES } from '@/lib/betTypes';
 import type {
   BetType,
   SimulationGroupStats,
-  SimulationConditions,
   SimulationResponse,
   SimulationRunSummary,
 } from '@/types/api';
-
-// ── 狙い方 ────────────────────────────────────────────────────────────────────
-
-// **RACE 画面と同じ選択肢にする。** シミュレーションは「RACE 画面の予想を全レースで
-// やったらどうなるか」を見るものなので、条件の呼び名も刻みも揃っていないと比べられない。
-// 以前は「戦略 (安定・標準・積極的)」で 1 点の額と頭数をまとめて動かしていたが、
-// 1 点 = 100 円に固定した今、動くのは頭数だけになった。
-const AIM_PRESETS = [
-  { value: 3, label: '本命中心', hint: '予想上位 3 頭だけで買い目を組む' },
-  { value: 5, label: '標準', hint: '予想上位 5 頭で買い目を組む' },
-  { value: 8, label: '穴も拾う', hint: '予想上位 8 頭まで広げ、人気薄も買い目に入れる' },
-] as const;
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -71,63 +59,46 @@ const MAX_WINDOW_DAYS = 366;
 // ── Group breakdown table ─────────────────────────────────────────────────────
 
 interface GroupTableProps {
-  title: string;
   rows: SimulationGroupStats[];
 }
 
-function GroupTable({ title, rows }: GroupTableProps) {
+function GroupTable({ rows }: GroupTableProps) {
   if (rows.length === 0) {
-    return (
-      <Card className="border-t border-border pt-6">
-        <CardHeader>
-          <CardTitle className="text-label-ja">{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">該当するベットがありません。</p>
-        </CardContent>
-      </Card>
-    );
+    return <p className="text-sm text-muted-foreground">該当するベットがありません。</p>;
   }
   return (
-    <Card className="border-t border-border pt-6">
-      <CardHeader>
-        <CardTitle className="text-label-ja">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ラベル</TableHead>
-              <TableHead className="text-right">bet 数</TableHead>
-              <TableHead className="text-right">投資</TableHead>
-              <TableHead className="text-right">払戻</TableHead>
-              <TableHead className="text-right">回収率</TableHead>
-              <TableHead className="text-right">的中率</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.label}>
-                <TableCell className="font-medium">{r.label}</TableCell>
-                <TableCell className="text-right">{r.n_bets}</TableCell>
-                <TableCell className="text-right">{formatYen(r.invested)}</TableCell>
-                <TableCell className="text-right">{formatYen(r.payout)}</TableCell>
-                <TableCell
-                  className={`text-right ${
-                    r.payback_rate >= 1
-                      ? 'font-medium text-success'
-                      : 'text-muted-foreground'
-                  }`}
-                >
-                  {formatRatio(r.payback_rate)}
-                </TableCell>
-                <TableCell className="text-right">{formatPercent(r.hit_rate)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>ラベル</TableHead>
+          <TableHead className="text-right">bet 数</TableHead>
+          <TableHead className="text-right">投資</TableHead>
+          <TableHead className="text-right">払戻</TableHead>
+          <TableHead className="text-right">回収率</TableHead>
+          <TableHead className="text-right">的中率</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => (
+          <TableRow key={r.label}>
+            <TableCell className="font-medium">{r.label}</TableCell>
+            <TableCell className="text-right tabular-nums">{r.n_bets}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatYen(r.invested)}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatYen(r.payout)}</TableCell>
+            <TableCell
+              className={`text-right tabular-nums ${
+                r.payback_rate >= 1 ? 'text-success' : 'text-muted-foreground'
+              }`}
+            >
+              {formatRatio(r.payback_rate)}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {formatPercent(r.hit_rate)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -187,9 +158,9 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
   return (
     <Card className="border-t border-border pt-6">
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex items-center gap-2 text-label-ja">
           <Archive className="h-4 w-4" />
-          保存済みシミュレーション ({runs.length})
+          過去の実行 ({runs.length})
         </CardTitle>
         <Button
           type="button"
@@ -210,7 +181,7 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
           <p className="text-sm text-muted-foreground">読込中…</p>
         ) : runs.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            保存済みの実行はありません。シミュレーションを実行すると自動的にここに保存されます (上限 50 件)。
+            まだありません。実行すると自動で保存されます（上限 50 件）。
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -219,10 +190,9 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
                 <TableRow>
                   <TableHead>実行日時</TableHead>
                   <TableHead>期間</TableHead>
-                  <TableHead>戦略</TableHead>
-                  <TableHead className="text-right">初期</TableHead>
-                  <TableHead className="text-right">最終</TableHead>
-                  <TableHead className="text-right">ピーク</TableHead>
+                  <TableHead className="text-right">1 レースの上限</TableHead>
+                  <TableHead className="text-right">損益</TableHead>
+                  <TableHead className="text-right">最大益</TableHead>
                   <TableHead className="text-right">races</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -230,7 +200,7 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
               <TableBody>
                 {runs.map((r: SimulationRunSummary) => {
                   const isActive = r.id === activeRunId;
-                  const profit = r.final_bankroll - r.budget;
+                  const profit = r.final_profit;
                   return (
                     <TableRow
                       key={r.id}
@@ -245,9 +215,8 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
                       <TableCell className="text-xs text-muted-foreground">
                         {r.window_start ?? '-'} 〜 {r.window_end ?? '-'}
                       </TableCell>
-                      <TableCell>{r.strategy}</TableCell>
                       <TableCell className="text-right">
-                        {formatYen(r.budget)}
+                        {formatYen(r.race_budget)}
                       </TableCell>
                       <TableCell
                         className={`text-right ${
@@ -258,10 +227,10 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
                             : ''
                         }`}
                       >
-                        {formatYen(r.final_bankroll)}
+                        {formatSignedYen(r.final_profit)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {formatYen(r.peak_bankroll)}
+                        {formatSignedYen(r.peak_profit)}
                       </TableCell>
                       <TableCell className="text-right text-xs text-muted-foreground">
                         {r.n_settled_races} / {r.n_races}
@@ -293,70 +262,6 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
 
 // ── ModelSimulationPanel: 特定モデルのバックテスト ──────────────────────────
 
-/**
- * この run がどの条件で走ったかを 1 行ずつ出す。
- *
- * シミュレーションは Settings の値（確率モデル・確信度のしきい値・券種・1 点あたり
- * の金額）を実行時に読むので、**設定を変えれば同じ画面の同じボタンでも別の条件で
- * 走る**。条件を残さないと過去の run と比べられないため、結果と一緒に表示する。
- */
-function ConditionList({ conditions }: { conditions: SimulationConditions | null }) {
-  if (!conditions) {
-    return (
-      <p className="px-4 py-3 text-xs text-muted-foreground sm:px-6">
-        この実行には条件が記録されていません（古い実行）。
-      </p>
-    );
-  }
-  // 確率モデルの有無は結果を最も大きく変えるので、他の条件と同列に並べない。
-  const others: [string, string][] = [
-    ['履歴の無いレース', conditions.exclude_low_information ? '除外した' : '含めた'],
-    ['賭け金', conditions.staking === 'compound' ? '複利（残資産連動）' : '定額'],
-    ['連系を組む頭数', `上位 ${conditions.top_n_horses} 頭`],
-    [
-      '1 レースの上限',
-      conditions.max_stake_per_race_yen
-        ? `${conditions.max_stake_per_race_yen.toLocaleString()} 円`
-        : `残資産の ${(conditions.max_stake_per_race_pct * 100).toFixed(0)}%`,
-    ],
-    ['対象券種', conditions.enabled_bet_types.join(' / ') || '—'],
-  ];
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3 sm:px-6">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-xs text-muted-foreground">確からしさを出すモデル</span>
-        {conditions.probability_model ? (
-          <>
-            <span className="font-mono text-sm text-foreground">
-              {conditions.probability_model}
-            </span>
-            <span className="text-xs text-subtle-foreground">
-              複勝は確信度{' '}
-              {((conditions.place_min_confidence ?? 0) * 100).toFixed(0)}% 以上のレースだけ /
-              連系の確率もこのモデル由来
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="text-sm text-muted-foreground">未使用</span>
-            <span className="text-xs text-subtle-foreground">
-              買い目を決めるモデルだけで実行（複勝は全レースで購入）
-            </span>
-          </>
-        )}
-      </div>
-      <dl className="flex flex-wrap gap-x-8 gap-y-1 text-xs">
-        {others.map(([k, v]) => (
-          <div key={k} className="flex gap-2">
-            <dt className="text-muted-foreground">{k}</dt>
-            <dd className="tabular-nums text-foreground">{v}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
 interface ModelSimulationPanelProps {
   /** バックテスト対象モデル (model_runs.id)。 */
   modelId: number;
@@ -370,19 +275,12 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
 
   const [start, setStart] = useState(defaultStart);
   const [end, setEnd] = useState(defaultEnd);
-  const [budget, setBudget] = useState(100_000);
-  const [aim, setAim] = useState<number>(3);
   const [betTypes, setBetTypes] = useState<BetType[] | null>(null);
-  // 1 race 絶対上限 (円)。0 で無効。default 5000 円 (= 100k 元手の 5%)。
-  const [maxStakePerRaceYen, setMaxStakePerRaceYen] = useState(5_000);
-  // 既定は flat。compound は払戻 1.0 未満の券種を数百レース買うと破産し、
-  // 以降を実質評価しなくなるので、回収率を測るのが目的の画面では既定にしない。
-  const [staking, setStaking] = useState<'flat' | 'compound'>('flat');
-  // 履歴の無いレース (新馬戦など) を除外するか。既定 off — 実測では単勝が +0.006 と
-  // ほぼ変わらず、複勝はむしろ悪化する (下の説明文参照) ため、既定で切るほどの根拠が無い。
-  const [excludeLowInfo, setExcludeLowInfo] = useState(false);
+  // 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
+  // RACE 画面と同じ意味で、実際に賭ける額は確信度と的中確率の下限が決める。
+  // 既定は Settings の値に合わせる (未取得のうちは 5,000 円)。
+  const [raceBudget, setRaceBudget] = useState(5_000);
   // Settings は実行時にバックエンドが読む。ここでは「何が引き継がれるか」の表示用。
-  const { data: settings } = useSettings();
   const [result, setResult] = useState<SimulationResponse | null>(null);
 
   // ── Background job orchestration ────────────────────────────────────
@@ -457,13 +355,8 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
       startSimulationJob({
         start: start || undefined,
         end: end || undefined,
-        budget,
-        strategy: 'balanced',
-        top_n_horses: aim,
+        race_budget: raceBudget,
         ...(betTypes ? { bet_types: betTypes } : {}),
-        max_stake_per_race_yen: maxStakePerRaceYen,
-        exclude_low_information: excludeLowInfo,
-        staking,
         model_id: modelId,
       }),
     onSuccess: (data) => {
@@ -503,151 +396,84 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Form: window + budget + strategy */}
+      {/* ── 1. 条件 ─────────────────────────────────────────────
+          入力は 3 つだけ (期間 / 1 レースの上限 / 買う馬券)。縦積みだと
+          「まだ何か入力欄があるのでは」と読ませてしまうので横に並べる。 */}
       <Card className="border-t border-border pt-6">
         <CardHeader>
-          <CardTitle className="text-label-ja">シミュレーション設定</CardTitle>
+          <CardTitle className="text-label-ja">条件</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-4">
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex max-w-sm flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>期間 開始日</Label>
-              <DateYMDPicker
-                value={start}
-                onChange={setStart}
-                ariaLabel="開始日"
-              />
+              <DateYMDPicker value={start} onChange={setStart} ariaLabel="開始日" />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>期間 終了日</Label>
-              <DateYMDPicker
-                value={end}
-                onChange={setEnd}
-                ariaLabel="終了日"
+              <DateYMDPicker value={end} onChange={setEnd} ariaLabel="終了日" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sim-race-budget">1 レースに使う上限 (円)</Label>
+              <Input
+                id="sim-race-budget"
+                type="number"
+                min={100}
+                step={500}
+                className="text-right font-mono tabular-nums"
+                value={raceBudget}
+                onChange={(e) => setRaceBudget(Math.max(100, Number(e.target.value) || 0))}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-budget">初期資産 (円)</Label>
-              <Input
-                id="sim-budget"
-                type="number"
-                min={1000}
-                step={10_000}
-                value={budget}
-                onChange={(e) => setBudget(Math.max(1000, Number(e.target.value) || 0))}
-              />
-              <p className="text-xs text-muted-foreground">
-                この額から始めて、払戻を次レースの余力に足しながら回します。
-                各レースで使う上限は「残資産 × 5%」と下の上限額の小さい方。その範囲に
-                <strong>単勝 → 複勝 → 連系</strong>の順で、Settings の券種ごとの金額の比で
-                並べます（期待値の高い順ではありません）。資産が尽きたら以降は実質 bet しません。
-              </p>
+              <Label>買う馬券</Label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {ALL_BET_TYPES.map((betType) => {
+                  const current = betTypes ?? (ALL_BET_TYPES as readonly BetType[] as BetType[]);
+                  const on = current.includes(betType);
+                  return (
+                    <button
+                      key={betType}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => {
+                        const next = on
+                          ? current.filter((b) => b !== betType)
+                          : [...current, betType];
+                        if (next.length === 0) return; // 全部外すと候補が空になる
+                        setBetTypes(next);
+                      }}
+                      className={`rounded-sm border px-2 py-1 text-xs transition-colors ${
+                        on
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground'
+                      }`}
+                    >
+                      {betType}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
           <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sim-max-stake">1 レースに使う上限 (円)</Label>
-              <Input
-                id="sim-max-stake"
-                type="number"
-                min={0}
-                step={500}
-                value={maxStakePerRaceYen}
-                onChange={(e) =>
-                  setMaxStakePerRaceYen(Math.max(0, Number(e.target.value) || 0))
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Settings の「1 レースに使う上限」と同じ意味の、シミュレーション用の値。
-                資産が増えても 1 レースの賭け額がこれ以上には膨らみません。
-                <strong>0 で無効</strong>（残資産の 5% だけが上限になります）。
-              </p>
-            </div>
-
             {/* このシミュレーションは **2 つのモデル**を使う。片方 (確率モデル) は
                 Settings / Models 画面で決まり、実行時に読まれる。ここに出さないと
                 「同じボタンを押したのに前回と結果が違う」理由が分からない。 */}
-            <div className="flex flex-col gap-2 sm:col-span-2">
-              <span className={labelClass('mb-0')}>使うモデル</span>
-              <div className="grid grid-cols-1 gap-px overflow-hidden rounded-sm border border-border bg-border sm:grid-cols-2">
-                <div className="flex flex-col gap-0.5 bg-background px-3 py-2">
-                  <span className="text-xs text-muted-foreground">買い目を決める</span>
-                  <span className="text-sm text-foreground">この画面のモデル</span>
-                  <span className="text-xs text-subtle-foreground">
-                    どの馬・どの組を買うか
-                  </span>
-                </div>
-                <div className="flex flex-col gap-0.5 bg-background px-3 py-2">
-                  <span className="text-xs text-muted-foreground">確からしさを出す</span>
-                  {settings?.probability_model_path ? (
-                    <>
-                      <span className="truncate font-mono text-sm text-foreground">
-                        {settings.probability_model_path.split(/[/\\]/).pop()}
-                      </span>
-                      <span className="text-xs text-subtle-foreground">
-                        複勝は確信度{' '}
-                        {((settings.place_min_hit_prob ?? 0.6) * 100).toFixed(0)}% 以上の
-                        レースだけ / 連系の確率もこのモデル由来
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-sm text-muted-foreground">未設定</span>
-                      <span className="text-xs text-subtle-foreground">
-                        Models 画面で選ぶと、複勝の絞り込みと連系の確率が変わります
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <p className="text-xs text-subtle-foreground">
-                券種と 1 点あたりの金額も Settings の値を使います。結果には実行時の条件が
-                記録されるので、設定を変えて回し直しても後から見分けられます。
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm" htmlFor="staking">
-                賭け金の決め方
-              </label>
-              <select
-                id="staking"
-                className="h-9 w-full rounded-sm border border-border bg-background px-3 text-sm"
-                value={staking}
-                onChange={(e) => setStaking(e.target.value as 'flat' | 'compound')}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span className="text-muted-foreground">買い目を決めるモデル</span>
+              <span className="text-foreground">この画面のモデル</span>
+              {/* 買い方 (複勝の下限・連系の下限) は Settings の値を実行時に読む。
+                  説明を並べる代わりに、変えに行ける導線だけ置く。 */}
+              <Link
+                to="/settings"
+                className="ml-auto text-primary underline-offset-2 hover:underline"
               >
-                <option value="flat">定額（1 レースの予算を固定）</option>
-                <option value="compound">複利（残資産の一定割合）</option>
-              </select>
-              <p className="text-xs text-muted-foreground">
-                回収率を測るなら<strong>定額</strong>です。複利は資産の増減が賭け金に
-                跳ね返るため、払戻 1.0 未満の券種を数百レース買うと資産が尽き、
-                <strong>以降のレースを実質評価しなくなります</strong>。
-                そのうえ回収率は賭け金の重み付き平均なので、破産すると
-                「早い時期の大きい賭け金」に偏った数字になります。
-              </p>
+                買い方の設定 →
+              </Link>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[hsl(var(--primary))]"
-                  checked={excludeLowInfo}
-                  onChange={(e) => setExcludeLowInfo(e.target.checked)}
-                />
-                履歴の無いレースを除外する（新馬戦など）
-              </label>
-              <p className="text-xs text-muted-foreground">
-                出走馬全員に過去走が無いレースを飛ばします。AI が重く使う「前走までの
-                着順・上がり・脚質」が無く、枠順・馬体重・騎手・血統・オッズだけの予想に
-                なるためです。ただし <strong>回収率が上がるとは限りません</strong>
-                — test 19ヶ月の実測（432 レース）では単勝 0.933 → 0.938 とほぼ変わらず、
-                複勝は 0.889 → 0.886 とむしろ下がります（的中率は単勝 29%・複勝 64% と
-                高いのですが、人気馬に寄るぶんオッズが低いため）。
-              </p>
-            </div>
           </div>
 
           {windowTooLong && (
@@ -656,65 +482,6 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               (約 1 年) で指定してください。
             </div>
           )}
-
-          <div className="flex flex-col gap-2">
-            <Label>買う馬券</Label>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {ALL_BET_TYPES.map((betType) => {
-                const current = betTypes ?? (settings?.enabled_bet_types as BetType[] | undefined) ?? [];
-                const on = current.includes(betType);
-                return (
-                  <button
-                    key={betType}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => {
-                      const next = on
-                        ? current.filter((b) => b !== betType)
-                        : [...current, betType];
-                      if (next.length === 0) return; // 全部外すと候補が空になる
-                      setBetTypes(next);
-                    }}
-                    className={`rounded-sm border px-2 py-1 text-xs transition-colors ${
-                      on
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground'
-                    }`}
-                  >
-                    {betType}
-                  </button>
-                );
-              })}
-              {betTypes == null && (
-                <span className="ml-1 text-xs text-subtle-foreground">（いつもの設定）</span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label>狙い方</Label>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {AIM_PRESETS.map((preset) => (
-                <button
-                  key={preset.value}
-                  type="button"
-                  aria-pressed={aim === preset.value}
-                  title={preset.hint}
-                  onClick={() => setAim(preset.value)}
-                  className={`rounded-sm border px-2 py-1 text-xs transition-colors ${
-                    aim === preset.value
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground'
-                  }`}
-                >
-                  {preset.label}
-                </button>
-              ))}
-              <span className="ml-1 text-xs text-subtle-foreground">
-                {AIM_PRESETS.find((p) => p.value === aim)?.hint}・1 点 = 100 円
-              </span>
-            </div>
-          </div>
 
           <div>
             <Button
@@ -738,20 +505,6 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         </CardContent>
       </Card>
 
-      {/* Saved runs */}
-      <SavedRunsPanel
-        modelId={modelId}
-        activeRunId={result?.run_id ?? null}
-        onLoad={(runId) => loadMutation.mutate(runId)}
-        onDeleted={() => {
-          // 表示中の run が消えたら result を空に
-          if (result?.run_id) {
-            // 簡易: 削除完了時点では active run id が残る可能性があるので
-            // user 確認のため残す方針 (削除されても result はそのまま)
-          }
-        }}
-      />
-
       {/* Result */}
       {isRunning || loadMutation.isPending ? (
         <EmptyState
@@ -769,84 +522,75 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
       ) : !result ? (
         <EmptyState
           message="シミュレーション未実行"
-          description="期間・予算・戦略を選んで「実行」ボタンを押してください。または保存済みの実行をクリックしてロードできます。"
+          description="期間と 1 レースに使う上限を決めて「実行」ボタンを押してください。または保存済みの実行をクリックしてロードできます。"
         />
       ) : (
         <>
-          {/* この結果がどの条件で出たか。設定を変えれば同じボタンでも別条件で走るので、
-              結果と条件を必ず並べて見せる。 */}
-          {result.n_races_broke > 0 && (
-            <p className="rounded-sm border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
-              ⚠ 資金不足で 1 点も買えなかったレースが {result.n_races_broke.toLocaleString()} 件
-              あります。この回収率は<strong>破産するまでの期間しか測っていません</strong>。
-              賭け金の決め方を「定額」にするか、初期資産を増やして測り直してください。
-            </p>
-          )}
 
-          <section className="border-y border-border">
-            <h4 className={labelClass('mb-0 px-4 pt-3 sm:px-6')}>この実行の条件</h4>
-            <ConditionList conditions={result.conditions} />
-          </section>
+          {/* ── 2. 結果のまとめ ────────────────────────────────
+              収支は 0 スタート。元手が無いので「増えたか減ったか」だけを出す。 */}
+          <Card className="flex flex-col gap-3 border-t border-border pt-6">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h3 className="text-label-ja">結果</h3>
+              {/* **どの条件で走ったかを結果の見出しに畳む。** 設定を変えれば同じ
+                  ボタンでも別条件で走るので、結果と離すと後から比べられない。 */}
+              <p className="text-xs text-subtle-foreground">
+                {result.window.start ?? '—'} 〜 {result.window.end ?? '—'} ・{' '}
+                {result.n_settled_races.toLocaleString()} レース
+                {result.conditions && (
+                  <>
+                    {' ・ '}1 レース {(result.conditions.race_budget ?? 0).toLocaleString()} 円まで
+                    {' ・ '}
+                    {result.conditions.enabled_bet_types.join(' / ') || '—'}
+                    {result.conditions.probability_model
+                      ? ` ・ 確率モデル ${result.conditions.probability_model}`
+                      : ' ・ 確率モデル未使用'}
+                  </>
+                )}
+              </p>
+            </div>
+            {/* **カードにするのは収支だけ。** これがこの画面の答えで、
+                残りは読み解くための補助 (全部囲うと答えが埋もれる)。 */}
+            <div className="flex flex-wrap items-start gap-4">
+              <MetricCard
+                label="累計損益"
+                value={formatSignedYen(result.final_profit)}
+                tone={result.final_profit >= 0 ? 'positive' : 'negative'}
+                note="0 から始めた場合の収支"
+                className="min-w-[11rem]"
+              />
+              <dl className="flex flex-wrap gap-x-8 gap-y-3 pt-1">
+                <div>
+                  <dt className="text-xs text-muted-foreground">最大益 / 最大損</dt>
+                  <dd className="font-mono text-lg tabular-nums">
+                    {formatSignedYen(result.peak_profit)}
+                    <span className="mx-1 text-subtle-foreground">/</span>
+                    {formatSignedYen(result.trough_profit)}
+                  </dd>
+                </div>
+                <div title="途中で止まらずに回すのに要した額 (= 最大損の絶対値)">
+                  <dt className="text-xs text-muted-foreground">必要だった資金</dt>
+                  <dd className="font-mono text-lg tabular-nums">
+                    {formatYen(result.required_capital)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">回収率</dt>
+                  <dd className="font-mono text-lg tabular-nums">
+                    {formatRatio(result.summary.payback_rate)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </Card>
 
-          {/* Bankroll KPI cards: 資産の絶対値 */}
-          <MetricBand cols={5}>
-            <MetricItem
-              title="必要だった資金"
-              value={result.required_capital}
-              format="yen"
-              description="途中で止まらずに回すのに要した額"
-            />
-            <MetricItem
-              title="初期資産"
-              value={result.budget}
-              format="yen"
-              description="シミュレーション開始時"
-            />
-            <MetricItem
-              title="最終資産"
-              value={result.final_bankroll}
-              format="yen"
-              tone={
-                result.final_bankroll === 0
-                  ? 'negative'
-                  : result.final_bankroll >= result.budget
-                  ? 'positive'
-                  : 'negative'
-              }
-              description={
-                result.final_bankroll === 0
-                  ? '破産'
-                  : result.final_bankroll >= result.budget
-                  ? `+${formatYen(result.final_bankroll - result.budget)}`
-                  : `−${formatYen(result.budget - result.final_bankroll)}`
-              }
-            />
-            <MetricItem
-              title="ピーク資産"
-              value={result.peak_bankroll}
-              format="yen"
-              description="期間中の最高値"
-            />
-            <MetricItem
-              title="資産変化率"
-              value={
-                result.budget > 0 ? result.final_bankroll / result.budget : 0
-              }
-              format="ratio"
-              description="1.00 = 損益なし"
-            />
-          </MetricBand>
-
-          {/* Bankroll timeseries chart */}
+          {/* ── 3. 損益推移 ───────────────────────────────────── */}
           <Card className="border-t border-border pt-6">
             <CardHeader>
-              <CardTitle className="text-label-ja">資産推移</CardTitle>
+              <CardTitle className="text-label-ja">損益推移</CardTitle>
             </CardHeader>
             <CardContent>
-              <BankrollChart
-                points={result.bankroll_timeseries}
-                initialBudget={result.budget}
-              />
+              <ProfitChart points={result.profit_timeseries} />
             </CardContent>
           </Card>
 
@@ -893,12 +637,50 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
             />
           </MetricBand>
 
-          {/* Group breakdown tables */}
-          <GroupTable title="馬券種別" rows={result.by_bet_type} />
-          <GroupTable title="レース格別" rows={result.by_race_class} />
-          <GroupTable title="コース別" rows={result.by_course} />
+          {/* ── 4. 内訳 ───────────────────────────────────────
+              3 つの表を積むと縦に伸びるだけで見比べられない。同じ形の表なので
+              タブで切り替える。 */}
+          <Card className="border-t border-border pt-6">
+            <CardHeader>
+              <CardTitle className="text-label-ja">内訳</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="bet_type">
+                <TabsList>
+                  <TabsTrigger value="bet_type">馬券種別</TabsTrigger>
+                  <TabsTrigger value="race_class">レース格別</TabsTrigger>
+                  <TabsTrigger value="course">コース別</TabsTrigger>
+                </TabsList>
+                <TabsContent value="bet_type" className="pt-3">
+                  <GroupTable rows={result.by_bet_type} />
+                </TabsContent>
+                <TabsContent value="race_class" className="pt-3">
+                  <GroupTable rows={result.by_race_class} />
+                </TabsContent>
+                <TabsContent value="course" className="pt-3">
+                  <GroupTable rows={result.by_course} />
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
         </>
       )}
+
+      {/* ── 6. 過去の実行 ─────────────────────────────────────
+          入力と結果の間に挟むと流れが切れるので最後に置く。 */}
+      <SavedRunsPanel
+        modelId={modelId}
+        activeRunId={result?.run_id ?? null}
+        onLoad={(runId) => loadMutation.mutate(runId)}
+        onDeleted={() => {
+          // 表示中の run が消えたら result を空に
+          if (result?.run_id) {
+            // 簡易: 削除完了時点では active run id が残る可能性があるので
+            // user 確認のため残す方針 (削除されても result はそのまま)
+          }
+        }}
+      />
     </div>
   );
 }

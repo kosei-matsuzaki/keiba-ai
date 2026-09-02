@@ -1,8 +1,12 @@
-"""Retro-fill race name and race_class from cached HTML.
+"""Retro-fill race meta (name / race_class / surface / distance / 馬場) from cached HTML.
 
 既存の data/raw/<yyyy>/<mm>/<race_id>.html キャッシュを走査して
-parse_race_result() を再実行し、races テーブルの name / race_class を
-無条件上書きする（過去の誤検出バグ修正のため既存値は信用しない）。
+parse_race_result() を再実行し、races テーブルを更新する（過去の誤検出バグ修正の
+ため既存値は信用しない）。**ネットワークには一切アクセスしない。**
+
+name / race_class は無条件で上書きし、surface / distance / track_condition は
+**解析できたときだけ**上書きする（直すためのジョブが、解析漏れで既存の値を
+空にしてしまわないようにするため）。
 
 完了後に race_class の分布を標準出力に JSON で出力する。
 
@@ -143,10 +147,19 @@ def run_refill_race_meta(
             continue
 
         try:
+            # **surface / distance も直す。** コース形状の解析漏れで
+            # surface='' / distance=0 のまま保存された行が 964 件あった
+            # (新潟の直線・障害の襷コース)。ただし解析できなかったときに
+            # 既存の値を空で上書きしない — 直すためのジョブが壊す側に回る。
+            values: dict = {"name": parsed.name, "race_class": parsed.race_class}
+            if parsed.surface:
+                values["surface"] = parsed.surface
+            if parsed.distance:
+                values["distance"] = parsed.distance
+            if parsed.track_condition:
+                values["track_condition"] = parsed.track_condition
             session.execute(
-                update(Race)
-                .where(Race.race_id == race_id)
-                .values(name=parsed.name, race_class=parsed.race_class)
+                update(Race).where(Race.race_id == race_id).values(**values)
             )
             session.commit()
 

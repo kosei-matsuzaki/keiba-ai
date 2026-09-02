@@ -16,6 +16,7 @@ from ai.betting.strategy import (
     recommend_for_race,
 )
 from ai.core.types import BetCandidate, CombinationPrediction
+from core.bet_types import DEFAULT_COMBO_MIN_HIT_PROB
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,7 +112,7 @@ class TestAssignFlatStakes:
         cands = [self._c("1", 1.5), self._c("2", 1.3), self._c("3", 1.2)]
         # 点数上限は別のテストで見る。ここは「対象は 1 点ずつ」だけを確かめる
         out = assign_flat_stakes(
-            cands, race_budget=1000, stake_unit=100, max_points_per_bet_type=None
+            cands, race_budget=1000
         )
         assert [c.stake for c in out] == [100, 100, 100]
 
@@ -123,7 +124,7 @@ class TestAssignFlatStakes:
             self._c("3", 1.5, prob=0.20),
         ]
         out = assign_flat_stakes(
-            cands, race_budget=1000, stake_unit=100, max_points_per_bet_type=None
+            cands, race_budget=1000
         )
         assert [c.combo for c in out] == ["2", "3", "1"]
 
@@ -141,26 +142,28 @@ class TestAssignFlatStakes:
             self._c("2", 0.8, prob=0.55, bet_type="複勝"),
         ]
         out = assign_flat_stakes(
-            cands, race_budget=200, stake_unit=100,
+            cands, race_budget=200,
         )
         assert [c.bet_type for c in out] == ["単勝", "複勝"]
 
-    def test_stake_unit_can_differ_by_bet_type(self):
-        """単勝を厚く、連系を薄く。総合回収率は券種別回収率の賭け金加重平均。"""
+    def test_points_can_differ_by_bet_type(self):
+        """厚みは「1 点いくら」ではなく「何点買うか」で表す (1 点 = 100 円)。"""
         cands = [
             self._c("1", 0.6, prob=0.25, bet_type="単勝"),
             self._c("A", 9.0, prob=0.01, bet_type="三連単"),
         ]
         out = assign_flat_stakes(
-            cands, race_budget=5000, stake_unit=100,
-            stake_unit_by_bet_type={"単勝": 500, "三連単": 100},
+            cands, race_budget=5000,
+            points_by_bet_type={"単勝": 5, "三連単": 1},
+            # ここで見たいのは 1 点あたりの金額なので、的中確率の下限は外す
+            min_hit_prob_by_bet_type={},
         )
         assert {(c.bet_type, c.stake) for c in out} == {("単勝", 500), ("三連単", 100)}
 
     def test_budget_caps_the_number_of_bets(self):
         cands = [self._c(str(i), 2.0 - i * 0.1) for i in range(1, 11)]
         out = assign_flat_stakes(
-            cands, race_budget=300, stake_unit=100, max_points_per_bet_type=None
+            cands, race_budget=300
         )
         assert len(out) == 3
         assert sum(c.stake for c in out) == 300
@@ -168,7 +171,8 @@ class TestAssignFlatStakes:
     def test_budget_need_not_be_spent(self):
         """対象が少なければ使い切らない (これが定額運用の要点)。"""
         cands = [self._c("1", 1.5), self._c("2", 0.9)]
-        out = assign_flat_stakes(cands, race_budget=10_000, stake_unit=100)
+        out = assign_flat_stakes(
+            cands, race_budget=10_000)
         assert sum(c.stake for c in out) == 200
 
     def test_ev_no_longer_filters(self):
@@ -179,46 +183,54 @@ class TestAssignFlatStakes:
         確率順で予算に収まる限り買う。
         """
         cands = [self._c("1", 0.6, prob=0.30), self._c("2", 0.5, prob=0.20)]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        out = assign_flat_stakes(
+            cands, race_budget=1000)
         assert [c.combo for c in out] == ["1", "2"]  # 確率の高い順
 
     def test_candidates_without_odds_are_still_excluded(self):
         """値段が分からない買い目は買えない (EV 条件とは別の理由)。"""
         cands = [self._c("1", None), self._c("2", 0.5)]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        out = assign_flat_stakes(
+            cands, race_budget=1000)
         assert [c.combo for c in out] == ["2"]
 
     def test_none_ev_is_not_bet(self):
         cands = [self._c("1", None), self._c("2", 1.5)]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        out = assign_flat_stakes(
+            cands, race_budget=1000)
         assert [c.combo for c in out] == ["2"]
 
-    def test_stake_unit_larger_than_100(self):
+    def test_more_points_means_more_money(self):
+        """点数がそのまま金額になる (1 点 = 100 円)。"""
         cands = [self._c("1", 1.5), self._c("2", 1.4)]
-        out = assign_flat_stakes(cands, race_budget=1000, stake_unit=500)
+        out = assign_flat_stakes(
+            cands, race_budget=1000, points_by_bet_type={"単勝": 5}
+        )
         assert [c.stake for c in out] == [500, 500]
 
     def test_budget_smaller_than_unit_bets_nothing(self):
         cands = [self._c("1", 1.5)]
-        assert assign_flat_stakes(cands, race_budget=50, stake_unit=100) == []
+        assert assign_flat_stakes(
+            cands, race_budget=50) == []
 
     def test_keep_zero_stake_returns_all(self):
         cands = [self._c("1", 1.5), self._c("2", 0.8)]
         out = assign_flat_stakes(
-            cands, race_budget=100, stake_unit=100, keep_zero_stake=True
+            cands, race_budget=100, keep_zero_stake=True
         )
         assert len(out) == 2
         assert {c.combo: c.stake for c in out} == {"1": 100, "2": 0}
 
     def test_does_not_mutate_input(self):
         cands = [self._c("1", 1.5)]
-        assign_flat_stakes(cands, race_budget=1000, stake_unit=100)
+        assign_flat_stakes(
+            cands, race_budget=1000)
         assert cands[0].stake == 0
 
     def test_deterministic_on_ev_ties(self):
         a = self._c("1", 1.5, prob=0.10)
         b = self._c("2", 1.5, prob=0.30)
-        out = assign_flat_stakes([a, b], race_budget=100, stake_unit=100)
+        out = assign_flat_stakes([a, b], race_budget=100)
         # 同 ev なら確率の高いほうを先に買う
         assert [c.combo for c in out] == ["2"]
 
@@ -443,7 +455,6 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="test_race_001",
             race_budget=5_000,
-            stake_unit=100,
         )
         assert isinstance(result, RecommendationResult)
         assert result.race_id == "test_race_001"
@@ -459,7 +470,6 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r1",
             race_budget=5_000,
-            stake_unit=100,
         )
         for c in result.candidates:
             assert c.stake > 0
@@ -477,13 +487,12 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r2",
             race_budget=budget,
-            stake_unit=100,
         )
         total = sum(c.stake for c in result.candidates)
         assert total <= budget
 
-    def test_stake_unit_is_used_for_every_bet(self):
-        """どの買い目も 1 点あたり同額 (定額配分)。"""
+    def test_every_bet_is_one_point_by_default(self):
+        """点数の指定が無ければどの買い目も 1 点 = 100 円。"""
         preds = self._build_predictions(8)
         combos = {"馬連": _umaren_combos(8, odds=50.0)}
         result = recommend_for_race(
@@ -491,10 +500,10 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r2b",
             race_budget=1_000,
-            stake_unit=200,
+            min_hit_prob_by_bet_type={},
         )
         staked = [c.stake for c in result.candidates if c.stake > 0]
-        assert staked and set(staked) == {200}
+        assert staked and set(staked) == {100}
 
     def test_enabled_bet_types_filter(self):
         preds = self._build_predictions(6)
@@ -507,7 +516,6 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r3",
             race_budget=5_000,
-            stake_unit=100,
             enabled_bet_types=["馬連"],
         )
         for c in result.candidates:
@@ -520,7 +528,6 @@ class TestRecommendForRace:
             combinations_by_type={},
             race_id="r4",
             race_budget=5_000,
-            stake_unit=100,
         )
         assert result.candidates == []
 
@@ -535,7 +542,6 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r5",
             race_budget=5_000,
-            stake_unit=100,
         )
         seen = set()
         for c in result.candidates:
@@ -553,7 +559,6 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r6a",
             race_budget=5_000,
-            stake_unit=100,
             top_n_horses=2,
         )
         result_n4 = recommend_for_race(
@@ -561,7 +566,6 @@ class TestRecommendForRace:
             combinations_by_type=combos,
             race_id="r6b",
             race_budget=5_000,
-            stake_unit=100,
             top_n_horses=4,
         )
         # n=2 box has C(2,2)=1 combo; n=4 box has C(4,2)=6 combos
@@ -570,65 +574,117 @@ class TestRecommendForRace:
         assert len(result_n4.candidates) >= len(result_n2.candidates)
 
 
-class TestMaxPointsPerBetType:
-    """**予算は上限であって使い切る目標ではない。**
 
-    買い目は的中確率の高い順に並ぶので、深く買うほど当たりにくい買い目に金を
-    足すことになる (実測 5,404 レース: 1 点目の的中率 0.155 → 10 点目 0.037)。
-    """
+class TestComboMinHitProb:
+    """連系の点数は固定ではなく、**的中確率の下限**でレースごとに変わる。"""
 
     @staticmethod
-    def _combo(combo: str, prob: float) -> BetCandidate:
+    def _c(combo: str, prob: float, bet_type: str = "馬連") -> BetCandidate:
         return BetCandidate(
-            bet_type="ワイド", combo=combo, pattern="box", prob=prob,
-            est_odds=10.0, est_odds_source="implied", ev=prob * 10.0, stake=0,
+            bet_type=bet_type,
+            combo=combo,
+            pattern="box",
+            prob=prob,
+            est_odds=20.0,
+            ev=prob * 20.0,
+            stake=0,
             post_positions=[int(x) for x in combo.split("-")],
         )
 
-    def test_stops_at_the_cap_even_with_budget_left(self):
-        cands = [self._combo(f"1-{i}", 0.3 - i * 0.01) for i in range(2, 8)]
-        out = assign_flat_stakes(
-            cands, race_budget=10_000, stake_unit=100, max_points_per_bet_type=2
-        )
-        assert len(out) == 2
-        # 残るのは的中確率の高い 2 点
-        assert [c.combo for c in out] == ["1-2", "1-3"]
+    def test_points_vary_with_confidence(self):
+        """線を超えた買い目の数だけ買う = 堅いレースほど点数が増える。"""
+        floors = {"馬連": 0.05}
+        confident = [self._c("1-2", 0.20), self._c("1-3", 0.09), self._c("2-3", 0.06)]
+        thin = [self._c("1-2", 0.09), self._c("1-3", 0.03), self._c("2-3", 0.02)]
 
-    def test_cap_is_per_bet_type(self):
-        wide = [self._combo(f"1-{i}", 0.3 - i * 0.01) for i in range(2, 6)]
-        umaren = [
-            BetCandidate(
-                bet_type="馬連", combo=f"2-{i}", pattern="box", prob=0.2 - i * 0.01,
-                est_odds=20.0, est_odds_source="implied", ev=1.0, stake=0,
-                post_positions=[2, i],
-            )
-            for i in range(3, 7)
-        ]
-        out = assign_flat_stakes(
-            wide + umaren, race_budget=10_000, stake_unit=100, max_points_per_bet_type=2
+        # 上限は外して、点数の差が下限だけで付くことを見る
+        many = assign_flat_stakes(
+            confident, race_budget=10_000,
+            min_hit_prob_by_bet_type=floors,
         )
-        by_type: dict[str, int] = {}
-        for c in out:
-            by_type[c.bet_type] = by_type.get(c.bet_type, 0) + 1
-        assert by_type == {"ワイド": 2, "馬連": 2}
-
-    def test_none_means_unlimited(self):
-        cands = [self._combo(f"1-{i}", 0.3 - i * 0.01) for i in range(2, 8)]
-        out = assign_flat_stakes(
-            cands, race_budget=10_000, stake_unit=100, max_points_per_bet_type=None
+        few = assign_flat_stakes(
+            thin, race_budget=10_000,
+            min_hit_prob_by_bet_type=floors,
         )
-        assert len(out) == 6
+        assert len(many) == 3
+        assert len(few) == 1
 
-    def test_win_and_place_are_unaffected(self):
-        """単複は元から 1 点なので、上限を入れても買い目が減らない。"""
+    def test_no_points_when_nothing_clears_the_floor(self):
+        """確信度が足りないレースでは連系を 1 点も買わない (予算は残す)。"""
+        out = assign_flat_stakes(
+            [self._c("1-2", 0.01), self._c("1-3", 0.005)],
+            race_budget=10_000,
+            min_hit_prob_by_bet_type={"馬連": 0.05},
+        )
+        assert out == []
+
+    def test_floor_does_not_apply_to_win_and_place(self):
+        """単勝・複勝は本命買いのルールで決めるので、連系の下限は掛けない。"""
         cands = [
-            BetCandidate(
-                bet_type=bt, combo="3", pattern="box", prob=0.4, est_odds=3.0,
-                est_odds_source="confirmed", ev=1.2, stake=0, post_positions=[3],
-            )
-            for bt in ("単勝", "複勝")
+            self._c("1", 0.02, bet_type="単勝"),
+            self._c("1", 0.02, bet_type="複勝"),
         ]
         out = assign_flat_stakes(
-            cands, race_budget=10_000, stake_unit=100, max_points_per_bet_type=2
+            cands, race_budget=10_000,
+            min_hit_prob_by_bet_type=DEFAULT_COMBO_MIN_HIT_PROB,
         )
         assert {c.bet_type for c in out} == {"単勝", "複勝"}
+
+
+    def test_zero_stake_rows_are_kept_for_display(self):
+        """画面は買わない買い目も薄く出すので、keep_zero_stake の形は保つ。"""
+        out = assign_flat_stakes(
+            [self._c("1-2", 0.20), self._c("1-3", 0.01)],
+            race_budget=10_000,
+            keep_zero_stake=True,
+            min_hit_prob_by_bet_type={"馬連": 0.05},
+        )
+        assert sorted(c.stake for c in out) == [0, 100]
+
+
+
+class TestPointsFromConfidence:
+    """厚みは「1 点いくら」ではなく **何点買うか** で表す (1 点 = 100 円)。"""
+
+    def test_points_scale_with_confidence(self):
+        from ai.inference.confidence import points_for_confidence
+
+        # 複勝は基準 0.50 で 5 点
+        assert points_for_confidence("複勝", 0.50) == 5
+        assert points_for_confidence("複勝", 0.70) > 5
+        assert points_for_confidence("複勝", 0.30) < 5
+        # 単勝は確信度の桁が違う (1 着確率) ので基準も違う
+        assert points_for_confidence("単勝", 0.25) == 5
+        assert points_for_confidence("単勝", 0.50) > 5
+
+    def test_points_are_clamped(self):
+        from ai.inference.confidence import MAX_POINTS, points_for_confidence
+
+        assert points_for_confidence("複勝", 0.01) == 1
+        assert points_for_confidence("複勝", 1.0) == MAX_POINTS
+
+    def test_missing_confidence_falls_back_to_base(self):
+        """確率モデル未設定でも動く。壊れたときに賭け金が動かないこと。"""
+        from ai.inference.confidence import BASE_POINTS, points_for_confidence
+
+        assert points_for_confidence("複勝", None) == BASE_POINTS
+        assert points_for_confidence("単勝", None) == BASE_POINTS
+
+    def test_combos_are_one_point_each(self):
+        """連系は 1 組合せ = 1 点。何点買うかは的中確率の下限が決める。"""
+        from ai.inference.confidence import points_for_confidence
+
+        # 券種が基準表に無いので base のまま返る (呼び出し側は渡さない)
+        assert points_for_confidence("馬連", 0.9) == points_for_confidence("馬連", 0.01)
+
+    def test_stake_is_points_times_100(self):
+        cands = [
+            BetCandidate(
+                bet_type="複勝", combo="1", pattern="box", prob=0.6,
+                est_odds=1.5, ev=0.9, stake=0, post_positions=[1],
+            )
+        ]
+        out = assign_flat_stakes(
+            cands, race_budget=10_000, points_by_bet_type={"複勝": 7}
+        )
+        assert [c.stake for c in out] == [700]

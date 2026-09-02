@@ -39,8 +39,9 @@ class SimulationRun(Base):
     )
 
     # Input parameters
-    budget: Mapped[int] = mapped_column(Integer, nullable=False)
-    strategy: Mapped[str] = mapped_column(String, nullable=False)      # conservative|balanced|aggressive
+    #: 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
+    #: 旧 `budget` (初期資産) から意味ごと置き換えた (migration 0015)。
+    race_budget: Mapped[int] = mapped_column(Integer, nullable=False)
     window_start: Mapped[str | None] = mapped_column(String)           # YYYY-MM-DD
     window_end: Mapped[str | None] = mapped_column(String)
     # 表示用フォールバック (モデル名やパスを後から引けるよう保持)。
@@ -49,15 +50,16 @@ class SimulationRun(Base):
     # Top-level result fields (FK 不要 / 検索用)
     n_races: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     n_settled_races: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    final_bankroll: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    peak_bankroll: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 0 から始まる累計損益。マイナスもそのまま入る。
+    final_profit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    peak_profit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Heavy result payload (json text)
     summary_json: Mapped[str] = mapped_column(String, nullable=False)
     by_bet_type_json: Mapped[str] = mapped_column(String, nullable=False)
     by_race_class_json: Mapped[str] = mapped_column(String, nullable=False)
     by_course_json: Mapped[str] = mapped_column(String, nullable=False)
-    bankroll_timeseries_json: Mapped[str] = mapped_column(String, nullable=False)
+    profit_timeseries_json: Mapped[str] = mapped_column(String, nullable=False)
 
     # この run が**どの条件で走ったか** (確率モデル・確信度のしきい値・履歴の無い
     # レースの除外・券種・1 点あたりの金額など)。設定を変えて回し直したとき、

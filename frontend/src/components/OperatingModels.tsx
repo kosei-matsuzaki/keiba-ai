@@ -1,13 +1,12 @@
 import { Link } from 'react-router-dom';
 
+import { MetricCard } from '@/components/MetricCard';
+import { HelpDot } from '@/components/HelpDot';
 import { Badge } from '@/components/ui/badge';
 import { formatDate, formatPercent, formatRatio, formatScore } from '@/lib/formatters';
-import { labelClass } from '@/lib/labels';
-import { cn } from '@/lib/cn';
 import {
   placeHitLabel,
   readModelMeta,
-  sourceDescription,
   sourceLabel,
 } from '@/lib/modelMetrics';
 import type { MetricsSummary, ModelMeta } from '@/types/api';
@@ -41,41 +40,6 @@ function trainRange(model: ModelMeta | null): string {
   if (!raw) return PLACEHOLDER;
   const [from, to] = raw.split('/');
   return to ? `${formatDate(from)} 〜 ${formatDate(to)}` : formatDate(raw);
-}
-
-function Figure({
-  label,
-  value,
-  note,
-  tone = 'default',
-  hint,
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  tone?: 'default' | 'positive' | 'negative' | 'muted';
-  hint?: string;
-}) {
-  return (
-    <div className="min-w-[5.5rem]" title={hint}>
-      <dt className="text-xs text-muted-foreground">
-        {label}
-        {hint && <span className="ml-1 text-subtle-foreground/60">?</span>}
-      </dt>
-      <dd
-        className={cn(
-          'font-mono text-xl tabular-nums',
-          tone === 'positive' && 'text-success',
-          tone === 'negative' && 'text-destructive',
-          tone === 'muted' && 'text-muted-foreground',
-          tone === 'default' && 'text-foreground'
-        )}
-      >
-        {value}
-      </dd>
-      {note && <p className="mt-0.5 text-xs text-subtle-foreground">{note}</p>}
-    </div>
-  );
 }
 
 function ModelIdentity({ model }: { model: ModelMeta }) {
@@ -120,64 +84,53 @@ export function OperatingModels({ models, summary }: OperatingModelsProps) {
   // KPI は summary (active の backtest) から取る。モデル一覧の metrics_json と
   // 同じ出所だが、summary の方が「いま active のもの」であることが保証される。
   const s = summary;
-  const evalRange = s?.eval_start && s?.eval_end ? `${s.eval_start} 〜 ${s.eval_end}` : null;
-  const provenance = s
-    ? [
-        sourceDescription(s.source),
-        s.n_races != null ? `${s.n_races.toLocaleString()} レース` : null,
-        evalRange,
-      ]
-        .filter(Boolean)
-        .join(' · ')
-    : null;
 
   return (
-    <section aria-label="主要指標" className="border-y border-border">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 pt-3 sm:px-6">
-        <h3 className={labelClass('mb-0')}>運用中のモデル</h3>
-        {s && (
-          <p className="text-xs text-subtle-foreground">
-            <span className="mr-2 rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-              {sourceLabel(s.source)}
-            </span>
-            {provenance}
-          </p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 divide-y divide-border lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+    <section aria-label="主要指標">
+      {/* **縦に積む。** 横 2 列だとカード 1 枚の幅が足りず値が折り返す。
+          役割は 2 つしかないので、順に読ませる方が素直でもある。 */}
+      <div className="flex flex-col divide-y divide-border">
         {/* 買い目を決める — 利用者が実際に得る数字 */}
-        <div className="flex flex-col gap-3 px-4 py-4 sm:px-6">
-          <div className="flex items-baseline gap-2">
+        <div className="flex flex-col gap-3 pb-5">
+          <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-foreground">買い目を決める</span>
-            <span className="text-xs text-subtle-foreground">どの馬・どの組を買うかを決めます</span>
+            <HelpDot
+              label="買い目を決めるモデル"
+              text="どの馬・どの組を買うかを決めるモデル (model_runs.is_active)。回収率で学習しているため順序は良いが、確率の大きさには意味がありません。"
+            />
           </div>
 
           {active ? (
             <>
               <ModelIdentity model={active} />
-              <dl className="flex flex-wrap gap-x-8 gap-y-3">
-                <Figure
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <MetricCard
                   label="単勝回収率"
                   value={s?.payback_win != null ? formatRatio(s.payback_win) : '未算出'}
                   tone={s?.payback_win != null && s.payback_win >= 1 ? 'positive' : 'negative'}
                   note="1.00 = トントン"
                   hint="本命に単勝を買い続けたときの払戻 ÷ 投資。控除率 20% があるので 1.0 未満は平均で負け越し"
                 />
-                <Figure
+                <MetricCard
                   label="複勝回収率"
                   value={s?.payback_place != null ? formatRatio(s.payback_place) : '未算出'}
                   tone={s?.payback_place != null && s.payback_place >= 1 ? 'positive' : 'negative'}
                   note="1.00 = トントン"
                   hint="本命に複勝を買い続けたときの払戻 ÷ 投資"
                 />
-                <Figure
+                <MetricCard
                   label="本命の的中率"
                   value={s?.top1_hit != null ? formatPercent(s.top1_hit) : '未算出'}
                   note="予想1位が1着"
                   hint="的中率が高いほど儲かるとは限らない。人気馬を選べば当たるが配当が小さい"
                 />
-                <Figure
+                <MetricCard
+                  label="複勝的中率"
+                  value={s?.place_hit != null ? formatPercent(s.place_hit) : '未算出'}
+                  note={placeHitLabel(s?.source ?? null)}
+                  hint="出所で別の量になる (実測は予想1位が3着以内、学習時は上位3頭のうち1頭以上)"
+                />
+                <MetricCard
                   label="log-loss"
                   value={s?.log_loss != null ? formatScore(s.log_loss) : '未算出'}
                   tone={
@@ -190,16 +143,7 @@ export function OperatingModels({ models, summary }: OperatingModelsProps) {
                   note={edgeNote(s?.log_loss ?? null, s?.market_log_loss ?? null)}
                   hint="本命についての二値 log-loss（小さいほど正確）。回収率で勝っていても確率で市場に負けることがあり、確率が要る判断を別モデルに任せる理由になる"
                 />
-              </dl>
-              <p className="text-xs text-subtle-foreground">
-                順位精度 NDCG@3 {s?.ndcg3 != null ? formatScore(s.ndcg3) : PLACEHOLDER} · 複勝的中率{' '}
-                {s?.place_hit != null ? formatPercent(s.place_hit) : PLACEHOLDER}（
-                {placeHitLabel(s?.source ?? null)}）。
-                <span className="ml-1">
-                  順位精度は回収率とは別の量で、
-                  <strong className="font-medium">上げても回収率は上がらない</strong>
-                </span>
-              </p>
+              </div>
             </>
           ) : (
             <EmptySlot
@@ -210,19 +154,20 @@ export function OperatingModels({ models, summary }: OperatingModelsProps) {
         </div>
 
         {/* 確からしさを出す — 確率としての正しさだけを見る */}
-        <div className="flex flex-col gap-3 px-4 py-4 sm:px-6">
-          <div className="flex items-baseline gap-2">
+        <div className="flex flex-col gap-3 pt-5">
+          <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-foreground">確からしさを出す</span>
-            <span className="text-xs text-subtle-foreground">
-              複勝を買うかの判定と、連系の確率に使います
-            </span>
+            <HelpDot
+              label="確からしさを出すモデル"
+              text="複勝を買うかの判定と、連系の確率に使うモデル (settings.probability_model_path)。proper scoring rule で学習しており、確率の大きさに意味があります。"
+            />
           </div>
 
           {probability && prob ? (
             <>
               <ModelIdentity model={probability} />
-              <dl className="flex flex-wrap gap-x-8 gap-y-3">
-                <Figure
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <MetricCard
                   label="log-loss"
                   value={prob.logLoss != null ? formatScore(prob.logLoss) : '未算出'}
                   tone={
@@ -238,19 +183,14 @@ export function OperatingModels({ models, summary }: OperatingModelsProps) {
                   }
                   hint="このモデルは確率の正しさだけを問われる。回収率を並べないのは、賭けに使われていない数字だから"
                 />
-                <Figure
+                <MetricCard
                   label="順位精度"
                   value={prob.ndcg3 != null ? formatScore(prob.ndcg3) : '未算出'}
                   tone="muted"
                   note={prob.evalRange ?? sourceLabel(prob.source)}
                   hint="NDCG@3。参考値"
                 />
-              </dl>
-              <p className="text-xs text-subtle-foreground">
-                <strong className="font-medium">このモデルに馬を選ばせない。</strong>
-                的中率は上がるが人気馬に寄って回収率が落ちる。選ぶのは active、信じるかを
-                決めるのがこちら
-              </p>
+              </div>
             </>
           ) : (
             <EmptySlot

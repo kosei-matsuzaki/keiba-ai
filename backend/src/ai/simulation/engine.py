@@ -20,7 +20,6 @@ import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -28,7 +27,11 @@ from ai.betting.odds import (
     compute_past_race_odds,
     compute_race_odds_with_sources,
 )
-from ai.betting.strategy import DEFAULT_MAX_POINTS_PER_BET_TYPE, recommend_for_race
+from ai.betting.strategy import (
+    DEFAULT_RACE_BUDGET,
+    TOP_N_HORSES,
+    recommend_for_race,
+)
 from ai.inference.confidence import (
     is_place_worth_buying,
     pick_confidence,
@@ -42,50 +45,16 @@ from ai.inference.predict import (
     predict_race_with_combinations,
 )
 from ai.model.registry import ModelBundle, load_model_full
-from core.bet_types import COMBINATION_BET_TYPES
+from core.bet_types import COMBINATION_BET_TYPES, DEFAULT_COMBO_MIN_HIT_PROB
 from core.logging import get_logger
 from db.odds_db import init_odds_db, make_odds_engine
 from features.builder import build_training_frame
-from features.race_info import race_info_coverage
 
 log = get_logger(__name__)
 
 
-StrategyName = Literal["conservative", "balanced", "aggressive"]
-
-#: 賭け金の決め方。
-#:   flat     … 1 レースの予算を**固定**する (既定)。回収率を測るのが目的の画面なので、
-#:              資産推移のリアリティより測定の正しさを優先する。
-#:   compound … 残資産の一定割合。資産の増減が賭け金に跳ね返る。
-#:
-#: **なぜ flat が既定か**: compound だと払戻 0.85 前後の券種を数百レース買った時点で
-#: 資産が尽き、賭け金が下限 100 円に張り付いて以降を実質評価しなくなる。実際にこれで
-#: 「連系は点数が少なく測定不能」と誤って結論し、docs にもそう書いていた
-#: (定額で測り直したら 21,570 点あり CI [0.83,0.93] と十分測れた)。
-#: そのうえ payback = Σpayout/Σstake は賭け金の重み付き平均なので、破産すると
-#: 「早い時期の大きい賭け金」に偏った数字になる。
-StakingMode = Literal["flat", "compound"]
-
-# 定額賭けなので、戦略の違いは「1 点いくら賭けるか」と「何頭から買い目を組むか」。
-#
-#   stake_ratio   … 1 レース予算に対する 1 点の割合 (0.2 = 予算の 1/5 を 1 点に)
-#   top_n_horses  … 連系の買い目を組む上位何頭か。広げるほど点数が増える
-#
-# **EV 閾値 (min_ev) は 2026-08-28 に廃止した。** 連系だけ `combo確率 × 推定オッズ
-# > 1.1` で選んでいたが、(a) 閾値 1.1 に根拠が無く、(b) 入力の確率が壊れており
-# (active の本命の確率と勝敗の相関 0.073)、EV は実質「推定オッズの高い順」に
-# 退化していた。単勝・複勝では同じ EV 条件を捨てて 0.698→0.931 / 0.654→0.887 と
-# 改善している。連系も確率順に変えて 0.849 → 0.865、確率を top-k 学習の PL から
-# 出すと 0.877 (詳細 docs/ai-model.md)。
-STRATEGY_PRESETS: dict[StrategyName, dict[str, float]] = {
-    "conservative": {"stake_ratio": 0.20, "top_n_horses": 2},
-    "balanced":     {"stake_ratio": 0.20, "top_n_horses": 3},
-    "aggressive":   {"stake_ratio": 0.50, "top_n_horses": 4},
-}
 
 
-#: 馬券の最小単位 (円)。これを下回る予算では 1 点も買えない。
-_MIN_STAKE = 100
 
 # 単勝 / 複勝 / 連系 すべての券種を simulation 対象とする
 DEFAULT_BET_TYPES: list[str] = list(COMBINATION_BET_TYPES)
@@ -128,14 +97,16 @@ class GroupStats:
 
 
 @dataclass
-class BankrollPoint:
-    """資産推移グラフ用の 1 日分のスナップショット。
+class ProfitPoint:
+    """損益推移グラフ用の 1 日分のスナップショット。
 
-    日跨ぎで複数 race ある場合、最後の race 終了時点の bankroll を採用する。
+    **0 から始まる累計損益**を持つ。元手の額はシミュレーションに要らない
+    (賭け金は 1 レースの予算と確信度だけで決まり、資金繰りに依存しない) ので、
+    見たいのは「プラスかマイナスか」だけである。
     """
 
     date: str           # YYYY-MM-DD
-    bankroll: int       # その日の最終 race 後の残高
+    profit: int         # その日の最終 race 後の累計損益 (0 スタート)
     invested: int       # その日の累計 stake
     payout: float       # その日の累計 payout
     n_bets: int         # その日の bet 件数
@@ -147,35 +118,33 @@ class SimulationResult:
 
     n_races: total races within window (including ones where no bets fired)
     n_settled_races: subset where finish_position was available (i.e. past)
-    final_bankroll: 期間終了時の残高 (= budget + 累計 profit、ただし途中で 0 になれば 0)
-    peak_bankroll: 期間中の最高残高
-    bankroll_timeseries: 日次の資産推移 (グラフ用)
+    final_profit: 期間終了時の累計損益 (0 スタート。マイナスもそのまま持つ)
+    peak_profit / trough_profit: 期間中の最大・最小の累計損益
+    profit_timeseries: 日次の損益推移 (グラフ用)
     """
 
     window_start: str | None
     window_end: str | None
     model_path: str
-    strategy: StrategyName
-    budget: int
+    race_budget: int
     n_races: int = 0
     n_settled_races: int = 0
-    final_bankroll: int = 0
-    peak_bankroll: int = 0
+    final_profit: int = 0
+    peak_profit: int = 0
     summary: GroupStats = field(default_factory=lambda: GroupStats(label="all"))
     by_bet_type: list[GroupStats] = field(default_factory=list)
     by_race_class: list[GroupStats] = field(default_factory=list)
     by_course: list[GroupStats] = field(default_factory=list)
-    bankroll_timeseries: list[BankrollPoint] = field(default_factory=list)
+    profit_timeseries: list[ProfitPoint] = field(default_factory=list)
     #: この run が**どの条件で走ったか**。設定を変えて回し直したとき、過去の run が
     #: 何の条件だったか分からなくなるのを防ぐ (確率モデルの有無・確信度のしきい値・
     #: 履歴の無いレースの除外・券種・1 点あたりの金額は、いずれも結果を大きく変える)。
     conditions: dict = field(default_factory=dict)
-    #: 資金不足で 1 点も買えなかったレース数。0 でなければ、その run の回収率は
-    #: 「破産するまでの期間」しか測っていない。
-    n_races_broke: int = 0
-    #: 期間中の資産の最小値。flat ではマイナスになりうる。
-    trough_bankroll: int = 0
-    #: この戦略を最後まで回すのに必要だった資金 (= budget - trough_bankroll、下限 0)。
+    #: 期間中の累計損益の最小値 (マイナスになりうる)。
+    trough_profit: int = 0
+    #: 途中で止まらずに回すのに必要だった資金 (= −trough_profit、下限 0)。
+    #: 賭け金は資金繰りに依存しないので破産は起きないが、「どれだけ沈む時期が
+    #: あったか」は運用上の情報として残す。
     required_capital: int = 0
 
     def as_dict(self) -> dict:
@@ -183,28 +152,26 @@ class SimulationResult:
             "window": {"start": self.window_start, "end": self.window_end},
             "model_path": self.model_path,
             "conditions": self.conditions,
-            "n_races_broke": self.n_races_broke,
-            "trough_bankroll": self.trough_bankroll,
+            "trough_profit": self.trough_profit,
             "required_capital": self.required_capital,
-            "strategy": self.strategy,
-            "budget": self.budget,
+            "race_budget": self.race_budget,
             "n_races": self.n_races,
             "n_settled_races": self.n_settled_races,
-            "final_bankroll": self.final_bankroll,
-            "peak_bankroll": self.peak_bankroll,
+            "final_profit": self.final_profit,
+            "peak_profit": self.peak_profit,
             "summary": self.summary.as_dict(),
             "by_bet_type": [g.as_dict() for g in self.by_bet_type],
             "by_race_class": [g.as_dict() for g in self.by_race_class],
             "by_course": [g.as_dict() for g in self.by_course],
-            "bankroll_timeseries": [
+            "profit_timeseries": [
                 {
                     "date": p.date,
-                    "bankroll": p.bankroll,
+                    "profit": p.profit,
                     "invested": p.invested,
                     "payout": round(p.payout),
                     "n_bets": p.n_bets,
                 }
-                for p in self.bankroll_timeseries
+                for p in self.profit_timeseries
             ],
         }
 
@@ -313,63 +280,53 @@ def simulate_active_model(
     model_path: Path,
     start: str | None,
     end: str | None,
-    budget: int,
-    strategy: StrategyName = "balanced",
-    max_stake_per_race_pct: float = 0.05,
+    race_budget: int = DEFAULT_RACE_BUDGET,
     enabled_bet_types: list[str] | None = None,
-    top_n_horses: int | None = None,
-    max_stake_per_race_yen: int | None = None,
-    staking: StakingMode = "flat",
-    stake_unit_by_bet_type: dict[str, int] | None = None,
-    exclude_low_information: bool = False,
-    max_points_per_bet_type: int | None = DEFAULT_MAX_POINTS_PER_BET_TYPE,
+    min_hit_prob_by_bet_type: dict[str, float] | None = None,
     probability_model_path: Path | None = None,
-    place_min_confidence: float = 0.30,
+    place_min_confidence: float = 0.60,
     *,
     bundle: ModelBundle | None = None,
     bet_sink: list[dict] | None = None,
 ) -> SimulationResult:
-    """Run end-to-end backtest using active model + recommendations.
+    """**RACE 画面の予想を全レースでやったらどうなるか**を測る。
+
+    買い方は推奨買目 API と同一 (`recommend_for_race`)。賭け金は資金繰りに
+    依存させない:
+
+      - 入力は **1 レースに使う上限** (`race_budget`) だけ。初期資産・賭け金の
+        決め方・戦略プリセットは持たない
+      - 予算は上限であって使い切る目標ではない。実際に賭ける額は複勝の確信度と
+        連系の的中確率の下限が決める (レースごとに変わる)
+      - 資産ではなく **0 から始まる累計損益**を返す
+
+    以前は初期資産から複利で回していたが、払戻 1.0 未満の券種を数百レース買うと
+    資産が尽きて賭け金が下限に張り付き、**以降を実質評価しなくなる**。回収率は
+    Σpayout/Σstake = 賭け金の重み付き平均なので、破産すると「早い時期の大きい
+    賭け金」に偏った数字になる。実際にこれで「連系は点数が少なく測定不能」と
+    誤って結論していた (定額で測り直したら十分測れた)。
 
     Args:
         session: SQLAlchemy session bound to the keiba DB.
         model_path: Path to an NN model directory (model.pt + meta.json,
             optionally preprocessor.pkl / temperature_scaler.pkl).
         start / end: window date range (YYYY-MM-DD), inclusive. Both optional.
-        budget: 初期資産 (円)。各 race ごとに残資産 (= budget + 累計 profit) を
-            その race の予算として 1 点定額で賭ける (compounding wealth)。
-            payout は次 race の bet 余力に加算される。資産が最小単位 (100 円) を
-            下回れば以降の race は実質 bet しない (破産)。
-        strategy: preset key from STRATEGY_PRESETS.
-        max_stake_per_race_pct: per-race stake cap (default 5% of 残資産).
-        enabled_bet_types: subset of DEFAULT_BET_TYPES to consider.
-            None = all types.
-        top_n_horses: top-N horses for box / formation candidates.
-        exclude_low_information: True なら**履歴の無いレース**(新馬戦など) を
-            まるごと飛ばす。出走馬全員が初出走だとモデルが使える履歴特徴が全滅し、
-            枠順・馬体重・騎手・血統・オッズだけの予想になるため、同じモデルでも
-            入力の質が別物になる (`features/race_info.py`)。
+        race_budget: 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
+        enabled_bet_types: 対象券種。None なら全種。
+        min_hit_prob_by_bet_type: 連系を買う的中確率の下限 (券種ごと)。
+            None なら既定値。**連系の点数はこれだけで決まる。**
         probability_model_path: 確率専用モデル (proper scoring rule で学習) の
-            ディレクトリ。指定すると、AI の本命に対するそのモデルの単勝確率が
-            place_min_confidence 未満のレースでは**複勝を買わない**。買う馬は
-            変えない (`ai/inference/confidence.py` に実測の根拠)。None で無効。
-        place_min_confidence: 上のしきい値 (既定 0.30)。
-            確率モデルを渡すと、**連系の確率もそこから導出する**。連系確率は
-            `compute_all_combination_probs(scores)` で解析的 PL から出しており、
-            スコアが PL の強度パラメータであることを前提にしているが、active は
-            回収率で学習しておりその保証が無い。買う馬・買い目の脚は active のまま。
-        max_stake_per_race_yen: 1 race の累計 stake の絶対上限 (円)。
-            compounding wealth で bankroll が膨らんでも 1 race の bet 額が
-            無限にインフレしないようにする。None で無効 (pct cap のみ)。
+            ディレクトリ。指定すると (a) 本命の 3 着内率が place_min_confidence
+            未満のレースでは**複勝を買わない**、(b) 買うレースでは確信度に応じて
+            複勝の点数を変える、(c) **連系の確率もそこから導出する**。
+            買う馬は変えない (`ai/inference/confidence.py` に実測の根拠)。
+        place_min_confidence: 上のしきい値 (既定 0.60 = 3 着内率)。
 
     Returns:
         SimulationResult with summary, by_bet_type, by_race_class, by_course,
-        final_bankroll, peak_bankroll, and bankroll_timeseries (日次推移).
+        final_profit, peak_profit, and profit_timeseries (日次推移).
     """
-    preset = STRATEGY_PRESETS[strategy]
-    # **引数が渡されたらそちらを使う。** 以前は宣言だけあって常にプリセットが
-    # 勝っており、API から狙い方を指定しても効いていなかった。
-    eff_top_n = int(top_n_horses) if top_n_horses else int(preset["top_n_horses"])
+    eff_top_n = TOP_N_HORSES
     types = enabled_bet_types or DEFAULT_BET_TYPES
 
     # Allow callers (notably ad-hoc experiments) to pass a pre-built bundle
@@ -377,14 +334,13 @@ def simulate_active_model(
     # writing the changes back to disk.  When omitted we load from disk.
     if bundle is None:
         log.info(
-            "Loading active model bundle from %s (strategy=%s, budget=%d)",
-            model_path, strategy, budget,
+            "Loading active model bundle from %s (race_budget=%d)", model_path, race_budget
         )
         bundle = load_model_full(model_path)
     else:
         log.info(
-            "Using pre-built bundle (model_dir=%s, strategy=%s, budget=%d)",
-            getattr(bundle, "model_dir", model_path), strategy, budget,
+            "Using pre-built bundle (model_dir=%s, race_budget=%d)",
+            getattr(bundle, "model_dir", model_path), race_budget,
         )
 
     prob_bundle = None
@@ -402,8 +358,7 @@ def simulate_active_model(
         window_start=start,
         window_end=end,
         model_path=str(model_path),
-        strategy=strategy,
-        budget=budget,
+        race_budget=race_budget,
         conditions={
             "probability_model": (
                 Path(probability_model_path).name if probability_model_path else None
@@ -411,13 +366,13 @@ def simulate_active_model(
             "place_min_confidence": (
                 place_min_confidence if probability_model_path else None
             ),
-            "exclude_low_information": bool(exclude_low_information),
             "enabled_bet_types": list(types),
-            "stake_unit_by_bet_type": dict(stake_unit_by_bet_type or {}),
-            "max_stake_per_race_pct": max_stake_per_race_pct,
-            "max_stake_per_race_yen": max_stake_per_race_yen,
-            "top_n_horses": eff_top_n,
-            "staking": staking,
+            "race_budget": race_budget,
+            "combo_min_hit_prob": dict(
+                min_hit_prob_by_bet_type
+                if min_hit_prob_by_bet_type is not None
+                else DEFAULT_COMBO_MIN_HIT_PROB
+            ),
         },
     )
 
@@ -434,21 +389,14 @@ def simulate_active_model(
     result.n_races = len(race_ids)
     log.info("Simulating %d races...", result.n_races)
 
-    # Compounding wealth: budget を初期資産として、各 race ごとに
-    #   bankroll <- bankroll - sum(stake) + sum(payout)
-    # で更新する。payout は次の race の bet 余力に加算され、資産が増えるほど
-    # 1 レースあたりの予算 (= 残資産 × cap) が増えて点数を多く買える挙動になる。
-    # bankroll が最小 stake (100 円) を下回ると recommend_for_race 内の
-    # cap × 5% も 100 円未満となり実質賭け不可 (= 破産)。
-    n_skipped_low_info = 0
+    # 累計損益を 0 から積む。賭け金は残高に依存しないので破産は起きない
+    # (= 途中で評価が止まらない)。マイナスの最小値は「途中で止まらずに回すのに
+    # 必要だった資金」として残す。
     n_skipped_place = 0
-    # 資金不足で 1 点も買えなかったレース数。0 でないなら、その run の回収率は
-    # 「破産するまでの期間」しか測っていない。
-    n_races_broke = 0
-    trough_bankroll = budget
-    current_bankroll = budget
-    peak_bankroll = budget
-    # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の bankroll。
+    trough_profit = 0
+    current_profit = 0
+    peak_profit = 0
+    # 日次バケット: その日の累計 stake / payout / 最後の race 終了時の累計損益。
     daily_buckets: dict[str, dict[str, float | int]] = {}
 
     # odds.db の実オッズで EV 選択を実測ベースにする。未 backfill のレースは
@@ -464,10 +412,6 @@ def simulate_active_model(
         if race_frame.empty or len(race_frame) < 2:
             continue
 
-        if exclude_low_information and race_info_coverage(race_frame).is_low_information:
-            n_skipped_low_info += 1
-            continue
-
         # Predictions (NN bundle 経由)
         try:
             preds = predict_race(bundle, race_frame, session=session)
@@ -479,9 +423,16 @@ def simulate_active_model(
         pp_map = dict(zip(race_frame["horse_id"].values, race_frame["post_position"].values, strict=True))
         preds["post_position"] = preds["horse_id"].map(pp_map)
 
-        # 複勝の確信度フィルタ (確率専用モデルが指定されているときだけ)
+        # 確信度 (確率専用モデルが指定されているときだけ)。単勝は買う/買わないの
+        # 判定には使わず、点数だけを動かす。複勝は可否と厚みの両方に使う。
         race_types = types
         place_conf: float | None = None
+        win_conf: float | None = None
+        if prob_bundle is not None and not preds.empty:
+            win_conf = pick_confidence(
+                prob_bundle, race_frame, preds.iloc[0]["horse_id"],
+                session=session, bet_type="単勝",
+            )
         if prob_bundle is not None and "複勝" in types:
             conf = pick_confidence(
                 prob_bundle, race_frame, preds.iloc[0]["horse_id"], session=session
@@ -523,46 +474,22 @@ def simulate_active_model(
             log.warning("predict_race_with_combinations failed for %s: %s", race_id, exc)
             continue
 
-        # 1 レースの予算。flat は固定額、compound は残資産に連動 (破産しうる)。
-        if staking == "compound":
-            race_budget = int(current_bankroll * max_stake_per_race_pct)
-            if max_stake_per_race_yen is not None and max_stake_per_race_yen > 0:
-                race_budget = min(race_budget, int(max_stake_per_race_yen))
-        else:
-            # **定額は残資産に依存しない。** 資産で頭打ちにすると、初期資産 10 万円 /
-            # 1 レース 5,000 円なら 20 レースで尽きて以降を評価しなくなる (複利より
-            # 早く破産する)。定額は「戦略の回収率を測る」ための機能なので、賭け金を
-            # 資金繰りから切り離す。資産はマイナスを許し、その最小値が
-            # 「この戦略を最後まで回すのに必要だった資金」を表す。
-            race_budget = int(max_stake_per_race_yen or 0) or int(
-                budget * max_stake_per_race_pct
-            )
-        if race_budget < _MIN_STAKE:
-            n_races_broke += 1
-        # **券種別の 1 点あたり金額は設定をそのまま使う。**
-        # 以前は戦略プリセットの stake_ratio で予算比に潰してから、券種比で割り直して
-        # いた。同じ設定でも RACE 画面と金額が変わり、「この予想を全レースでやったら」
-        # という問いに答えられていなかった。
-        units: dict[str, int] | None = None
-        if stake_unit_by_bet_type:
-            units = {bt: max(100, int(v)) for bt, v in stake_unit_by_bet_type.items()}
-            stake_unit = min(units.values())
-        else:
-            stake_unit = max(100, int(race_budget * preset["stake_ratio"] / 100) * 100)
-            if place_conf is not None and "複勝" in units:
-                base_points = max(1, round(units["複勝"] / stake_unit)) if stake_unit else 1
-                units["複勝"] = points_for_confidence("複勝", place_conf, base_points) * stake_unit
+        # **点数は確信度から決める** (RACE 画面と同じ `points_for_confidence`)。
+        # 1 点 = 100 円。連系は 1 組合せ 1 点で、何点買うかは的中確率の下限が決める。
+        points = {
+            "単勝": points_for_confidence("単勝", win_conf),
+            "複勝": points_for_confidence("複勝", place_conf),
+        }
 
         rec = recommend_for_race(
             predictions=preds,
             combinations_by_type=combos_by_type,
             race_id=race_id,
             race_budget=race_budget,
-            stake_unit=stake_unit,
-            stake_unit_by_bet_type=units,
+            points_by_bet_type=points,
             top_n_horses=eff_top_n,
             enabled_bet_types=race_types,
-            max_points_per_bet_type=max_points_per_bet_type,
+            min_hit_prob_by_bet_type=min_hit_prob_by_bet_type,
         )
 
         # Determine finish_position map (only finished races settle)
@@ -602,20 +529,14 @@ def simulate_active_model(
             rec.candidates, race_id, finish_to_pp, past_odds
         )
 
-        # Compounding wealth: race ごとに資産更新。
+        # 累計損益の更新。0 スタートなので、そのままプラス / マイナスを表す。
         # NaN / Inf ガード: odds が壊れた値だと payout が NaN になり得るので 0 に丸める。
         race_invested = sum(int(s["stake"]) for s in settlements)
         race_payout_raw = sum(float(s["payout"]) for s in settlements)
         race_payout = race_payout_raw if math.isfinite(race_payout_raw) else 0.0
-        # compound は資金繰りの再現なので 0 で止める (借金はしない)。
-        # flat は測定用なのでマイナスを許し、最小値が必要資金を表す。
-        current_bankroll = current_bankroll - race_invested + int(round(race_payout))
-        if staking == "compound":
-            current_bankroll = max(0, current_bankroll)
-        if current_bankroll < trough_bankroll:
-            trough_bankroll = current_bankroll
-        if current_bankroll > peak_bankroll:
-            peak_bankroll = current_bankroll
+        current_profit = current_profit - race_invested + int(round(race_payout))
+        trough_profit = min(trough_profit, current_profit)
+        peak_profit = max(peak_profit, current_profit)
 
         # 日次バケット update (race の date 単位で集約)
         race_date_str = (
@@ -626,13 +547,13 @@ def simulate_active_model(
         if race_date_str:
             bucket = daily_buckets.setdefault(
                 race_date_str,
-                {"invested": 0, "payout": 0.0, "n_bets": 0, "bankroll_at_end": current_bankroll},
+                {"invested": 0, "payout": 0.0, "n_bets": 0, "profit_at_end": current_profit},
             )
             bucket["invested"] = int(bucket["invested"]) + race_invested
             bucket["payout"] = float(bucket["payout"]) + race_payout
             bucket["n_bets"] = int(bucket["n_bets"]) + len(settlements)
-            # 同一日内の race は順次処理されるので、最後の race 後の bankroll が残る
-            bucket["bankroll_at_end"] = current_bankroll
+            # 同一日内の race は順次処理されるので、最後の race 後の損益が残る
+            bucket["profit_at_end"] = current_profit
 
         for s in settlements:
             # NaN を 0 として扱う (集計 / pydantic int 化で落ちないため)
@@ -684,26 +605,16 @@ def simulate_active_model(
 
     odds_session.close()
 
-    if n_skipped_low_info:
-        log.info("skipped %d low-information races (no past-run history)", n_skipped_low_info)
     if n_skipped_place:
         log.info(
             "skipped 複勝 in %d races (confidence < %.2f)", n_skipped_place, place_min_confidence
         )
-    if n_races_broke:
-        log.warning(
-            '資金不足で 1 点も買えなかったレースが %d 件ある。'
-            'この run の回収率は「破産するまでの期間」しか測っていない。',
-            n_races_broke,
-        )
-    result.n_races_broke = n_races_broke
-    # 資産の最小値。flat ではマイナスになりうる (= その額の追加資金が要った)。
-    result.trough_bankroll = trough_bankroll
-    result.required_capital = max(0, budget - trough_bankroll)
-    result.n_races = max(0, result.n_races - n_skipped_low_info)
+    # 累計損益の最小値 (= その額だけ沈んだ時期があった)。
+    result.trough_profit = trough_profit
+    result.required_capital = max(0, -trough_profit)
     result.n_settled_races = n_settled
-    result.final_bankroll = current_bankroll
-    result.peak_bankroll = peak_bankroll
+    result.final_profit = current_profit
+    result.peak_profit = peak_profit
     # Sort groups by invested desc for predictable display order
     result.by_bet_type = sorted(
         bet_type_groups.values(), key=lambda g: g.invested, reverse=True
@@ -714,11 +625,11 @@ def simulate_active_model(
     result.by_course = sorted(
         course_groups.values(), key=lambda g: g.invested, reverse=True
     )
-    # 日次 bankroll 推移を date 昇順で list 化 (グラフ用)
-    result.bankroll_timeseries = [
-        BankrollPoint(
+    # 日次の損益推移を date 昇順で list 化 (グラフ用)
+    result.profit_timeseries = [
+        ProfitPoint(
             date=d,
-            bankroll=int(v["bankroll_at_end"]),
+            profit=int(v["profit_at_end"]),
             invested=int(v["invested"]),
             payout=float(v["payout"]),
             n_bets=int(v["n_bets"]),
@@ -728,9 +639,9 @@ def simulate_active_model(
 
     log.info(
         "Done. %d settled races, %d bets, payback=%.3f, hit_rate=%.3f, "
-        "final_bankroll=%d (peak=%d, initial=%d)",
+        "profit=%+d (peak=%+d, trough=%+d)",
         n_settled, result.summary.n_bets,
         result.summary.payback_rate, result.summary.hit_rate,
-        result.final_bankroll, result.peak_bankroll, budget,
+        result.final_profit, result.peak_profit, result.trough_profit,
     )
     return result

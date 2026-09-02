@@ -21,6 +21,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.bet_types import normalize_combo
 from db.models.bet_record import BetRecord
 from db.models.entry import Entry
 from db.models.payout import Payout
@@ -45,15 +46,24 @@ def _calc_payout(amount_per_100: int, stake: int) -> int:
 def _resolve_payout_from_payouts_table(
     session: Session, race_id: str, bet_type: str, combo: str
 ) -> int | None:
-    """payouts テーブルから payout amount (100 円基準) を取得する。ヒットしなければ None。"""
-    row = session.execute(
+    """payouts テーブルから payout amount (100 円基準) を取得する。ヒットしなければ None。
+
+    **表記を正規化してから比べる。** payouts の combo は netkeiba HTML 由来で
+    ``1 - 10`` / ``7 → 1`` と空白が入るが、bet_records の combo は買い目由来の
+    ``1-10`` / ``7→1`` なので、素の一致では連系が永久に外れ扱いになる
+    (`core.bet_types.normalize_combo`)。
+    """
+    target = normalize_combo(combo)
+    rows = session.execute(
         select(Payout).where(
             Payout.race_id == race_id,
             Payout.bet_type == bet_type,
-            Payout.combo == combo,
-        ).limit(1)
-    ).scalar_one_or_none()
-    return row.amount if row is not None else None
+        )
+    ).scalars()
+    for row in rows:
+        if normalize_combo(row.combo) == target:
+            return row.amount
+    return None
 
 
 def _resolve_payout_win_fallback(session: Session, race_id: str, combo: str) -> int | None:

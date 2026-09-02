@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core.bet_types import DEFAULT_ENABLED_BET_TYPES
+from core.bet_types import DEFAULT_COMBO_MIN_HIT_PROB
 from core.paths import data_dir
 
 _DEFAULTS: dict = {
@@ -22,21 +22,12 @@ _DEFAULTS: dict = {
     "win_min_odds": 1.1,
     "scraper_stopped": False,
     # 賭け金の設定 (定額)。1 レースに使う上限と 1 点あたりの額だけで決まる。
+    # 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
+    # 1 点 = 100 円は固定 (`ai.betting.strategy.STAKE_UNIT`)。券種ごとの 1 点の額
+    # (旧 `stake_units`) と、ふだん買う券種 (旧 `enabled_bet_types`) は廃止した:
+    # 厚みは「1 点いくらか」ではなく **何点買うか** で表し、どの券種を買うかは
+    # 確信度 (的中確率の下限) が決めるため。
     "race_budget": 5_000,
-    "stake_unit": 100,
-    # 券種ごとの 1 点あたり金額。実測の回収率が高い単複 (0.931 / 0.885) を厚く、
-    # 低い連系 (ワイド 0.880 〜 三連単 0.797) を薄く。総合回収率は券種別回収率の賭け金加重平均
-    # なので、配分はモデルを変えずに効く (docs/ai-model.md「推奨ベットルール」)。
-    "stake_units": {
-        "単勝": 500,
-        "複勝": 500,
-        "馬連": 100,
-        "ワイド": 100,
-        "馬単": 100,
-        "三連複": 100,
-        "三連単": 100,
-    },
-    "enabled_bet_types": list(DEFAULT_ENABLED_BET_TYPES),
     # 複勝の確信度フィルタ。proper scoring rule で学習した「確率専用モデル」の
     # ディレクトリを指定すると、AI の本命に対するそのモデルの **3 着内率** が
     # place_min_hit_prob 未満のレースでは複勝を買わなくなる。
@@ -49,12 +40,9 @@ _DEFAULTS: dict = {
     # 成績は同等 (25% 選別で 0.904 → 0.907)、意味は「複勝が当たる確率」で通る。
     "probability_model_path": None,
     "place_min_hit_prob": 0.60,
-    # 連系を 1 券種あたり何点まで買うか。**予算は上限であって使い切る目標ではない。**
-    # 買い目は的中確率の高い順なので、深く買うほど当たりにくい買い目に金を足すことに
-    # なる (実測 5,404 レース: 1 点目の的中率 0.155 → 10 点目 0.037)。上位 2 点で
-    # 止めると、連系に使う金が 44% に減って回収率は 0.877 → 0.898。
-    # 0 / None で無制限 (従来どおり予算まで買う)。
-    "max_points_per_bet_type": 2,
+    # 連系を買う的中確率の下限 (券種ごと)。点数を固定せず、この線を超えた買い目
+    # だけを買うので **買う点数がレースごとに変わる**。根拠は core/bet_types.py。
+    "combo_min_hit_prob": dict(DEFAULT_COMBO_MIN_HIT_PROB),
 }
 
 # 旧 Kelly 設定 (bankroll × max_stake_per_race_pct) から race_budget を復元する。

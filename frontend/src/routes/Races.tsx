@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 
 import { useRacesByDate } from '@/hooks/useRacesByDate';
 import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
@@ -8,6 +9,7 @@ import { DayIngestPanel } from '@/components/DayIngestPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { RaceCalendar } from '@/components/RaceCalendar';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -162,6 +164,38 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
  * どの馬をいくらで買うかまでは決められないため、レース詳細を開いて
  *「予想を見る」で実行する（旧「AI 予想を実行」ボタンも廃止）。
  */
+/**
+ * 今週末のレースがまだ取り込まれていないことを、**取り込む画面**で知らせる。
+ *
+ * 以前は Dashboard に出していたが、そこから「レース一覧へ」を踏んで日を選んで
+ * 取り込む、と動線が長かった。ここなら知らせの下がそのまま取込操作になる。
+ * 取り込めているときは何も出さない。
+ */
+function WeekendIngestNotice({ onJump }: { onJump: (date: string) => void }) {
+  const weekend = useThisWeekendRaces();
+  if (weekend.isPending || (weekend.data?.races.length ?? 0) > 0) return null;
+
+  // 直近の土曜 (無ければ今日) を取込先の候補にする
+  const today = new Date();
+  const toSat = (6 - today.getDay() + 7) % 7;
+  const sat = new Date(today);
+  sat.setDate(today.getDate() + toSat);
+  const target = sat.toISOString().slice(0, 10);
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-warning/30 bg-warning/[0.06] px-4 py-3">
+      <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+      <span className="text-sm font-medium">今週末のレースがまだ取り込まれていません</span>
+      <span className="text-sm text-muted-foreground">
+        日を選ぶと、右側に取込ボタンが出ます。
+      </span>
+      <Button size="sm" variant="outline" className="ml-auto" onClick={() => onJump(target)}>
+        {target} を開く
+      </Button>
+    </div>
+  );
+}
+
 export function Races() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -234,11 +268,14 @@ export function Races() {
         description="カレンダーから日を選ぶと、その日のレース一覧が出ます。予想は各レースを開いて実行します"
       />
 
+      <WeekendIngestNotice onJump={handleDateChange} />
+
       {/* いま手元にどれだけデータがあるかを最初に出す */}
       <DataCoverageBand />
 
-      <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
-        <div className="flex shrink-0 flex-col gap-4">
+      <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:gap-10">
+        {/* カレンダーは「どの日が空いているか」を見るための主役なので広く取る */}
+        <div className="flex w-full flex-col gap-4 xl:w-[34rem] xl:shrink-0">
           <RaceCalendar value={selectedDate} onChange={handleDateChange} />
           {/* 取込は「どの日が空いているか」が見えるカレンダーの隣に置く */}
           <DayIngestPanel

@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RecommendationsCard } from '../components/RecommendationsCard';
@@ -11,6 +11,8 @@ vi.mock('../lib/api', () => ({
   createBet: vi.fn(),
   createBetsBulk: vi.fn(),
   fetchRecommendations: vi.fn(),
+  // 買い方の折り畳み (BettingRuleDetails) がオッズ下限・複勝の下限を出すのに使う
+  fetchSettings: vi.fn().mockResolvedValue({ win_min_odds: 1.1, place_min_hit_prob: 0.6 }),
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
   formatErrorMessageSync: vi.fn().mockReturnValue('エラーが発生しました'),
   isNotFoundError: vi.fn().mockReturnValue(false),
@@ -133,9 +135,10 @@ describe('RecommendationsCard', () => {
     );
 
     expect(screen.getByText('推奨買目')).toBeInTheDocument();
-    expect(screen.getByText('5,000 円')).toBeInTheDocument();
-    expect(screen.getByText('単勝')).toBeInTheDocument();
-    expect(screen.getByText('馬連')).toBeInTheDocument();
+    // 券種名は買い方の折り畳みにも出るので、買い目の表に限定して探す
+    const table = screen.getByRole('table', { name: '推奨買目の一覧' });
+    expect(within(table).getByText('単勝')).toBeInTheDocument();
+    expect(within(table).getByText('馬連')).toBeInTheDocument();
     // 買い目は枠色の馬番チップで描かれるので、元の文字列は title で持つ
     expect(screen.getByTitle('1')).toBeInTheDocument();
     expect(screen.getByTitle('1-2')).toBeInTheDocument();
@@ -411,79 +414,6 @@ describe('RecommendationsCard', () => {
     // There are 2 candidates; the zero-stake one should have a disabled button
     const disabledButtons = buyButtons.filter((btn) => btn.hasAttribute('disabled'));
     expect(disabledButtons.length).toBeGreaterThan(0);
-  });
-
-  it('shows candidate counts in header description', () => {
-    wrap(
-      <RecommendationsCard
-        raceId="202406010101"
-        data={mockDataWithZeroStake}
-        isPending={false}
-        isError={false}
-        error={null}
-      />
-    );
-
-    // e.g. "2 候補（うち 1 件が推奨）"
-    expect(screen.getByText(/候補.*うち.*件が推奨/)).toBeInTheDocument();
-  });
-
-  it('shows live odds note when odds_source is live', () => {
-    wrap(
-      <RecommendationsCard
-        raceId="202406010101"
-        data={mockData}
-        isPending={false}
-        isError={false}
-        error={null}
-      />
-    );
-
-    expect(screen.getByText(/市場オッズ/)).toBeInTheDocument();
-  });
-
-  it('shows past odds note when odds_source is past', () => {
-    wrap(
-      <RecommendationsCard
-        raceId="202406010101"
-        data={mockDataWithZeroStake}
-        isPending={false}
-        isError={false}
-        error={null}
-      />
-    );
-
-    expect(screen.getByText(/確定オッズ.*外れ combo/)).toBeInTheDocument();
-  });
-
-  it('shows unknown odds note when odds_source is unknown', () => {
-    wrap(
-      <RecommendationsCard
-        raceId="202406010101"
-        data={{
-          race_id: '202406010101',
-          race_budget: 5_000,
-          odds_source: 'unknown',
-          candidates: [
-            {
-              bet_type: '単勝',
-              combo: '1',
-              pattern: 'box',
-              prob: 0.4,
-              est_odds: null,
-              ev: null,
-              stake: 0,
-              post_positions: [1],
-            },
-          ],
-        }}
-        isPending={false}
-        isError={false}
-        error={null}
-      />
-    );
-
-    expect(screen.getByText(/オッズ取得待ち/)).toBeInTheDocument();
   });
 
   it('shows — for null est_odds and null ev', () => {
@@ -788,5 +718,22 @@ describe('RecommendationsCard', () => {
     await screen.findByRole('columnheader', { name: '確信度' });
     // mockData の候補は confidence を持たない
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('予算・候補数・オッズの出所は本文に出さない', async () => {
+    // 買い目そのものが主役なので、前提の数字を上に積むと表が下へ押しやられる。
+    // 予算はレースごとの条件バーで、オッズの出所は各行のバッジで分かる。
+    wrap(
+      <RecommendationsCard
+        raceId="202406010101"
+        data={mockData}
+        isPending={false}
+        isError={false}
+        error={null}
+      />
+    );
+    expect(screen.queryByText(/このレースの予算/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/候補/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/確定オッズ/)).not.toBeInTheDocument();
   });
 });

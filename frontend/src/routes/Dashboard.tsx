@@ -1,6 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useActivateModel } from '@/hooks/useActivateModel';
@@ -9,13 +8,13 @@ import { useDeleteModel } from '@/hooks/useDeleteModel';
 import { useEvaluateModel } from '@/hooks/useEvaluateModel';
 import { useMetricsSummary } from '@/hooks/useMetricsSummary';
 import { useModels } from '@/hooks/useModels';
-import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
 import { useTrainModel } from '@/hooks/useTrainModel';
 import { useUpdateModel } from '@/hooks/useUpdateModel';
 import { useUpdateSettings } from '@/hooks/useSettings';
 import { DeleteModelDialog } from '@/components/DeleteModelDialog';
 import { EditModelNameDialog } from '@/components/EditModelNameDialog';
 import { EmptyState } from '@/components/EmptyState';
+import { HelpDot } from '@/components/HelpDot';
 import { JobProgressCard } from '@/components/JobProgressCard';
 import { ModelTable } from '@/components/ModelTable';
 import { OperatingModels } from '@/components/OperatingModels';
@@ -29,51 +28,28 @@ import { useTrainingStore } from '@/store/app';
 import type { ModelMeta, TrainRequest } from '@/types/api';
 
 /**
- * いまの状態を 1 行で出す帯。
+ * active モデルが無いことだけを知らせる帯。
  *
- * 指標が並んでいるだけだと「次に何をすればいいか」が分からない。
- * 週末のレースが未取得でも、モデルが無くても、画面が同じ顔をしてしまう。
- * **問題がないときは何も出さない**のが要点 (常時出ていると情報にならない)。
+ * **問題がないときは何も出さない** (常時出ていると情報にならない)。
+ * 週末のレースの取り込み漏れは、取り込む場所である RACE 画面に出す
+ * (`WeekendIngestNotice`)。知らせと操作が別画面にあると動線が伸びる。
  */
 function StatusBand({
   hasActiveModel,
-  weekendRaceCount,
   isLoading,
 }: {
   hasActiveModel: boolean;
-  weekendRaceCount: number | null;
   isLoading: boolean;
 }) {
-  if (isLoading) return null;
-
-  const issue = !hasActiveModel
-    ? {
-        message: '有効なモデルがありません',
-        detail: '下の一覧から Activate するか、新しく学習してください。',
-        to: null,
-        action: null,
-      }
-    : weekendRaceCount === 0
-      ? {
-          message: '今週末のレースがまだ取り込まれていません',
-          detail: 'レース一覧から出馬表を取得できます。',
-          to: '/races',
-          action: '取得する',
-        }
-      : null;
-
-  if (!issue) return null;
+  if (isLoading || hasActiveModel) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-warning/30 bg-warning/[0.06] px-4 py-3">
       <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-      <span className="text-sm font-medium">{issue.message}</span>
-      <span className="text-sm text-muted-foreground">{issue.detail}</span>
-      {issue.to && issue.action && (
-        <Button asChild size="sm" variant="outline" className="ml-auto">
-          <Link to={issue.to}>{issue.action}</Link>
-        </Button>
-      )}
+      <span className="text-sm font-medium">有効なモデルがありません</span>
+      <span className="text-sm text-muted-foreground">
+        下の一覧から Activate するか、新しく学習してください。
+      </span>
     </div>
   );
 }
@@ -89,7 +65,6 @@ function StatusBand({
 export function Dashboard() {
   const summary = useMetricsSummary();
   const modelsQuery = useModels();
-  const weekend = useThisWeekendRaces();
   const queryClient = useQueryClient();
 
   const activateMutation = useActivateModel();
@@ -219,38 +194,12 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col gap-10 p-6">
-      <PageHeader eyebrow="Dashboard" title="モデル" description="成績・比較・学習・役割の割り当て">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleCompact}
-          disabled={compactMutation.isPending}
-          title="ModelRun.id を作成日時順に 1..N に詰める"
-        >
-          {compactMutation.isPending ? 'ID 詰め中…' : 'ID を詰める'}
-        </Button>
-        <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
-      </PageHeader>
+      <PageHeader eyebrow="Dashboard" title="モデル" />
 
       <StatusBand
         hasActiveModel={activeModel != null}
-        weekendRaceCount={weekend.data?.races.length ?? null}
-        isLoading={modelsQuery.isPending || weekend.isPending}
+        isLoading={modelsQuery.isPending}
       />
-
-      {/* 運用中の 2 モデルと、その数字。**役割カードと KPI 帯を分けない** —
-          分けると同じ active の回収率が上下 2 箇所に出て、どのモデルの数字か
-          読み取れなくなる。左は利用者が得る回収率、右は確率としての正しさ。 */}
-      {summary.isError ? (
-        <EmptyState
-          message="メトリクス取得に失敗しました"
-          description="バックエンドが起動しているか確認してください。"
-        />
-      ) : modelsQuery.isPending || summary.isPending ? (
-        <Skeleton className="h-48 w-full rounded-sm" />
-      ) : (
-        <OperatingModels models={modelsQuery.data} summary={summary.data} />
-      )}
 
       {trackedJobId && (
         <JobProgressCard
@@ -260,11 +209,59 @@ export function Dashboard() {
         />
       )}
 
-      {/* モデル一覧。**推移グラフを置かないのは、モデルごとに評価窓が違うから。**
+      {/* ── 塊 1: いま動いているもの ──────────────────────────────
+          運用中の 2 モデルと、その数字。**役割カードと KPI 帯を分けない** —
+          分けると同じ active の回収率が上下 2 箇所に出て、どのモデルの数字か
+          読み取れなくなる。左は利用者が得る回収率、右は確率としての正しさ。 */}
+      <section aria-label="運用中" className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <h2 className="text-label-ja">いま予想に使っているモデル</h2>
+          <HelpDot
+            label="いま予想に使っているモデル"
+            text="買い目を決める側 (active) と、確からしさを出す側 (確率モデル) の 2 つで動きます。買う馬を決めるのは前者、複勝を買うかの判定と連系の確率は後者です。"
+          />
+        </div>
+        {summary.isError ? (
+          <EmptyState
+            message="メトリクス取得に失敗しました"
+            description="バックエンドが起動しているか確認してください。"
+          />
+        ) : modelsQuery.isPending || summary.isPending ? (
+          <Skeleton className="h-48 w-full rounded-sm" />
+        ) : (
+          <OperatingModels models={modelsQuery.data} summary={summary.data} />
+        )}
+      </section>
+
+      {/* ── 塊 2: 手持ちのモデル ──────────────────────────────────
+          一覧と、一覧に対する操作 (学習で増やす / ID を詰める) を同じ塊に置く。
+          ページ見出しの横に置いていたときは、何に対する操作か分からなかった。
+
+          **推移グラフを置かないのは、モデルごとに評価窓が違うから。**
           学習の --train-end を変えれば test 期間も動くので、時系列に並べても
           「良くなった / 悪くなった」は読めない。窓を列で見せる。 */}
       <section aria-label="モデル一覧" className="flex flex-col gap-3">
-        <h2 className="text-label-ja">モデル一覧</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 className="text-label-ja">手持ちのモデル</h2>
+            <HelpDot
+              label="手持ちのモデル"
+              text="役割の割り当て (Activate / 確率に設定)・実運用の賭けルールでの測り直し (計測)・名称編集・削除はこの表から行います。"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCompact}
+              disabled={compactMutation.isPending}
+              title="ModelRun.id を作成日時順に 1..N に詰める"
+            >
+              {compactMutation.isPending ? 'ID 詰め中…' : 'ID を詰める'}
+            </Button>
+            <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
+          </div>
+        </div>
         {modelsQuery.isPending ? (
           <Skeleton className="h-64 w-full rounded-sm" />
         ) : modelsQuery.isError ? (
@@ -278,8 +275,7 @@ export function Dashboard() {
             description="「再学習を実行」ボタンから最初のモデルを学習してください。"
           />
         ) : (
-          <>
-            <ModelTable
+          <ModelTable
               models={modelsQuery.data}
               onActivate={handleActivate}
               onEvaluate={handleEvaluate}
@@ -288,13 +284,8 @@ export function Dashboard() {
               onDelete={setDeleteTarget}
               activatingId={activatingId}
               settingProbability={updateSettings.isPending}
-              evaluatingId={evaluatingId}
-            />
-            <p className="text-xs text-subtle-foreground">
-              評価窓が違う行どうしは比較できません（<code>--train-end</code> を変えると test
-              期間も動くため）。揃えて測り直すには行を開いてバックテストを実行します。
-            </p>
-          </>
+            evaluatingId={evaluatingId}
+          />
         )}
       </section>
 

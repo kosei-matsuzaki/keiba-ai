@@ -255,7 +255,9 @@ def _capture_conditions(session: Session, store: SettingsStore) -> str | None:
                     float(settings.get("place_min_hit_prob", 0.60)) if prob else None
                 ),
                 "win_min_odds": float(settings.get("win_min_odds", 1.1)),
-                "stake_units": settings.get("stake_units") or {},
+                # 連系を買う的中確率の下限。買い目の点数はここで決まる。
+                "combo_min_hit_prob": settings.get("combo_min_hit_prob") or {},
+                "race_budget": int(settings.get("race_budget", 5_000)),
             },
             ensure_ascii=False,
         )

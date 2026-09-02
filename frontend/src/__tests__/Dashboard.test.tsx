@@ -89,9 +89,10 @@ describe('Dashboard', () => {
     expect(kpi.getByText('確からしさを出す')).toBeInTheDocument();
     // 回収率はどちらか一方 (active) にしか出ない
     expect(kpi.getAllByText('単勝回収率')).toHaveLength(1);
-    // NDCG は主役の位置に置かない
-    expect(kpi.getByText(/順位精度 NDCG@3/)).toBeInTheDocument();
-    expect(kpi.getByText(/上げても回収率は上がらない/)).toBeInTheDocument();
+    // 複勝的中率もカードで出す (行に散らさない)
+    expect(kpi.getByText('複勝的中率')).toBeInTheDocument();
+    // NDCG は主役の位置に置かない (確率モデル側にだけ「順位精度」を残す)
+    expect(kpi.queryByText(/順位精度 NDCG@3/)).not.toBeInTheDocument();
   });
 
   it('log-loss は市場と並べ、どちらが正確かを言葉でも出す', async () => {
@@ -102,12 +103,13 @@ describe('Dashboard', () => {
     expect(kpi.getByText(/市場に負け/)).toBeInTheDocument();
   });
 
-  it('数字の出所・レース数・評価窓を必ず添える', async () => {
+  it('出所やレース数を本文で説明しない (数字を読むのに要らない)', async () => {
+    // 以前は「実測 · 5,404 レース · 2024-11-02 〜 2026-05-31」を見出し横に出していたが、
+    // カードの並びの上に長い注記があると、どこから読むのか分からなくなる。
     renderDashboard();
     const kpi = within(await screen.findByLabelText('主要指標'));
-    expect(kpi.getByText('実測')).toBeInTheDocument();
-    expect(kpi.getByText(/5,404 レース/)).toBeInTheDocument();
-    expect(kpi.getByText(/2024-11-02 〜 2026-05-31/)).toBeInTheDocument();
+    expect(kpi.queryByText(/5,404 レース/)).not.toBeInTheDocument();
+    expect(kpi.queryByText('運用中のモデル')).not.toBeInTheDocument();
   });
 
   it('学習時の値のときは複勝的中率のラベルが変わる (別の量なので)', async () => {
@@ -120,9 +122,8 @@ describe('Dashboard', () => {
     });
     renderDashboard();
     const kpi = within(await screen.findByLabelText('主要指標'));
-    expect(kpi.getByText('学習時')).toBeInTheDocument();
+    // 複勝的中率のカードに出所ごとのラベルが付く (量が違うので言い換える)
     expect(kpi.getByText(/予想1位が3着以内/)).toBeInTheDocument();
-    expect(kpi.queryByText(/上位3頭のうち1頭以上/)).not.toBeInTheDocument();
   });
 
   it('評価がまだ無いときも、どのモデルが動いているかは出す', async () => {
@@ -165,9 +166,8 @@ describe('Dashboard', () => {
 
   it('推移グラフではなく評価窓つきの一覧を出す (窓が違うと時系列に並べられない)', async () => {
     renderDashboard();
-    expect(await screen.findByRole('heading', { name: 'モデル一覧' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '手持ちのモデル' })).toBeInTheDocument();
     expect(await screen.findByRole('columnheader', { name: '評価窓' })).toBeInTheDocument();
-    expect(screen.getByText(/評価窓が違う行どうしは比較できません/)).toBeInTheDocument();
   });
 
   it('API が落ちたらエラー状態を出す', async () => {

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ai.betting.odds import compute_race_odds_with_sources
-from ai.betting.strategy import recommend_for_race
+from ai.betting.strategy import STAKE_UNIT, TOP_N_HORSES, recommend_for_race
 from ai.inference.confidence import (
     is_place_worth_buying,
     pick_confidence,
@@ -30,7 +30,7 @@ from api.deps import (
     get_session,
     get_settings_store,
 )
-from core.bet_types import DEFAULT_ENABLED_BET_TYPES, supported_bet_types
+from core.bet_types import COMBINATION_BET_TYPES, DEFAULT_COMBO_MIN_HIT_PROB
 from core.logging import get_logger
 from core.settings_store import SettingsStore, resolve_model_path
 
@@ -62,6 +62,9 @@ class RecommendationCandidate(BaseModel):
 class RecommendationsResponse(BaseModel):
     race_id: str
     race_budget: int
+    #: 1 点あたりの金額 (円)。**固定値**。賭け金は必ずこの倍数で、
+    #: `stake / stake_unit` がその買い目の点数になる。
+    stake_unit: int = STAKE_UNIT
     candidates: list[RecommendationCandidate]
     odds_source: Literal["live", "past", "unknown"] = "unknown"
     #: 確率モデルが AI の本命に与えた単勝確率。確率モデル未設定なら None。
@@ -119,7 +122,6 @@ def get_recommendations(
     session: Annotated[Session, Depends(get_session)],
     odds_session: Annotated[Session, Depends(get_odds_session)],
     store: Annotated[SettingsStore, Depends(get_settings_store)],
-    top_n_horses: Annotated[int, Query(ge=1, le=18, description="Top-N horses for box/formation candidates (1-18)")] = 3,
     top_k: Annotated[int, Query(ge=1, le=200, description="Combination upper limit per bet type (1-200)")] = 50,
     # ── このレースだけ Settings を上書きするための任意パラメータ ──
     # 未指定なら Settings の値を使う。全レース共通の既定値は Settings 側に置き、
@@ -127,10 +129,6 @@ def get_recommendations(
     race_budget: Annotated[
         int | None,
         Query(ge=100, description="このレースに使う上限 (円)。未指定なら設定値"),
-    ] = None,
-    stake_unit: Annotated[
-        int | None,
-        Query(ge=100, description="1 点あたりの賭け金 (円)。未指定なら設定値"),
     ] = None,
     bet_types: Annotated[
         str | None,
@@ -216,35 +214,25 @@ def get_recommendations(
     # Step 6: load settings and run recommendation logic
     # クエリで渡された分だけ、このレースに限って設定を上書きする。
     settings = store.load()
-    # 券種ごとの点数上限。**予算は上限であって使い切る目標ではない。**
-    # 0 / 未設定なら無制限 (従来どおり予算まで買う)。
-    _max_points = settings.get("max_points_per_bet_type", 2)
-    eff_max_points: int | None = int(_max_points) if _max_points else None
+    # 連系の点数は**的中確率の下限だけ**で決まる。線を超えた買い目を全部買うので、
+    # 確信度の高いレースほど点数が増え、低いレースでは 0 点になる。
+    # 券種ごとの点数上限は持たない (ワイドが効くレース・三連単が効くレースを
+    # 一律の点数で潰さないため)。
+    _floors = settings.get("combo_min_hit_prob")
+    eff_combo_floors: dict[str, float] = (
+        {k: float(v) for k, v in _floors.items()}
+        if isinstance(_floors, dict)
+        else dict(DEFAULT_COMBO_MIN_HIT_PROB)
+    )
 
     eff_budget: int = (
         race_budget if race_budget is not None else int(settings.get("race_budget", 5_000))
     )
-    eff_unit: int = (
-        stake_unit if stake_unit is not None else int(settings.get("stake_unit", 100))
-    )
     # 単勝のオッズ下限
     eff_win_min_odds: float = float(settings.get("win_min_odds", 1.1))
-    # 券種ごとの 1 点あたり金額 (無い券種は stake_unit にフォールバック)。
-    # レース詳細から stake_unit を上書きされたときは、券種間の比率を保ったまま
-    # 全体をスケールする。そうしないと「1 点 ¥1000 にした」のに stake_units を
-    # 持つ券種だけ設定値のままになり、上書きが効かないように見える。
-    eff_stake_units: dict[str, int] = {
-        k: int(v) for k, v in (settings.get("stake_units") or {}).items()
-    }
-    if stake_unit is not None and eff_stake_units:
-        base_unit = int(settings.get("stake_unit", 100)) or 100
-        scale = eff_unit / base_unit
-        eff_stake_units = {
-            k: max(0, int(v * scale / 100) * 100) for k, v in eff_stake_units.items()
-        }
     if bet_types is not None:
         requested = [t.strip() for t in bet_types.split(",") if t.strip()]
-        unknown = [t for t in requested if t not in DEFAULT_ENABLED_BET_TYPES]
+        unknown = [t for t in requested if t not in COMBINATION_BET_TYPES]
         if unknown:
             raise HTTPException(
                 status_code=422,
@@ -254,9 +242,9 @@ def get_recommendations(
             raise HTTPException(status_code=422, detail="bet_types must not be empty")
         eff_bet_types = requested
     else:
-        eff_bet_types = supported_bet_types(
-            settings.get("enabled_bet_types", DEFAULT_ENABLED_BET_TYPES)
-        )
+        # **券種を設定で絞らない。** どの券種が効くかはレースによって違い、
+        # 買うかどうかは確信度 (的中確率の下限) が決める。
+        eff_bet_types = list(COMBINATION_BET_TYPES)
 
     # 複勝の確信度フィルタ。確率専用モデル (proper scoring rule で学習) が設定されて
     # いれば、AI の本命に対するその確率がしきい値未満のレースでは複勝を見送る。
@@ -284,28 +272,23 @@ def get_recommendations(
                 "race %s: 複勝 skipped (confidence %.3f < %.2f)",
                 race_id, confidence, conf_threshold,
             )
-        else:
-            # しきい値を超えた先も確信度で厚みを変える。点数 = 基準 × (確信度/0.5)^2。
-            # 1 点は eff_unit 円なので、点数を金額に直して stake_units に入れる。
-            if "複勝" in eff_stake_units and eff_unit > 0:
-                base_points = max(1, round(eff_stake_units["複勝"] / eff_unit))
-                points = points_for_confidence("複勝", confidence, base_points)
-                eff_stake_units["複勝"] = points * eff_unit
-                logger.info(
-                    "race %s: 複勝 %d 点 (確信度 %.3f)", race_id, points, confidence
-                )
+    # **点数は確信度から決める。1 点 = 100 円。**
+    # 連系は 1 組合せ = 1 点で、何点買うかは上の下限が決める。
+    eff_points: dict[str, int] = {
+        "単勝": points_for_confidence("単勝", win_confidence),
+        "複勝": points_for_confidence("複勝", confidence),
+    }
 
     result = recommend_for_race(
         predictions=predictions,
         combinations_by_type=combinations_by_type,
         race_id=race_id,
         race_budget=eff_budget,
-        stake_unit=eff_unit,
-        stake_unit_by_bet_type=eff_stake_units,
+        points_by_bet_type=eff_points,
         win_min_odds=eff_win_min_odds,
-        top_n_horses=top_n_horses,
+        top_n_horses=TOP_N_HORSES,
         enabled_bet_types=eff_bet_types,
-        max_points_per_bet_type=eff_max_points,
+        min_hit_prob_by_bet_type=eff_combo_floors,
     )
 
     def _confidence_for(c) -> float | None:  # noqa: ANN001
@@ -339,6 +322,7 @@ def get_recommendations(
     return RecommendationsResponse(
         race_id=result.race_id,
         race_budget=result.race_budget,
+        stake_unit=STAKE_UNIT,
         candidates=candidates,
         odds_source=odds_source,
         place_confidence=confidence,

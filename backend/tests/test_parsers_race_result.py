@@ -137,3 +137,43 @@ def test_entries_have_passing(parsed):
 def test_entries_have_agari_3f(parsed):
     for e in parsed.entries:
         assert e.agari_3f is not None
+
+
+class TestSurfaceDistanceShapes:
+    """コース形状は 1 文字とは限らない。
+
+    以前は `[右左]?[内外]?` の 2 文字までしか許さず、新潟の直線と障害の襷コースが
+    **丸ごと解析に失敗して surface='' / distance=0 のまま保存されていた**
+    (964 レース。修正前は `distance=1000` の新潟が DB に 1 件も無かった)。
+    """
+
+    def test_common_shapes(self):
+        from scraper.parsers.common import SURFACE_DIST_RE
+
+        assert SURFACE_DIST_RE.search("ダ右1200m").groups() == ("ダ", "1200")
+        assert SURFACE_DIST_RE.search("芝右 外1800m").groups() == ("芝", "1800")
+
+    def test_niigata_straight(self):
+        """新潟の直線 — 「直線」は 2 文字なので 1 文字の文字クラスでは足りない。"""
+        from scraper.parsers.common import SURFACE_DIST_RE
+
+        assert SURFACE_DIST_RE.search("芝直線1000m").groups() == ("芝", "1000")
+
+    def test_jump_course(self):
+        """障害は "障芝" と surface が後ろに付き、襷コースは "外-内" と続く。"""
+        from scraper.parsers.common import SURFACE_DIST_RE
+
+        # 障 では距離に届かないので、続く 芝 から改めてマッチする
+        assert SURFACE_DIST_RE.search("障芝 外-内2850m").groups() == ("芝", "2850")
+        assert SURFACE_DIST_RE.search("障芝 3000m").groups() == ("芝", "3000")
+        assert SURFACE_DIST_RE.search("障ダ3000m").groups() == ("ダ", "3000")
+        # 芝とダートの両方を走る障害コースは、先に出る方 (芝) を採る
+        assert SURFACE_DIST_RE.search("障芝 ダート3000m").groups() == ("芝", "3000")
+        # surface が書かれていない障害は 障 のまま
+        assert SURFACE_DIST_RE.search("障3000m").groups() == ("障", "3000")
+
+    def test_does_not_match_across_unrelated_text(self):
+        """関係ない文字列をまたいでマッチしない (形状に出る文字だけ読み飛ばす)。"""
+        from scraper.parsers.common import SURFACE_DIST_RE
+
+        assert SURFACE_DIST_RE.search("芝の話をしてから1200m") is None

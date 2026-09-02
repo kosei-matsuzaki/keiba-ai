@@ -110,17 +110,35 @@ describe('Dashboard — モデル管理 (旧 Models 画面)', () => {
     expect(screen.getAllByText('Active')).toHaveLength(1);
   });
 
-  it('Activate ボタンは非アクティブな行にだけ出る', async () => {
+  it('行の操作は三点リーダーにまとめる (数字より操作が目立たないように)', async () => {
+    const user = userEvent.setup();
     renderDashboard();
-    await screen.findByRole('button', { name: 'Activate' });
-    expect(screen.getAllByRole('button', { name: 'Activate' })).toHaveLength(1);
+    const menus = await screen.findAllByRole('button', { name: /の操作$/ });
+    expect(menus).toHaveLength(2);
+    // 畳んでいる間は操作そのものが出ていない
+    expect(screen.queryByRole('menuitem', { name: 'Activate' })).not.toBeInTheDocument();
+
+    await user.click(menus[1]);
+    expect(screen.getByRole('menuitem', { name: 'Activate' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: '計測' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '削除' })).toBeInTheDocument();
+  });
+
+  it('Active な行では Activate を選べない', async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+    const menus = await screen.findAllByRole('button', { name: /の操作$/ });
+    await user.click(menus[0]); // 1 行目が active
+    expect(screen.getByRole('menuitem', { name: 'Activate' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: '削除' })).toBeDisabled();
   });
 
   it('Activate を押すと切り替え API を呼ぶ', async () => {
     const user = userEvent.setup();
     renderDashboard();
-    const btn = await screen.findByRole('button', { name: 'Activate' });
-    await user.click(btn);
+    const menus = await screen.findAllByRole('button', { name: /の操作$/ });
+    await user.click(menus[1]);
+    await user.click(screen.getByRole('menuitem', { name: 'Activate' }));
     await waitFor(() => {
       expect(vi.mocked(activateModel)).toHaveBeenCalledWith(2);
     });
@@ -135,10 +153,9 @@ describe('Dashboard — モデル管理 (旧 Models 画面)', () => {
   it('「計測」で実運用の賭けルールの測り直しを投げる (未算出を埋める手段)', async () => {
     const user = userEvent.setup();
     renderDashboard();
-    const buttons = await screen.findAllByRole('button', { name: '計測' });
-    // 行ごとに 1 つ出る (学習時の指標しか無いモデルでも押せる)
-    expect(buttons).toHaveLength(2);
-    await user.click(buttons[1]);
+    const menus = await screen.findAllByRole('button', { name: /の操作$/ });
+    await user.click(menus[1]);
+    await user.click(screen.getByRole('menuitem', { name: '計測' }));
     await waitFor(() => {
       expect(vi.mocked(evaluateModel)).toHaveBeenCalledWith(2);
     });

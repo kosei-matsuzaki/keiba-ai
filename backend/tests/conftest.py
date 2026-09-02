@@ -68,11 +68,15 @@ def app_with_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Isolated FastAPI app backed by a fresh temp-dir SQLite DB."""
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
+    # `data_dir()` は毎回この環境変数を読むので、これだけで隔離できる。
     monkeypatch.setenv("KEIBA_DATA_DIR", str(data_dir))
 
-    # Ensure a fresh engine is built from the patched env inside create_app()
-    import core.paths as _paths
-    monkeypatch.setattr(_paths, "data_dir", lambda: data_dir)
+    # **`core.paths.data_dir` を差し替えてはいけない。**
+    # 差し替えた状態で `core.settings_store` などが初めて import されると、
+    # そのモジュールは `from core.paths import data_dir` で**その回の lambda を
+    # 永久に掴む**。monkeypatch は core.paths 側しか戻さないので、以降の
+    # テストは全部 1 つ目のテストの tmp ディレクトリを見る。
+    # 実際に「別テストが PUT した設定が次のテストの GET に出る」で踏んだ。
 
     from core.paths import db_path as _db_path
     from db.session import make_engine

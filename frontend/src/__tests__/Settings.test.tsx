@@ -43,12 +43,9 @@ const mockSettings: SettingsResponse = {
   rate_max_seconds: 10,
   night_min_seconds: 30,
   win_min_odds: 1.1, probability_model_path: null, place_min_hit_prob: 0.6,
-  max_points_per_bet_type: 2,
+  combo_min_hit_prob: { 馬連: 0.075, ワイド: 0.26, 馬単: 0.025, 三連複: 0.024, 三連単: 0.019 },
   scraper_stopped: false,
     race_budget: 5000,
-    stake_unit: 100,
-    stake_units: { '単勝': 500, '複勝': 500, '馬連': 100, 'ワイド': 100, '馬単': 100, '三連複': 100, '三連単': 100 },
-  enabled_bet_types: ['単勝', '複勝', 'ワイド', '馬連'],
 };
 
 function renderSettings() {
@@ -70,10 +67,6 @@ beforeEach(() => {
 });
 
 /** 馬券種トグル (aria-pressed ボタン) を取得する。 */
-function getBetTypeToggle(name: string): HTMLElement {
-  return screen.getByRole('button', { name });
-}
-
 describe('Settings', () => {
   it('renders settings form with loaded values', async () => {
     renderSettings();
@@ -160,12 +153,6 @@ describe('Settings', () => {
     expect((input as HTMLInputElement).value).toBe('5000');
   });
 
-  it('1 点あたりの賭け金を出す', async () => {
-    renderSettings();
-    const input = await screen.findByLabelText('1 点あたりの賭け金（既定）');
-    expect((input as HTMLInputElement).value).toBe('100');
-  });
-
   it('Kelly / 軍資金の入力は無くなっている', async () => {
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
@@ -175,32 +162,12 @@ describe('Settings', () => {
     expect(screen.queryByLabelText('1 レースに使う割合')).not.toBeInTheDocument();
   });
 
-  it('renders enabled_bet_types toggles for the 7 predictable bet types', async () => {
-    renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
-    // 馬券種は checkbox ではなく aria-pressed トグルボタンで描画される
-    const allBetTypes = ['単勝', '複勝', '馬連', 'ワイド', '馬単', '三連複', '三連単'];
-    for (const betType of allBetTypes) {
-      expect(getBetTypeToggle(betType)).toHaveAttribute('aria-pressed');
-    }
-  });
-
   it('枠連は選択肢に出さない（AI が買い目を生成しないため）', async () => {
     // オッズ・払戻は取得しているが COMBINATION_BET_TYPES に無いので候補が 0 件。
     // 選べるのに何も起きない選択肢を残さない。
     renderSettings();
     await screen.findByDisplayValue('TestAgent/1.0');
     expect(screen.queryByRole('button', { name: '枠連' })).not.toBeInTheDocument();
-  });
-
-  it('presses enabled_bet_types that match mockSettings defaults', async () => {
-    renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
-    expect(getBetTypeToggle('単勝')).toHaveAttribute('aria-pressed', 'true');
-    expect(getBetTypeToggle('複勝')).toHaveAttribute('aria-pressed', 'true');
-    expect(getBetTypeToggle('ワイド')).toHaveAttribute('aria-pressed', 'true');
-    expect(getBetTypeToggle('馬連')).toHaveAttribute('aria-pressed', 'true');
-    expect(getBetTypeToggle('馬単')).toHaveAttribute('aria-pressed', 'false');
   });
 
   // ── バリデーション ────────────────────────────────────────────────────
@@ -226,67 +193,7 @@ describe('Settings', () => {
     });
   });
 
-  it('shows validation error when stake_unit is not a multiple of 100', async () => {
-    const user = userEvent.setup();
-    renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
-
-    const unitInput = screen.getByLabelText('1 点あたりの賭け金（既定）');
-    fireEvent.change(unitInput, { target: { value: '150' } });
-
-    const userAgentInput = screen.getByDisplayValue('TestAgent/1.0');
-    await user.tripleClick(userAgentInput);
-    await user.type(userAgentInput, 'EditedAgent');
-
-    const saveBtn = screen.getByRole('button', { name: '変更を保存' });
-    await waitFor(() => expect(saveBtn).not.toBeDisabled());
-    await user.click(saveBtn);
-    await waitFor(() => {
-      expect(screen.getByText('100 円単位で入力してください')).toBeInTheDocument();
-    });
-  });
-
-  it('shows validation error when all enabled_bet_types are unchecked', async () => {
-    const user = userEvent.setup();
-    renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
-
-    // デフォルトで選択済みの 4 種を全解除
-    await user.click(getBetTypeToggle('単勝'));
-    await user.click(getBetTypeToggle('複勝'));
-    await user.click(getBetTypeToggle('ワイド'));
-    await user.click(getBetTypeToggle('馬連'));
-
-    const saveBtn = screen.getByRole('button', { name: '変更を保存' });
-    await waitFor(() => expect(saveBtn).not.toBeDisabled());
-    await user.click(saveBtn);
-    await waitFor(() => {
-      expect(screen.getByText('1 つ以上の馬券種を選択してください')).toBeInTheDocument();
-    });
-  });
-
   // ── payload 検証 ──────────────────────────────────────────────────────
-
-  it('submits payload with only checked bet types when some are unchecked', async () => {
-    const user = userEvent.setup();
-    renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
-
-    // '複勝' の選択を外す（元のデフォルト: ['単勝','複勝','ワイド','馬連']）
-    await user.click(getBetTypeToggle('複勝'));
-
-    const saveBtn = screen.getByRole('button', { name: '変更を保存' });
-    await waitFor(() => expect(saveBtn).not.toBeDisabled());
-    await user.click(saveBtn);
-
-    await waitFor(() => {
-      const call = vi.mocked(updateSettings).mock.calls[0][0];
-      expect(call.enabled_bet_types).toEqual(
-        expect.arrayContaining(['単勝', 'ワイド', '馬連'])
-      );
-      expect(call.enabled_bet_types).not.toContain('複勝');
-    });
-  });
 
   it('submits the per-race budget after editing', async () => {
     const user = userEvent.setup();
@@ -303,6 +210,41 @@ describe('Settings', () => {
     await waitFor(() => {
       const call = vi.mocked(updateSettings).mock.calls[0][0];
       expect(call.race_budget).toBe(20000);
+    });
+  });
+
+  it('買い方の設定は 4 つだけ（券種も 1 点あたりも設定しない）', async () => {
+    // 1 点 = 100 円で固定、何点買うかは確信度が決める。どの券種を買うかも
+    // 確信度 (的中確率の下限) が決めるので、どちらも設定項目ではない。
+    renderSettings();
+    await screen.findByLabelText('1 レースに使う上限');
+    expect(screen.queryByLabelText('1 点あたりの賭け金（既定）')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'BET TYPES' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('連系の点数の上限')).not.toBeInTheDocument();
+  });
+
+  it('連系を買う的中確率の下限を BETTING に置き、% で入出力する', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await screen.findByLabelText('1 レースに使う上限');
+    // 複勝の下限と同じ場所に、券種ごとの入力が並ぶ
+    expect(screen.getByLabelText('複勝を買う確信度の下限')).toBeInTheDocument();
+    for (const betType of ['馬連', 'ワイド', '馬単', '三連複', '三連単']) {
+      expect(
+        screen.getByLabelText(`${betType} を買う的中確率の下限`)
+      ).toBeInTheDocument();
+    }
+    // API は 0〜1、画面は % (0.075 → 7.5)
+    const umaren = screen.getByLabelText('馬連 を買う的中確率の下限') as HTMLInputElement;
+    expect(umaren.value).toBe('7.5');
+
+    fireEvent.change(umaren, { target: { value: '9' } });
+    const saveBtn = screen.getByRole('button', { name: '変更を保存' });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+    await waitFor(() => {
+      const call = vi.mocked(updateSettings).mock.calls[0][0];
+      expect(call.combo_min_hit_prob?.['馬連']).toBeCloseTo(0.09);
     });
   });
 });

@@ -157,6 +157,40 @@ class TestSettleBetViaPayoutsTable:
         assert bet.payout == 2500
         assert bet.profit == 2400
 
+    def test_umaren_payout_with_spaces_still_matches(self, db_session):
+        """payouts の combo は netkeiba 由来で ``3 - 7`` と空白が入る。
+
+        買い目 (bet_records.combo) は ``3-7`` なので、素の文字列比較だと
+        **連系が 1 つも一致せず全部外れ**になる。実 DB の 46 万行はすべて
+        空白入りで、既存テストだけが空白なしの偽データを使っていた。
+        """
+        _add_race(db_session)
+        _add_payout(db_session, "202406010101", "馬連", "3 - 7", 2500)
+        bet = _add_bet(db_session, bet_type="馬連", combo="3-7", stake=100)
+
+        settle_bet(db_session, bet)
+
+        assert bet.payout == 2500
+
+    def test_sanrentan_payout_with_arrow_spaces_still_matches(self, db_session):
+        _add_race(db_session)
+        _add_payout(db_session, "202406010101", "三連単", "7 → 3 → 5", 120000)
+        bet = _add_bet(db_session, bet_type="三連単", combo="7→3→5", stake=100)
+
+        settle_bet(db_session, bet)
+
+        assert bet.payout == 120000
+
+    def test_wide_wrong_combo_is_still_a_loss(self, db_session):
+        """正規化しても **別の組合せ** は当たりにしない (空白除去だけの効果に限る)。"""
+        _add_race(db_session)
+        _add_payout(db_session, "202406010101", "ワイド", "3 - 7", 600)
+        bet = _add_bet(db_session, bet_type="ワイド", combo="3-8", stake=100)
+
+        settle_bet(db_session, bet)
+
+        assert bet.payout == 0
+
     def test_wide(self, db_session):
         _add_race(db_session)
         _add_payout(db_session, "202406010101", "ワイド", "3-7", 600)

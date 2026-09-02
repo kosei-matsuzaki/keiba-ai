@@ -15,14 +15,17 @@ from api.schemas import (
     CalendarResponse,
     DataCoverage,
     EntrySummary,
+    PayoutEntry,
     RaceDetail,
     RaceSummary,
     UpcomingRacesResponse,
 )
+from core.bet_types import normalize_combo
 from core.dates import this_weekend_dates
 from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.jockey import Jockey
+from db.models.payout import Payout
 from db.models.race import Race
 
 router = APIRouter()
@@ -343,6 +346,9 @@ def get_race_detail(
     entries_stmt = select(Entry).where(Entry.race_id == race_id).order_by(Entry.post_position)
     entries = list(session.scalars(entries_stmt).all())
 
+    # 全券種の確定払戻。答え合わせで推奨買目を突き合わせるのに使う。
+    payouts = list(session.scalars(select(Payout).where(Payout.race_id == race_id)).all())
+
     return RaceDetail(
         race_id=race.race_id,
         date=race.date,
@@ -357,4 +363,14 @@ def get_race_detail(
         entries=_build_entry_summaries(entries, session),
         payout_win=race.payout_win,
         payout_place=race.payout_place,
+        payouts=[
+            PayoutEntry(
+                bet_type=p.bet_type,
+                # 画面は買い目 (``1-10``) と突き合わせるので表記を揃えて返す
+                combo=normalize_combo(p.combo),
+                amount=p.amount,
+                popularity=p.popularity,
+            )
+            for p in payouts
+        ],
     )

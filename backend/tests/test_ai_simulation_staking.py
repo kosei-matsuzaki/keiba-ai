@@ -1,9 +1,14 @@
-"""賭け金の決め方（定額 / 複利）と、破産の検知。
+"""賭け金は資金繰りに依存しない、という不変条件。
 
-既定を定額にしているのは、複利だと払戻 1.0 未満の券種を数百レース買った時点で
-資産が尽き、賭け金が下限に張り付いて**以降を実質評価しなくなる**ため。
-実際にこれで「連系は点数が少なく測定不能」と誤って結論し、docs にもそう書いていた
-（定額で測り直したら 21,570 点あり CI [0.83, 0.93] と十分測れた）。
+シミュレーションは **RACE 画面の予想を全レースでやったらどうなるか**を測るもので、
+資産運用の再現ではない。だから初期資産・複利・破産という概念を持たない
+(2026-09-01 に全廃)。
+
+以前は初期資産から複利で回していたため、払戻 1.0 未満の券種を数百レース買うと
+資産が尽き、賭け金が下限に張り付いて**以降を実質評価しなくなっていた**。
+回収率は Σpayout/Σstake = 賭け金の重み付き平均なので、破産すると「早い時期の
+大きい賭け金」に偏った数字になる。実際にこれで「連系は点数が少なく測定不能」と
+誤って結論し、docs にもそう書いていた (定額で測り直したら十分測れた)。
 """
 
 from __future__ import annotations
@@ -13,57 +18,61 @@ import inspect
 from ai.simulation import engine as sim_mod
 
 
-def test_flat_is_the_default():
-    sig = inspect.signature(sim_mod.simulate_active_model)
-    assert sig.parameters["staking"].default == "flat"
+def test_no_bankroll_concept_in_the_signature():
+    """初期資産・賭け金の決め方・戦略プリセットは引数から消えている。"""
+    params = inspect.signature(sim_mod.simulate_active_model).parameters
+    for gone in (
+        "budget",
+        "staking",
+        "strategy",
+        "max_stake_per_race_pct",
+        "max_stake_per_race_yen",
+        "exclude_low_information",
+        "top_n_horses",
+        # 券種ごとの 1 点あたり金額と点数上限も廃止した
+        "stake_unit_by_bet_type",
+        "max_points_per_bet_type",
+    ):
+        assert gone not in params, f"{gone} が残っている"
+    assert "race_budget" in params
 
 
-def test_result_reports_races_that_could_not_be_bet():
-    """破産を黙って隠さない。0 でなければ回収率は途中までしか測れていない。"""
+def test_race_budget_never_depends_on_running_profit():
+    """1 レースの予算は累計損益を参照しない (これが要点)。"""
+    src = inspect.getsource(sim_mod.simulate_active_model)
+    # recommend_for_race に渡るのは引数の race_budget そのもの
+    assert "race_budget=race_budget," in src
+    assert "current_profit" in src  # 損益は積むが…
+    assert "race_budget = " not in src  # …予算の計算には使わない
+
+
+def test_profit_starts_at_zero_in_the_result():
     r = sim_mod.SimulationResult(
-        window_start=None, window_end=None, model_path="x", strategy="balanced", budget=1
+        window_start=None, window_end=None, model_path="x", race_budget=5_000
     )
-    assert r.n_races_broke == 0
-    assert "n_races_broke" in r.as_dict()
-
-
-def test_staking_is_recorded_in_conditions():
-    """後から「定額で測ったのか複利で測ったのか」を判別できること。"""
-    src = inspect.getsource(sim_mod.simulate_active_model)
-    assert '"staking": staking' in src
-
-
-def test_flat_budget_does_not_depend_on_the_running_bankroll():
-    """定額では 1 レースの予算が残資産に連動しないこと（これが要点）。"""
-    src = inspect.getsource(sim_mod.simulate_active_model)
-    # compound の枝だけが current_bankroll を使う
-    flat_branch = src[src.index("if staking == \"compound\":") : src.index("if race_budget < _MIN_STAKE")]
-    else_part = flat_branch[flat_branch.index("else:") :]
-    assert "current_bankroll * max_stake_per_race_pct" not in else_part
-
-
-def test_flat_budget_is_independent_of_the_bankroll():
-    """定額の 1 レース予算が残資産を参照しないこと。
-
-    最初の実装は `min(race_budget, current_bankroll)` で頭打ちにしており、
-    初期資産 10 万円 / 1 レース 5,000 円なら 20 レースで尽きて**複利より早く
-    破産していた**（実測: 1,703 レース中 1,612 で買えず）。定額は「戦略の回収率を
-    測る」ための機能なので、賭け金を資金繰りから切り離す。
-    """
-    src = inspect.getsource(sim_mod.simulate_active_model)
-    flat_branch = src[src.index("else:", src.index('if staking == "compound":')) :]
-    flat_branch = flat_branch[: flat_branch.index("if race_budget < _MIN_STAKE")]
-    assert "current_bankroll" not in flat_branch
+    assert r.final_profit == 0
+    assert r.peak_profit == 0
+    assert r.trough_profit == 0
+    d = r.as_dict()
+    assert d["final_profit"] == 0
+    assert "profit_timeseries" in d
 
 
 def test_required_capital_is_reported():
-    """「いくら用意すれば途中で止まらずに済んだか」を出す。
+    """どれだけ沈む時期があったかは残す (運用上の情報)。
 
-    定額では資産がマイナスになりうるので、その最小値から必要資金を出す。
+    破産は起きない (賭け金が残高に依存しない) が、「途中で最大いくら
+    マイナスだったか」は知りたい。
     """
     r = sim_mod.SimulationResult(
-        window_start=None, window_end=None, model_path="x", strategy="balanced", budget=1
+        window_start=None, window_end=None, model_path="x", race_budget=5_000
     )
-    d = r.as_dict()
-    assert "required_capital" in d
-    assert "trough_bankroll" in d
+    assert r.required_capital == 0
+    assert "required_capital" in r.as_dict()
+
+
+def test_conditions_record_the_budget_and_the_combo_rule():
+    """後から「どの条件で測ったか」を判別できること。"""
+    src = inspect.getsource(sim_mod.simulate_active_model)
+    assert '"race_budget": race_budget' in src
+    assert '"combo_min_hit_prob"' in src

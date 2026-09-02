@@ -38,12 +38,22 @@ export interface RaceSummary {
   name: string | null;
 }
 
+/** 確定払戻 1 行 (100 円あたり)。答え合わせで推奨買目と突き合わせる。 */
+export interface PayoutEntry {
+  bet_type: string;
+  combo: string;
+  amount: number;
+  popularity: number | null;
+}
+
 export interface RaceDetail extends RaceSummary {
   weather: string | null;
   track_condition: string | null;
   entries: EntrySummary[];
   payout_win: number | null;
   payout_place: string | null;
+  /** 全券種の確定払戻。発走前は空。 */
+  payouts?: PayoutEntry[];
 }
 
 export interface UpcomingRacesResponse {
@@ -276,20 +286,15 @@ export interface SettingsResponse {
   scraper_stopped: boolean;
   /** 1 レースに使ってよい上限 (円)。使い切らなくてよい。 */
   race_budget: number;
-  /** 1 点あたりの賭け金 (円)。馬券は 100 円単位。 */
-  stake_unit: number;
-  stake_units: Record<string, number>;
-  enabled_bet_types: BetType[];
   /**
    * 確率モデル（proper scoring rule で学習）のディレクトリ。data/ からの相対でも可。
    * 設定すると複勝の確信度フィルタと連系の確率がこのモデル由来になる。null で無効。
    */
   probability_model_path: string | null;
-  /** 複勝を買う確信度の下限。AI の本命に対する確率モデルの単勝確率がこれ未満なら見送る */
   /** 複勝を買う下限。確率モデルが本命に付けた 3 着内率 */
   place_min_hit_prob: number;
-  /** 連系を 1 券種あたり何点まで買うか。0 で無制限 */
-  max_points_per_bet_type: number;
+  /** 連系を買う的中確率の下限 (券種ごと)。線を超えた買い目だけを買う。 */
+  combo_min_hit_prob: Record<string, number>;
 }
 
 export interface SettingsUpdate {
@@ -300,12 +305,9 @@ export interface SettingsUpdate {
   win_min_odds?: number;
   scraper_stopped?: boolean;
   race_budget?: number;
-  stake_unit?: number;
-  stake_units?: Record<string, number>;
-  enabled_bet_types?: BetType[];
   probability_model_path?: string | null;
   place_min_hit_prob?: number;
-  max_points_per_bet_type?: number;
+  combo_min_hit_prob?: Record<string, number>;
 }
 
 // ── Recommendations ───────────────────────────────────────────────────────────
@@ -347,6 +349,8 @@ export interface RecommendationsResponse {
   race_id: string;
   /** このレースに使ってよい上限 (円)。 */
   race_budget: number;
+  /** 1 点あたりの金額 (円)。賭け金は必ずこの倍数で、stake / stake_unit が点数。 */
+  stake_unit?: number;
   candidates: RecommendationCandidate[];
   /**
    * 'live'    = 当日レースの市場オッズ（entries.odds_win 由来。締切前の単勝オッズ）
@@ -464,8 +468,6 @@ export interface BetBreakdown {
 // ── Simulation (Ledger 「シミュレーション」 タブ) ─────────────────────────────
 
 /** 戦略プリセット (= kelly_fraction + min_ev のラッパー) */
-export type SimulationStrategy = 'conservative' | 'balanced' | 'aggressive';
-
 export interface SimulationGroupStats {
   /** 表示用ラベル: bet_type / race_class / course のいずれか */
   label: string;
@@ -479,9 +481,9 @@ export interface SimulationGroupStats {
 }
 
 /** 日次の資産推移ポイント (グラフ表示用)。 */
-export interface BankrollPoint {
+export interface ProfitPoint {
   date: string;       // YYYY-MM-DD
-  bankroll: number;   // その日の最終 race 後の残高
+  profit: number;     // その日の最終 race 後の累計損益 (0 スタート・マイナスあり)
   invested: number;   // その日の累計 stake
   payout: number;     // その日の累計 payout (整数化)
   n_bets: number;
@@ -492,14 +494,14 @@ export interface SimulationConditions {
   probability_model: string | null;
   /** 複勝を買う確信度の下限。確率モデル未使用なら null */
   place_min_confidence: number | null;
-  exclude_low_information: boolean;
   enabled_bet_types: string[];
   stake_unit_by_bet_type: Record<string, number>;
-  max_stake_per_race_pct: number;
-  max_stake_per_race_yen: number | null;
-  top_n_horses: number;
-  /** flat=1 レースの予算を固定 / compound=残資産の一定割合（破産しうる） */
-  staking?: 'flat' | 'compound';
+  /** 1 レースに使ってよい上限 (円)。使い切る目標ではない。 */
+  race_budget: number;
+  /** 連系の点数の上限 (予算から決まる)。 */
+  max_points_per_bet_type: number;
+  /** 連系を買う的中確率の下限 (券種ごと)。 */
+  combo_min_hit_prob: Record<string, number>;
 }
 
 export interface SimulationResponse {
@@ -507,34 +509,31 @@ export interface SimulationResponse {
   model_path: string;
   /** バックテストに使ったモデル (model_runs.id)。 */
   model_run_id: number | null;
-  strategy: SimulationStrategy;
-  /** 初期資産 (compounding wealth)。各 race ごとに残資産から Kelly stake を計算する。 */
-  budget: number;
+  /** 1 レースに使ってよい上限 (円)。使い切る目標ではない。 */
+  race_budget: number;
   /** 期間内の総 race 数 (stake=0 の race も含む) */
   n_races: number;
   /** finish_position が確定して settle できた race 数 */
   n_settled_races: number;
-  /** 期間終了時の残高 (= budget + 累計 profit、ただし途中で 0 になれば 0)。 */
-  final_bankroll: number;
-  /** 期間中の最高残高。 */
-  peak_bankroll: number;
+  /** 期間終了時の累計損益 (0 スタート)。マイナスならトータル負け。 */
+  final_profit: number;
+  /** 期間中の累計損益の最大値。 */
+  peak_profit: number;
   summary: SimulationGroupStats;
   by_bet_type: SimulationGroupStats[];
   by_race_class: SimulationGroupStats[];
   by_course: SimulationGroupStats[];
-  /** 日次の資産推移 (date 昇順)。 */
-  bankroll_timeseries: BankrollPoint[];
+  /** 日次の損益推移 (date 昇順・0 スタート)。 */
+  profit_timeseries: ProfitPoint[];
   /**
    * この run がどの条件で走ったか。設定を変えて回し直したとき、過去の run が
    * 何の条件だったか分からなくなるのを防ぐために保存している。
    * 古い run（migration 0013 より前）は null = 「条件の記録なし」。
    */
   conditions: SimulationConditions | null;
-  /** 資金不足で 1 点も買えなかったレース数。0 でなければ回収率は途中までしか測れていない */
-  n_races_broke: number;
-  /** 期間中の資産の最小値。定額ではマイナスになりうる */
-  trough_bankroll: number;
-  /** この戦略を最後まで回すのに必要だった資金 */
+  /** 期間中の累計損益の最小値 (マイナスになりうる)。 */
+  trough_profit: number;
+  /** 途中で止まらずに回すのに必要だった資金 (= −trough_profit)。 */
   required_capital: number;
   /** バックエンドが自動保存した row の id。null なら未保存 (旧サーバ互換)。 */
   run_id: number | null;
@@ -547,14 +546,13 @@ export interface SimulationRunSummary {
   created_at: string;
   /** バックテストに使ったモデル (model_runs.id)。 */
   model_run_id: number | null;
-  budget: number;
-  strategy: SimulationStrategy;
+  race_budget: number;
   window_start: string | null;
   window_end: string | null;
   n_races: number;
   n_settled_races: number;
-  final_bankroll: number;
-  peak_bankroll: number;
+  final_profit: number;
+  peak_profit: number;
 }
 
 export interface SimulationRunListResponse {
@@ -565,22 +563,47 @@ export interface SimulationRunListResponse {
 export interface SimulationRequest {
   start?: string;          // YYYY-MM-DD
   end?: string;            // YYYY-MM-DD
-  budget: number;
-  strategy: SimulationStrategy;
-  /** 1 race の累計 stake 絶対上限 (円)。0 / 未指定で無効 (% cap のみ)。 */
-  max_stake_per_race_yen?: number;
+  /**
+   * 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
+   * 実際に賭ける額は複勝の確信度と連系の的中確率の下限が決めるので、
+   * レースごとに変わる。RACE 画面の「使う金額」と同じ意味。
+   */
+  race_budget: number;
   /** 対象モデル (model_runs.id)。未指定で active モデル。 */
   model_id?: number;
-  /** 履歴の無いレース (新馬戦など) を除外する。 */
-  exclude_low_information?: boolean;
   /** この実行だけの対象券種。未指定なら設定値 (RACE 画面と同じ意味)。 */
   bet_types?: string[];
-  /** 連系を組む上位頭数 = 狙い方。未指定なら戦略プリセット。 */
-  top_n_horses?: number;
-  /**
-   * 賭け金の決め方。flat=1 レースの予算を固定（既定）/ compound=残資産の一定割合。
-   * compound は払戻 1.0 未満の券種を数百レース買うと破産し、以降を実質評価しなく
-   * なるため、回収率を測るのが目的なら flat。
-   */
-  staking?: 'flat' | 'compound';
+}
+
+// ── 馬の過去走 ────────────────────────────────────────────────────────────────
+
+/** 出走馬一覧から引く「このレースより前」の 1 走。 */
+export interface HorsePastRun {
+  race_id: string;
+  date: string;
+  course: string;
+  race_name: string | null;
+  race_class: string | null;
+  surface: string;
+  distance: number;
+  track_condition: string | null;
+  n_runners: number | null;
+  post_position: number | null;
+  finish_position: number | null;
+  odds_win: number | null;
+  popularity: number | null;
+  jockey_name: string | null;
+  weight_carried: number | null;
+  horse_weight: number | null;
+  finish_time: number | null;
+  agari_3f: number | null;
+  passing: string | null;
+  margin: string | null;
+}
+
+export interface HorseHistoryResponse {
+  horse_id: string;
+  /** この日より厳密に前の走りだけが入る。 */
+  before: string | null;
+  runs: HorsePastRun[];
 }

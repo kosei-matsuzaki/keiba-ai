@@ -74,38 +74,36 @@ class TestIsPlaceWorthBuying:
 
 def test_points_for_confidence_scales_place_continuously():
     """複勝の点数は確信度に連続で反応する。段階 (x1/x2/x3) より回収率が高く点数も少ない。"""
-    from ai.inference.confidence import points_for_confidence
 
     base = 5
-    assert points_for_confidence("複勝", 0.50, base) == 5      # 基準
-    assert points_for_confidence("複勝", 0.70, base) == 10     # 5 * 1.96
-    assert points_for_confidence("複勝", 0.30, base) == 2      # 5 * 0.36
-    assert points_for_confidence("複勝", 0.95, base) == 15     # 上限で頭打ち
+    assert conf.points_for_confidence("複勝", 0.50, base) == 5      # 基準
+    assert conf.points_for_confidence("複勝", 0.70, base) == 10     # 5 * 1.96
+    assert conf.points_for_confidence("複勝", 0.30, base) == 2      # 5 * 0.36
+    assert conf.points_for_confidence("複勝", 0.95, base) == 15     # 上限で頭打ち
 
 
 def test_points_for_confidence_is_monotonic():
     """単調でないと「確信度が上がったのに賭け金が減る」が起きる。"""
-    from ai.inference.confidence import points_for_confidence
 
-    values = [points_for_confidence("複勝", c / 100, 5) for c in range(1, 100)]
+    values = [conf.points_for_confidence("複勝", c / 100, 5) for c in range(1, 100)]
     assert values == sorted(values)
 
 
-def test_points_for_confidence_leaves_win_and_combo_flat():
-    """単勝と連系は確信度で動かさない。
+def test_points_for_confidence_uses_a_reference_per_bet_type():
+    """券種で確信度の桁が違うので、基準も券種ごとに持つ。
 
-    OOF 実測で単勝は的中率が 6% → 37% と動くのに回収率が動かない (相関 −0.005)。
-    市場が正しく値付けしている以上、賭け金を動かしても取り分は増えない。
+    単勝の確信度は 1 着確率 (中央値 0.18)、複勝は 3 着内率 (0.5 前後)。
+    基準はその券種の典型値に置き、そこで base 点になるようにする。
+    連系は基準表に無い = 1 組合せ 1 点で、何点買うかは的中確率の下限が決める。
     """
-    from ai.inference.confidence import points_for_confidence
-
-    for bet_type in ("単勝", "ワイド", "三連複"):
-        assert points_for_confidence(bet_type, 0.9, 5) == 5
-        assert points_for_confidence(bet_type, 0.1, 5) == 5
-
+    assert conf.points_for_confidence("単勝", 0.25) == 5
+    assert conf.points_for_confidence("複勝", 0.50) == 5
+    # 同じ確信度でも券種が違えば点数は違う (基準が違うため)
+    assert conf.points_for_confidence("単勝", 0.50) > conf.points_for_confidence("複勝", 0.50)
+    # 連系は確信度で動かさない
+    assert conf.points_for_confidence("三連複", 0.9) == conf.points_for_confidence("三連複", 0.01)
 
 def test_points_for_confidence_without_probability_model():
     """確率が取れないときは基準のまま (壊れたときに賭け金が動かないように)。"""
-    from ai.inference.confidence import points_for_confidence
 
-    assert points_for_confidence("複勝", None, 5) == 5
+    assert conf.points_for_confidence("複勝", None, 5) == 5

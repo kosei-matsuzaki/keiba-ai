@@ -70,6 +70,18 @@ export function formatYen(value: number | null | undefined): string {
 }
 
 /**
+ * 符号つきの金額。**損益はプラスかマイナスかが情報**なので符号を必ず出す。
+ * マイナスはハイフンではなく U+2212 (−) を使い、桁区切りと見分けやすくする。
+ */
+export function formatSignedYen(value: number | null | undefined): string {
+  if (!isFinite(value)) return PLACEHOLDER;
+  const n = Number(value);
+  if (n === 0) return '±0 円';
+  const sign = n > 0 ? '+' : '−';
+  return `${sign}${numberFormatter.format(Math.abs(n))} 円`;
+}
+
+/**
  * オッズ表記 (小数 1 桁)。
  * 例: formatOdds(3.1) → "3.1"。
  */

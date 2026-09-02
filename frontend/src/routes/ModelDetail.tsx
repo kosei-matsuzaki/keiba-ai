@@ -13,14 +13,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
-import { formatDateTime, formatPercent, formatScore } from '@/lib/formatters';
+import { formatDateTime, formatScore } from '@/lib/formatters';
 import { formatErrorMessage } from '@/lib/api';
 import {
-  betRuleSummary,
   placeHitLabel,
   readModelMeta,
-  sourceDescription,
-  sourceLabel,
 } from '@/lib/modelMetrics';
 import type { ModelMeta } from '@/types/api';
 
@@ -38,7 +35,6 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 /** モデル 1 件の成績。出所・買い方・評価窓を数字と一緒に出す。 */
 function ModelScoreBand({ model }: { model: ModelMeta }) {
   const m = readModelMeta(model);
-  const rule = betRuleSummary(model.metrics);
   const edge =
     m.logLoss != null && m.marketLogLoss != null ? m.logLoss - m.marketLogLoss : null;
 
@@ -46,14 +42,14 @@ function ModelScoreBand({ model }: { model: ModelMeta }) {
     return (
       <EmptyState
         message="評価がまだ走っていません"
-        description="下のバックテストを実行すると、実運用の賭けルールで測った成績が出ます。"
+        description="下のバックテストを実行すると成績が出ます"
       />
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
-      <MetricBand cols={4}>
+      <MetricBand cols={5}>
         <MetricItem
           title="単勝回収率"
           value={m.paybackWin}
@@ -72,8 +68,15 @@ function ModelScoreBand({ model }: { model: ModelMeta }) {
           title="本命の的中率"
           value={m.top1Hit}
           format="percent"
-          description="予想1位が1着だった割合"
+          description="予想1位が1着"
           hint="的中率が高いほど儲かるとは限らない。人気馬を選べば当たるが配当が小さい"
+        />
+        <MetricItem
+          title="複勝的中率"
+          value={m.placeHit}
+          format="percent"
+          description={placeHitLabel(m.source)}
+          hint="出所で別の量になる (実測は予想1位が3着以内、学習時は上位3頭のうち1頭以上)"
         />
         <MetricItem
           title="確率の質 (log-loss)"
@@ -89,29 +92,6 @@ function ModelScoreBand({ model }: { model: ModelMeta }) {
         />
       </MetricBand>
 
-      <p className="px-1 text-xs text-subtle-foreground">
-        <span className="mr-2 rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-          {sourceLabel(m.source)}
-        </span>
-        {[
-          sourceDescription(m.source),
-          m.nRaces != null ? `${m.nRaces.toLocaleString()} レース` : null,
-          m.evalRange,
-          rule,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </p>
-
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-border px-1 pt-3 text-sm">
-        <span className="text-muted-foreground">順位精度 NDCG@3</span>
-        <span className="tabular-nums">{m.ndcg3 != null ? formatScore(m.ndcg3) : '未算出'}</span>
-        <span className="text-muted-foreground">複勝的中率</span>
-        <span className="tabular-nums">
-          {m.placeHit != null ? formatPercent(m.placeHit) : '未算出'}
-        </span>
-        <span className="text-xs text-subtle-foreground">（{placeHitLabel(m.source)}）</span>
-      </div>
     </div>
   );
 }
@@ -148,7 +128,7 @@ export function ModelDetail() {
 
   return (
     <div className="flex flex-col gap-8 p-6">
-      <PageHeader eyebrow="Model Detail" title={title} description="モデル詳細とバックテスト">
+      <PageHeader eyebrow="Model Detail" title={title}>
         <Button variant="outline" size="sm" asChild>
           <Link to="/">
             <ArrowLeft className="mr-1.5 h-4 w-4" />
@@ -167,7 +147,7 @@ export function ModelDetail() {
         />
       ) : (
         <>
-          <Card className="border-t border-border pt-6">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
               <CardTitle className="flex items-center gap-3 text-base">
                 {title}

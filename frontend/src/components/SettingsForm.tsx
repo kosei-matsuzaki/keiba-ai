@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { useForm, useController } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 
@@ -7,17 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/cn';
-import { ALL_BET_TYPES, type SelectableBetType } from '@/lib/betTypes';
+import { COMBO_BET_TYPES } from '@/lib/betTypes';
 import type { SettingsResponse, SettingsUpdate } from '@/types/api';
-
-// 枠連は AI が買い目を生成しないので選択肢に無い (lib/betTypes.ts)。
-// 旧 settings.json に残っていてもバックエンドが読み込み時に落とす。
-const betTypeEnum = z.enum(['単勝', '複勝', '馬連', 'ワイド', '馬単', '三連複', '三連単']);
-
-/** 保存済み設定に選択できない券種 (枠連) が残っていても落として読み込む。 */
-function selectableBetTypes(saved: readonly string[]): SelectableBetType[] {
-  return ALL_BET_TYPES.filter((b) => saved.includes(b));
-}
 
 const schema = z
   .object({
@@ -27,37 +18,26 @@ const schema = z
     night_min_seconds: z.coerce.number().min(0, '0 以上の値を入力してください'),
     win_min_odds: z.coerce.number().min(1.0, '1.0 以上の値を入力してください'),
     // 確率モデルの割り当ては Models 画面で行うので、ここでは扱わない。
-    max_points_per_bet_type: z.coerce
-      .number()
-      .int()
-      .min(0, '0 以上で指定してください')
-      .optional(),
     place_min_hit_prob: z.coerce
       .number()
       .min(0, '0 以上の値を入力してください')
       .max(1, '1 以下の値を入力してください'),
     scraper_stopped: z.boolean(),
-    // 賭け金は「1 レースにいくらまで」と「1 点いくら（券種ごと）」
+    // 賭け金の設定は「1 レースにいくらまで」だけ。1 点 = 100 円は固定で、
+    // 何点買うかは確信度が決めるので、券種ごとの金額も券種の選択も設定に無い。
     race_budget: z.coerce
       .number()
       .int('整数で入力してください')
       .min(100, '100 以上の値を入力してください'),
-    stake_unit: z.coerce
-      .number()
-      .int('整数で入力してください')
-      .min(100, '100 以上の値を入力してください')
-      .refine((v) => v % 100 === 0, '100 円単位で入力してください'),
-    stake_units: z.record(
+    // **画面は % で扱う。** 0.075 と書かせるより 7.5% の方が読み書きしやすい。
+    // API は 0〜1 なので toForm / submit で 100 倍・1/100 する。
+    combo_min_hit_prob: z.record(
       z.string(),
       z.coerce
         .number()
-        .int('整数で入力してください')
         .min(0, '0 以上の値を入力してください')
-        .refine((v) => v % 100 === 0, '100 円単位で入力してください')
+        .max(100, '100 以下の値を入力してください')
     ),
-    enabled_bet_types: z
-      .array(betTypeEnum)
-      .min(1, '1 つ以上の馬券種を選択してください'),
   })
   .refine((d) => d.rate_max_seconds >= d.rate_min_seconds, {
     message: 'rate_max は rate_min 以上にしてください',
@@ -66,7 +46,7 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
-export type SettingsSection = 'scraper' | 'betting' | 'bet_types';
+export type SettingsSection = 'scraper' | 'betting';
 
 interface SettingsFormProps {
   defaults: SettingsResponse;
@@ -79,15 +59,16 @@ interface SettingsFormProps {
 export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: SettingsFormProps) {
   const toForm = (d: SettingsResponse) => ({
     ...d,
-    enabled_bet_types: selectableBetTypes(d.enabled_bet_types),
+    // 連系の下限だけ % 表示にする (0.075 → 7.5)
+    combo_min_hit_prob: Object.fromEntries(
+      Object.entries(d.combo_min_hit_prob ?? {}).map(([k, v]) => [k, +(v * 100).toFixed(2)])
+    ),
   });
 
   const {
     register,
     handleSubmit,
     reset,
-    control,
-    watch,
     formState: { errors, isDirty, dirtyFields },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -98,29 +79,15 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
     reset(toForm(defaults));
   }, [defaults, reset]);
 
-  const { field: enabledBetTypesField } = useController({
-    name: 'enabled_bet_types',
-    control,
-  });
-
-  // 予算と 1 点あたりの額から「最大何点買えるか」を出す
-  const watchedBudget = watch('race_budget');
-  const watchedUnit = watch('stake_unit');
-  const maxPoints =
-    Number.isFinite(Number(watchedBudget)) && Number(watchedUnit) > 0
-      ? Math.floor(Number(watchedBudget) / Number(watchedUnit))
-      : null;
-
-  function toggleBetType(betType: SelectableBetType) {
-    const current = enabledBetTypesField.value;
-    const next = current.includes(betType)
-      ? current.filter((t) => t !== betType)
-      : [...current, betType];
-    enabledBetTypesField.onChange(next);
-  }
 
   function submit(values: FormValues) {
-    onSubmit(values);
+    onSubmit({
+      ...values,
+      // % で受け取った値を API の 0〜1 に戻す
+      combo_min_hit_prob: Object.fromEntries(
+        Object.entries(values.combo_min_hit_prob ?? {}).map(([k, v]) => [k, Number(v) / 100])
+      ),
+    });
   }
 
   // dirty 件数をフッターに表示
@@ -134,13 +101,12 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
     <form onSubmit={handleSubmit(submit)} className="flex flex-col gap-6" noValidate>
       <div className="flex flex-col gap-6">
         <Section
-          description="netkeiba へのアクセス頻度と User-Agent。レート制御を緩めると検出リスクが上がります。"
           hidden={!visible('scraper')}
         >
               <FieldRow
                 label="User-Agent"
                 id="user_agent"
-                help="netkeiba へ送信するブラウザ identification 文字列"
+                help="netkeiba に名乗る文字列。連絡先を入れておく"
                 error={errors.user_agent?.message}
               >
                 <Input id="user_agent" {...register('user_agent')} />
@@ -190,14 +156,13 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
         </Section>
 
         <Section
-          description="1 レースに使う金額、単勝を見送るオッズの下限、複勝を買う確信度。買い目は期待値ではなく「的中確率の高い順」に選びます（期待値で絞ると大穴に寄って回収率が落ちることが実測で分かっているため）。"
           hidden={!visible('betting')}
         >
               <div className="flex flex-col gap-4">
                 <FieldRow
                   label="複勝を買う確信度の下限"
                   id="place_min_hit_prob"
-                  help="確率モデル（Dashboard で設定）が AI の本命に与える 3 着内率がこの値を下回るレースでは、複勝を見送ります。0 にすると全レースで買います。上げるほど買うレースは減り、的中率は上がります（実測: 0.60 で買う割合 25%・回収率 0.907）。確率モデル未設定なら効きません。"
+                  help="本命の 3 着内率がこれ未満なら複勝を見送る。0 で全レース購入"
                   error={errors.place_min_hit_prob?.message}
                 >
                   <Input
@@ -208,23 +173,9 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   />
                 </FieldRow>
                 <FieldRow
-                  label="連系を何点まで買うか"
-                  id="max_points_per_bet_type"
-                  help="券種ごとの上限。予算が余っていてもここで止めます（予算は上限であって使い切る目標ではありません）。買い目は的中確率の高い順なので、深く買うほど当たりにくい買い目に金を足すことになります。実測では上位 2 点で止めると連系に使う金が 44% になり、回収率は 0.877 → 0.898。0 で無制限。単勝・複勝は元から 1 点なので影響しません。"
-                  error={errors.max_points_per_bet_type?.message}
-                >
-                  <Input
-                    id="max_points_per_bet_type"
-                    type="number"
-                    step="1"
-                    min="0"
-                    {...register('max_points_per_bet_type')}
-                  />
-                </FieldRow>
-                <FieldRow
                   label="単勝のオッズ下限"
                   id="win_min_odds"
-                  help="単勝は AI の本命（予想 1 位）を買うルールです。ここを下回るオッズのときだけ見送ります。期待値で絞ると大穴に寄って回収率が落ちるため、期待値条件は使いません。"
+                  help="単勝はこれ以下のオッズのときだけ見送る"
                   error={errors.win_min_odds?.message}
                 >
                   <Input
@@ -242,7 +193,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 <FieldRow
                   label="1 レースに使う上限"
                   id="race_budget"
-                  help="1 レースに使ってよい金額の上限です。買う買い目が少なければ、ここまで使わずに終わります（1 点も買わないこともあります）。"
+                  help="使ってよい上限。使い切る目標ではない"
                   error={errors.race_budget?.message}
                 >
                   <div className="flex items-center gap-2">
@@ -258,82 +209,35 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                   </div>
                 </FieldRow>
 
+
                 <FieldRow
-                  label="1 点あたりの賭け金（既定）"
-                  id="stake_unit"
-                  help={`券種ごとの指定が無いときに使う金額です。馬券は 100 円単位でしか買えません。${
-                    maxPoints != null ? `いまの設定なら 1 レース最大 ${maxPoints} 点まで。` : ''
-                  }`}
-                  error={errors.stake_unit?.message}
+                  label="連系を買う的中確率の下限"
+                  id="combo_min_hit_prob"
+                  help="これを超えた買い目だけ買う。超えた数だけ買うので点数はレースごとに変わる"
+                  error={errors.combo_min_hit_prob?.root?.message}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-subtle-foreground">¥</span>
-                    <Input
-                      id="stake_unit"
-                      type="number"
-                      step="100"
-                      min="100"
-                      className="text-right font-mono tabular-nums"
-                      {...register('stake_unit')}
-                    />
+                  <div className="flex flex-col gap-2">
+                    {COMBO_BET_TYPES.map((betType) => (
+                      <div key={betType} className="flex items-center gap-2">
+                        <span className="w-14 shrink-0 text-xs text-subtle-foreground">
+                          {betType}
+                        </span>
+                        <Input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="100"
+                          aria-label={`${betType} を買う的中確率の下限`}
+                          className="text-right font-mono tabular-nums"
+                          {...register(`combo_min_hit_prob.${betType}` as const)}
+                        />
+                        <span className="w-4 shrink-0 text-xs text-subtle-foreground">%</span>
+                      </div>
+                    ))}
                   </div>
                 </FieldRow>
               </div>
 
-        </Section>
-
-        <Section
-          description="ふだん買う馬券の種類と、その 1 点あたりの金額。ここで外した券種は推奨買目に出ません（レースごとに変えたいときは、レース詳細の「この予想の条件」で切り替えられます）。"
-          hidden={!visible('bet_types')}
-        >
-              <div className="flex flex-col gap-3">
-                <p className="text-xs text-muted-foreground">
-                  単勝・複勝は AI の本命を買うルールで、回収率の実測（0.93 / 0.89）が
-                  安定していて市場のベースラインを上回ります。連系は同じ検証では点数が少なく
-                  推定が定まらないため、既定では薄く配分しています。金額を空欄にすると
-                  「1 点あたりの賭け金（既定）」が使われます。
-                </p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {ALL_BET_TYPES.map((betType) => {
-                    const isSelected = enabledBetTypesField.value.includes(betType);
-                    return (
-                      <div
-                        key={betType}
-                        className="flex items-center gap-2 border-b border-border pb-2"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleBetType(betType)}
-                          aria-pressed={isSelected}
-                          className={cn(
-                            'flex h-9 w-16 shrink-0 items-center justify-center rounded-sm border text-sm transition-colors',
-                            isSelected
-                              ? 'border-primary bg-primary/10 text-primary'
-                              : 'border-border bg-transparent text-subtle-foreground hover:border-border-strong hover:text-foreground',
-                          )}
-                        >
-                          {betType}
-                        </button>
-                        <span className="font-mono text-xs text-subtle-foreground">¥</span>
-                        <Input
-                          type="number"
-                          step="100"
-                          min="0"
-                          disabled={!isSelected}
-                          aria-label={`${betType} の 1 点あたりの賭け金`}
-                          className="text-right font-mono tabular-nums"
-                          {...register(`stake_units.${betType}` as const)}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-                {errors.enabled_bet_types?.message && (
-                  <p className="text-xs text-destructive">
-                    {errors.enabled_bet_types.message}
-                  </p>
-                )}
-              </div>
         </Section>
 
       </div>
@@ -380,7 +284,7 @@ function Section({ description, children, hidden = false }: SectionProps) {
   return (
     <div className={cn('flex flex-col gap-4', hidden && 'hidden')}>
       {description && (
-        <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
+        <p className="text-xs text-subtle-foreground">{description}</p>
       )}
       {/* 行の区切りは FieldRow 側の border-b が持つので、ここでは間隔を空けない */}
       <div>{children}</div>
@@ -404,16 +308,19 @@ interface FieldRowProps {
  */
 function FieldRow({ label, id, help, error, children }: FieldRowProps) {
   return (
-    <div className="grid gap-1.5 border-b border-border py-4 sm:grid-cols-[14rem_minmax(0,1fr)] sm:gap-6">
+    <div className="grid gap-1.5 border-b border-border py-3 sm:grid-cols-[minmax(0,1fr)_20rem] sm:gap-8">
       <div>
+        {/* **説明は畳まず、短く書く。** 設定値は「何を意味する数字か」が
+            分からないと入力できないので、ホバーに隠すと使えない。
+            長い理由や実測値は docs に置き、ここは 1 行に収める。 */}
         <Label htmlFor={id} className="text-[13px] font-medium">
           {label}
         </Label>
-        {help && !error && (
-          <p className="mt-1 text-xs leading-relaxed text-subtle-foreground">{help}</p>
-        )}
+        {help && <p className="mt-0.5 text-xs text-subtle-foreground">{help}</p>}
       </div>
-      <div className="max-w-md">
+      {/* 入力は右端に揃える。説明文は長さがまちまちなので、左を伸ばして
+          入力の左端が揃わないと「どこに書くか」を毎回探すことになる。 */}
+      <div className="w-full sm:justify-self-end">
         {children}
         {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
       </div>

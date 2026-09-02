@@ -16,6 +16,7 @@ import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
 import { useRunShutuba } from '@/hooks/useRunShutuba';
 import { useSettings } from '@/hooks/useSettings';
+import { HorsePastRuns } from '@/components/HorsePastRuns';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
 import type { RecommendationOverrides } from '@/components/RecommendationParamsBar';
 import { EmptyState } from '@/components/EmptyState';
@@ -35,7 +36,6 @@ import {
 } from '@/components/ui/table';
 import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
 import { formatOdds, formatPercent, formatRatio, formatScore, formatYen } from '@/lib/formatters';
-import { labelClass } from '@/lib/labels';
 import { toast } from '@/components/ui/toast';
 import type { EntrySummary, HorsePrediction, RaceInfoCoverage } from '@/types/api';
 
@@ -81,23 +81,6 @@ function useWinMinOdds(): number {
   const settings = useSettings();
   const v = settings.data?.win_min_odds;
   return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_WIN_MIN_ODDS;
-}
-
-/**
- * 単勝の推奨は「**モデル 1 位の馬**をオッズ下限より上のときに買う」。
- *
- * EV > 閾値 ではない。較正済み確率で EV フィルタを掛けると、平坦な確率 × 大穴
- * オッズで偽の期待値が量産され回収率が 0.931 → 0.698 まで落ちる (test 19ヶ月実測)。
- * バックエンドの推奨ロジック (strategy.recommend_for_race の win_min_odds) と同じ規則。
- */
-function isBuy(
-  entry: EntrySummary | undefined,
-  isTopPick: boolean,
-  minOdds: number,
-): boolean {
-  if (!isTopPick) return false;
-  const odds = entry?.odds_win;
-  return odds != null && odds > minOdds;
 }
 
 /**
@@ -231,18 +214,19 @@ function SortableHeader({ label, sortKey, sort, onSort, className, title }: Sort
 
 const EV_FORMULA = 'EV = 単勝確率 × 単勝オッズ（1.0 = 収支トントン）';
 
+/** 参考 EV 列のツールチップ。**買う判断には使っていない**ことだけ伝える。 */
 function buyTooltip(minOdds: number): string {
   return (
-    `${EV_FORMULA}。BUY は「モデル1位の馬（オッズ ${minOdds} 超）」に出しています。` +
-    'EV が 1.0 を超えた馬ではありません — 較正済み確率で EV 条件にすると大穴を' +
-    '買い込んで回収率が 0.931→0.698 に落ちるためです。本番モデルの OOS 単勝回収率は' +
-    ' 0.931（人気1番 0.792 を上回るが依然 1.0 未満＝平均では負け越し）。参考値。'
+    `${EV_FORMULA}。参考値で、買う判断には使っていません` +
+    `（単勝は「モデル1位の馬・オッズ ${minOdds} 超」で買います）。`
   );
 }
 
 interface EntryPredictionTableProps {
   entries: EntrySummary[];
   predictions: HorsePrediction[] | null;
+  /** このレースの開催日。過去走はこれより**厳密に前**だけを出す。 */
+  raceDate: string;
 }
 
 /**
@@ -256,23 +240,10 @@ function Pending() {
   return <span className="text-subtle-foreground/50">·</span>;
 }
 
-/**
- * 確率セル。数値の背後にバーを敷いて、18 頭の分布が一目で分かるようにする。
- * これで表が「データ表」から「可視化」になる。
- */
+/** 確率セル。**数値だけ**を出す (背後のバーは見比べの役に立たず、目が散る)。 */
 function ProbCell({ value }: { value: number | null | undefined }) {
   if (value == null || !Number.isFinite(value)) return <Pending />;
-  const pct = Math.max(0, Math.min(1, value)) * 100;
-  return (
-    <div className="relative flex justify-end">
-      <div
-        aria-hidden="true"
-        className="absolute inset-y-1 right-0 bg-primary/15"
-        style={{ width: `${pct}%` }}
-      />
-      <span className="relative px-1">{formatPercent(value)}</span>
-    </div>
-  );
+  return <span>{formatPercent(value)}</span>;
 }
 
 /**
@@ -293,7 +264,23 @@ function ProbCell({ value }: { value: number | null | undefined }) {
  * Clicking a sortable column header toggles sort direction.
  * null / NaN values always sort to the bottom regardless of direction.
  */
-function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProps) {
+function EntryPredictionTable({
+  entries,
+  predictions,
+  raceDate,
+}: EntryPredictionTableProps) {
+  // 開いている馬。**複数開ける** — 何頭かの前走を見比べるのが実際の使い方なので。
+  const [openHorses, setOpenHorses] = useState<Set<string>>(new Set());
+
+  function toggleHorse(horseId: string) {
+    setOpenHorses((prev) => {
+      const next = new Set(prev);
+      if (next.has(horseId)) next.delete(horseId);
+      else next.add(horseId);
+      return next;
+    });
+  }
+
   const defaultSort: SortState = predictions
     ? { key: 'score', dir: 'desc' }
     : { key: 'post_position', dir: 'asc' };
@@ -406,12 +393,15 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
         </TableRow>
       </TableHeader>
       <TableBody>
-        {sortedRows.map(({ entry, pred }) => {
-          return (
+        {sortedRows.flatMap(({ entry, pred }) => {
+          const open = openHorses.has(entry.horse_id);
+          return [
             <TableRow
               key={entry.horse_id}
               // bg-background は sticky セルの bg-inherit の土台 (hover もここで切替わる)
-              className="bg-background hover:bg-card-elevated"
+              className="cursor-pointer bg-background hover:bg-card-elevated"
+              onClick={() => toggleHorse(entry.horse_id)}
+              title="クリックでこの馬の過去走を開く"
             >
               {/* ── 識別 ── */}
               {/* 横スクロールしても «どの馬か» を見失わないよう馬番・馬名を固定 */}
@@ -419,9 +409,19 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
                 <Umaban n={entry.post_position} runners={runners} />
               </TableCell>
               <TableCell className="sticky left-12 z-10 bg-inherit">
-                {entry.horse_name ?? (
-                  <span className="font-mono text-xs text-muted-foreground">{entry.horse_id}</span>
-                )}
+                <span className="inline-flex items-center gap-1.5">
+                  <ChevronRight
+                    className={`h-3 w-3 shrink-0 text-subtle-foreground transition-transform ${
+                      open ? 'rotate-90' : ''
+                    }`}
+                    aria-hidden="true"
+                  />
+                  {entry.horse_name ?? (
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {entry.horse_id}
+                    </span>
+                  )}
+                </span>
               </TableCell>
               {/* ── AI の根拠 ── 買う順序を決めているのは確率。EV は参考値なので最後 */}
               <TableCell className={`cell-num ${AI_SURFACE}`}>
@@ -477,8 +477,18 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
                   <Pending />
                 )}
               </TableCell>
-            </TableRow>
-          );
+            </TableRow>,
+            // 開いた行の下に、このレース日より前の走りを出す
+            ...(open
+              ? [
+                  <TableRow key={`${entry.horse_id}-past`} className="bg-card-elevated/40">
+                    <TableCell colSpan={20} className="px-4 py-2">
+                      <HorsePastRuns horseId={entry.horse_id} before={raceDate} />
+                    </TableCell>
+                  </TableRow>,
+                ]
+              : []),
+          ];
         })}
       </TableBody>
     </Table>
@@ -498,236 +508,24 @@ function EntryPredictionTable({ entries, predictions }: EntryPredictionTableProp
  */
 function LowInformationNotice({ coverage }: { coverage: RaceInfoCoverage }) {
   return (
-    <Card className="border-warning/50 bg-warning/5">
-      <CardContent className="flex items-start gap-3 py-4">
+    <Card boxed className="border-warning/50 bg-warning/5">
+      <CardContent className="flex items-start gap-3 p-4">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
         <div className="flex flex-col gap-1">
           <p className="text-sm font-medium text-foreground">
             このレースは判断材料が少なめです
           </p>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            出走 {coverage.n_runners} 頭のうち <strong>{coverage.n_debut} 頭に過去走がありません</strong>
-            （1 頭あたり平均 {coverage.mean_starts} 走）。AI が重く使っている「前走までの
-            着順・上がり・脚質」がほとんど無いため、枠順・馬体重・騎手・血統・オッズだけで
-            予想しています。参考程度にしてください。
+          <p
+            className="text-xs text-muted-foreground"
+            title="AI が重く使う「前走までの着順・上がり・脚質」がほとんど無く、枠順・馬体重・騎手・血統・オッズだけで予想しています。"
+          >
+            出走 {coverage.n_runners} 頭のうち{' '}
+            <strong>{coverage.n_debut} 頭に過去走がありません</strong>
+            （平均 {coverage.mean_starts} 走）。参考程度に。
           </p>
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-/**
- * 買い方を 1 箇所で説明する。
- *
- * 以前は「BUY バッジの説明」「オッズの出所」「確信度」「買い目の並び順」が別々の
- * 注記として散らばり、EV / 期待値 / 確信度 / 的中確率 が混在していた。読む側は
- * **どの数字がどの判断に使われるのか**を知りたいので、券種ごとに条件と金額を並べ、
- * 使う数字を 2 つに絞って示す。
- */
-function BettingRuleNote() {
-  const minOdds = useWinMinOdds();
-  return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 text-xs">
-      <p className={labelClass('mb-0')}>買い方</p>
-      <table className="w-full max-w-2xl text-left">
-        <thead className="text-subtle-foreground">
-          <tr>
-            <th className="py-0.5 pr-4 font-normal">券種</th>
-            <th className="py-0.5 pr-4 font-normal">買う条件</th>
-            <th className="py-0.5 font-normal">点数</th>
-          </tr>
-        </thead>
-        <tbody className="text-muted-foreground">
-          <tr>
-            <td className="py-0.5 pr-4 text-foreground">単勝</td>
-            <td className="py-0.5 pr-4">モデル1位の馬。オッズ {minOdds} 倍超のときだけ</td>
-            <td className="py-0.5">1 点</td>
-          </tr>
-          <tr>
-            <td className="py-0.5 pr-4 text-foreground">複勝</td>
-            <td className="py-0.5 pr-4">モデル1位の馬。確信度が下限以上のとき</td>
-            <td className="py-0.5">確信度が高いほど厚く (1〜3 倍)</td>
-          </tr>
-          <tr>
-            <td className="py-0.5 pr-4 text-foreground">連系</td>
-            <td className="py-0.5 pr-4">上位数頭の組合せを、的中確率の高い順に</td>
-            <td className="py-0.5">券種ごとに上位数点まで</td>
-          </tr>
-        </tbody>
-      </table>
-      <p className="text-subtle-foreground">
-        使う数字は 2 つだけです。<strong className="font-medium">的中確率</strong>
-        （その馬・その組合せが当たる確率。買う順序を決める）と
-        <strong className="font-medium">確信度</strong>
-        （確率専用モデルが「モデル1位の馬は3着以内」と見た確率。複勝の可否と厚みを決める）。
-        <span className="ml-1">
-          期待値（EV）は買う判断に使っていません — 較正済みの確率で EV を条件にすると
-          大穴に寄り、実測で単勝回収率が 0.93 → 0.70 に落ちるためです。表の「参考EV」は
-          値を見せているだけです。
-        </span>
-      </p>
-      <p className="text-subtle-foreground">
-        <strong className="font-medium">予算は上限であって、使い切る目標ではありません。</strong>
-        連系は的中確率の高い順に並ぶので、深く買うほど当たりにくい買い目に金を足すことに
-        なります（実測 5,404 レース: 1 点目の的中率 15.5% → 10 点目 3.7%）。上位数点で
-        止めると、連系に使う金が半分以下になって回収率は同じかやや良くなります。
-      </p>
-      <p className="text-subtle-foreground">
-        実測の回収率は単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.85〜0.88。
-        <strong className="font-medium">いずれも 1.0 未満</strong>で、控除率の内側です。
-      </p>
-    </div>
-  );
-}
-
-/**
- * 結論。表を読ませる前に AI の推奨を数行で出す (B-4 ①)。
- * 「18 頭 × 13 列のどこを見ればいいか」を最初に解決する。
- */
-function ConclusionCard({
-  entries,
-  predictions,
-}: {
-  entries: EntrySummary[];
-  predictions: HorsePrediction[] | null;
-}) {
-  const runners = entries.length;
-  const minOdds = useWinMinOdds();
-  const picks = useMemo(() => {
-    if (!predictions || predictions.length === 0) return [];
-    const byId = new Map(entries.map((e) => [e.horse_id, e]));
-    const topId = predictions.reduce((a, b) => (b.score > a.score ? b : a)).horse_id;
-    return predictions
-      .map((pred) => ({ pred, entry: byId.get(pred.horse_id) }))
-      .filter((r) => r.entry && isBuy(r.entry, r.pred.horse_id === topId, minOdds));
-  }, [entries, predictions, minOdds]);
-
-  if (!predictions) return null;
-
-  if (picks.length === 0) {
-    return (
-      <div className="border-y border-border py-4">
-        <p className="text-label-ja mb-1">推奨</p>
-        <p className="text-sm text-muted-foreground">
-          単勝 EV が 1.1 を超える馬はいません。このレースは見送りが妥当です。
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="border-y border-border py-4">
-      <p className="text-label-ja mb-2">推奨</p>
-      <ul className="flex flex-col gap-2">
-        {picks.slice(0, 3).map(({ pred, entry }) => (
-          <li key={pred.horse_id} className="flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span className="flex items-center gap-2">
-              <Umaban n={entry!.post_position} runners={runners} />
-              <span className="font-medium">{entry!.horse_name ?? entry!.horse_id}</span>
-            </span>
-            <span className="text-sm" title={EV_FORMULA}>
-              <span className="text-label">単勝EV</span>{' '}
-              <span className="font-mono font-medium tabular-nums text-success">
-                {formatRatio(winEv(pred, entry))}
-              </span>
-            </span>
-            <span className="text-sm">
-              <span className="text-label">単勝確率</span>{' '}
-              <span className="font-mono tabular-nums">{formatPercent(pred.win_prob)}</span>
-            </span>
-            <span className="text-sm">
-              <span className="text-label">オッズ</span>{' '}
-              <span className="font-mono tabular-nums text-primary">
-                {formatOdds(entry!.odds_win)}
-              </span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/**
- * レース後の答え合わせ (B-4 ⑤)。推奨した馬がどうだったかを回収率で出す。
- * 着順精度ではなく回収率で評価する、というこのモデルの設計と一致させる。
- */
-function ResultReviewCard({
-  entries,
-  predictions,
-  payoutWin,
-}: {
-  entries: EntrySummary[];
-  predictions: HorsePrediction[] | null;
-  payoutWin: number | null;
-}) {
-  const minOdds = useWinMinOdds();
-  const review = useMemo(() => {
-    if (!predictions || predictions.length === 0) return null;
-    const byId = new Map(entries.map((e) => [e.horse_id, e]));
-    const topId = predictions.reduce((a, b) => (b.score > a.score ? b : a)).horse_id;
-    const picks = predictions
-      .map((pred) => ({ pred, entry: byId.get(pred.horse_id) }))
-      .filter((r) => r.entry && isBuy(r.entry, r.pred.horse_id === topId, minOdds));
-    if (picks.length === 0) return null;
-
-    const finished = picks.filter((r) => r.entry?.finish_position != null);
-    if (finished.length === 0) return null;
-
-    const winners = finished.filter((r) => r.entry!.finish_position === 1);
-    const placed = finished.filter((r) => (r.entry!.finish_position ?? 99) <= 3);
-    // 単勝を各 100 円ずつ買った場合の回収率。payout_win は 100 円あたりの払戻。
-    const invested = picks.length * 100;
-    const returned = winners.length > 0 && payoutWin != null ? payoutWin * winners.length : 0;
-    return {
-      picks: picks.length,
-      winners: winners.length,
-      placed: placed.length,
-      roi: invested > 0 ? returned / invested : null,
-      returned,
-      winnerNames: winners.map((r) => r.entry!.horse_name ?? r.entry!.horse_id),
-    };
-  }, [entries, predictions, payoutWin, minOdds]);
-
-  if (!review) return null;
-
-  const hit = review.winners > 0;
-  return (
-    <div className="border-y border-border py-4">
-      <p className="text-label-ja mb-2">答え合わせ</p>
-      <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2 text-sm">
-        <span>
-          推奨 <span className="font-mono tabular-nums">{review.picks}</span> 頭中{' '}
-          <span className={hit ? 'font-medium text-success' : 'text-muted-foreground'}>
-            {review.winners}
-          </span>{' '}
-          頭が1着 / <span className="font-mono tabular-nums">{review.placed}</span> 頭が3着以内
-        </span>
-        {hit && review.returned > 0 && (
-          <span>
-            <span className="text-label">単勝払戻</span>{' '}
-            <span className="font-mono tabular-nums text-primary">{formatYen(review.returned)}</span>
-          </span>
-        )}
-        {review.roi != null && (
-          <span>
-            <span className="text-label">この予想の回収率</span>{' '}
-            <span
-              className={`font-mono text-lg font-medium tabular-nums ${
-                review.roi >= 1 ? 'text-success' : 'text-destructive'
-              }`}
-            >
-              {formatPercent(review.roi, 0)}
-            </span>
-          </span>
-        )}
-      </div>
-      <p className="mt-2 text-xs leading-relaxed text-subtle-foreground">
-        推奨した馬の単勝を各 100 円ずつ買った場合の回収率です（100% = 収支トントン）。
-        {hit && review.winnerNames.length > 0 && ` 的中: ${review.winnerNames.join('・')}`}
-      </p>
-    </div>
   );
 }
 
@@ -743,7 +541,7 @@ function formatClock(d: Date): string {
 function RunProgress({ stage }: { stage: 'entries' | 'predict' }) {
   const label = stage === 'entries' ? '出馬表を取得中…' : '予想を計算中…';
   return (
-    <div className="border-y border-border py-3">
+    <div className="py-3">
       <div className="flex items-center gap-3">
         <div className="h-1 flex-1 overflow-hidden rounded-full bg-card-elevated">
           <div
@@ -753,11 +551,6 @@ function RunProgress({ stage }: { stage: 'entries' | 'predict' }) {
         </div>
         <span className="font-mono text-[11px] tabular-nums text-primary">{label}</span>
       </div>
-      {stage === 'entries' && (
-        <p className="mt-1.5 text-xs text-subtle-foreground">
-          この実行はバックエンドを再起動すると追跡できなくなります。
-        </p>
-      )}
     </div>
   );
 }
@@ -1075,20 +868,10 @@ export function RaceDetail() {
         </Card>
       )}
 
-      {/* 結論 → 答え合わせ → 根拠(表) の順。表を読ませる前に結論を出す */}
-      {hasEntries && aiRequested && !predQuery.isPending && !predQuery.isError && (
-        <>
-          {infoCoverage?.is_low_information && (
-            <LowInformationNotice coverage={infoCoverage} />
-          )}
-          <ConclusionCard entries={race.entries} predictions={predictions} />
-          <ResultReviewCard
-            entries={race.entries}
-            predictions={predictions}
-            payoutWin={race.payout_win}
-          />
-        </>
-      )}
+      {hasEntries && aiRequested && !predQuery.isPending && !predQuery.isError &&
+        infoCoverage?.is_low_information && (
+          <LowInformationNotice coverage={infoCoverage} />
+        )}
 
       {/* 推奨買目も表より上に置く */}
       {hasEntries && aiRequested && (
@@ -1101,6 +884,7 @@ export function RaceDetail() {
           runners={race.entries.length}
           overrides={overrides}
           onOverridesChange={setOverrides}
+          payouts={race.payouts ?? []}
         />
       )}
 
@@ -1116,10 +900,13 @@ export function RaceDetail() {
               // 上部の「AI 予想を実行」ボタンでスコア + 推奨を取得する。
               <>
                 <p className="mb-3 text-sm text-muted-foreground">
-                  「予想を見る」で予想スコア（単勝/複勝確率）と推奨買い目を取得します。
+                  「予想を見る」で確率と買い目を出します。
                 </p>
-                <EntryPredictionTable entries={race.entries} predictions={null} />
-                <BettingRuleNote />
+                <EntryPredictionTable
+                  entries={race.entries}
+                  predictions={null}
+                  raceDate={race.date}
+                />
               </>
             ) : predQuery.isPending ? (
               <TableSkeleton rows={race.entries.length || 8} />
@@ -1130,13 +917,19 @@ export function RaceDetail() {
                     ? 'active モデルが見つかりません。予想スコア列は非表示です。'
                     : '予想データを取得できません。予想スコア列は非表示です。'}
                 </p>
-                <EntryPredictionTable entries={race.entries} predictions={null} />
-                <BettingRuleNote />
+                <EntryPredictionTable
+                  entries={race.entries}
+                  predictions={null}
+                  raceDate={race.date}
+                />
               </>
             ) : (
               <>
-                <EntryPredictionTable entries={race.entries} predictions={predictions} />
-                <BettingRuleNote />
+                <EntryPredictionTable
+                  entries={race.entries}
+                  predictions={predictions}
+                  raceDate={race.date}
+                />
               </>
             )}
           </CardContent>

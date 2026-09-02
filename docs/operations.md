@@ -188,11 +188,8 @@ backend/data/models/
 | `win_min_odds` | 単勝で買うオッズ下限 | 1.1 |
 | `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
 | `place_min_hit_prob` | 複勝を買う 3 着内率の下限 | 0.60 |
-| `max_points_per_bet_type` | 連系を 1 券種あたり何点まで買うか（0 で無制限） | 2 |
+| `combo_min_hit_prob` | 連系を買う的中確率の下限（券種ごと）。**連系の点数はこれだけで決まる** | 馬連 0.075 / ワイド 0.26 / 馬単 0.025 / 三連複 0.024 / 三連単 0.019 |
 | `race_budget` | 1 レースに使う上限（円） | 5000 |
-| `stake_unit` | 1 点あたりの既定額（円） | 100 |
-| `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |
-| `enabled_bet_types` | 買う券種 | 単勝・複勝・馬連・ワイド・馬単・三連複・三連単 |
 | `scraper_stopped` | スクレイパー停止フラグ | false |
 
 - **EV 閾値は全券種で廃止**しました（`place_ev_threshold` 2026-08-24 / `win_ev_threshold`

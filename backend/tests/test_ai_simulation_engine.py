@@ -1,4 +1,4 @@
-"""Unit tests for ai/simulation/engine.py:_settle_candidates and STRATEGY_PRESETS.
+"""Unit tests for ai/simulation/engine.py (_settle_candidates と損益の積み上げ)。
 
 Full integration test (simulate_active_model) requires a trained model bundle
 and is covered manually.
@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import pytest
 
 from ai.simulation.engine import (
-    STRATEGY_PRESETS,
     GroupStats,
     _settle_candidates,
 )
@@ -27,30 +26,6 @@ class _FakeCandidate:
 
 def _cand(bet_type: str, combo: str, stake: int = 100) -> _FakeCandidate:
     return _FakeCandidate(bet_type=bet_type, combo=combo, stake=stake)
-
-
-# ---------------------------------------------------------------------------
-# STRATEGY_PRESETS sanity
-# ---------------------------------------------------------------------------
-
-
-def test_strategy_presets_present():
-    assert {"conservative", "balanced", "aggressive"} <= set(STRATEGY_PRESETS)
-
-
-def test_strategy_presets_get_looser_as_they_get_aggressive():
-    """積極的になるほど 1 点の賭け金が大きく、買い目を組む頭数が増える。
-
-    **EV 閾値 (min_ev) は 2026-08-28 に廃止した**ので、戦略の違いは
-    「1 点いくら賭けるか (stake_ratio)」と「上位何頭から買い目を組むか
-    (top_n_horses)」で表す。
-    """
-    c = STRATEGY_PRESETS["conservative"]
-    b = STRATEGY_PRESETS["balanced"]
-    a = STRATEGY_PRESETS["aggressive"]
-    assert c["stake_ratio"] <= b["stake_ratio"] < a["stake_ratio"]
-    assert c["top_n_horses"] < b["top_n_horses"] < a["top_n_horses"]
-    assert all("min_ev" not in p for p in (c, b, a))
 
 
 # ---------------------------------------------------------------------------
@@ -210,8 +185,8 @@ def _compounding_setup(monkeypatch, n_races: int, n_horses: int = 4, odds_win: f
     return engine
 
 
-def test_compounding_initial_bankroll_equals_budget(monkeypatch):
-    """1 race 目の recommend_for_race に渡される bankroll は budget と一致する。"""
+def test_profit_starts_at_zero(monkeypatch):
+    """賭けなければ損益は 0 のまま。**元手という概念を持たない。**"""
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -220,30 +195,28 @@ def test_compounding_initial_bankroll_equals_budget(monkeypatch):
     import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=1)
-
-    bankrolls_seen: list[int] = []
+    budgets_seen: list[int] = []
 
     def _fake(*, race_budget, **_kw):
-        # race_budget = 残資産 × 0.05 なので、残資産は逆算して記録する
-        bankrolls_seen.append(round(race_budget / 0.05))
+        budgets_seen.append(race_budget)
         return SimpleNamespace(candidates=[])
     monkeypatch.setattr(sim_mod, "recommend_for_race", _fake)
 
     with Session(engine) as session:
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
-            start=None, end=None, budget=10_000, strategy="balanced",
-            # 既定は flat。**複利の挙動を検証するテストなので明示する**
-            staking="compound",
+            start=None, end=None, race_budget=5_000,
         )
 
-    assert bankrolls_seen[0] == 10_000
-    assert result.final_bankroll == 10_000  # bet なしなので変動なし
-    assert result.peak_bankroll == 10_000
+    # 1 レースの予算は残高に依存しない。指定した額がそのまま渡る
+    assert budgets_seen == [5_000]
+    assert result.final_profit == 0
+    assert result.peak_profit == 0
+    assert result.trough_profit == 0
 
 
-def test_compounding_bankroll_grows_with_payouts(monkeypatch):
-    """winning bet の payout が次 race の bankroll に加算される (compounding)。"""
+def test_profit_accumulates_across_races(monkeypatch):
+    """払戻は次レースの賭け金に影響しない。損益だけが積み上がる。"""
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -252,36 +225,32 @@ def test_compounding_bankroll_grows_with_payouts(monkeypatch):
     import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
+    budgets_seen: list[int] = []
 
-    bankrolls_seen: list[int] = []
-
-    # 各 race で 100 円を winning combo "1" に賭ける → odds 4.0 で payout 400
-    def _winning_recommend(*, race_budget, **_kw):
-        bankroll = round(race_budget / 0.05)
-        bankrolls_seen.append(bankroll)
-        if bankroll < 100:
-            return SimpleNamespace(candidates=[])
-        cand = SimpleNamespace(bet_type="単勝", combo="1", stake=100)
-        return SimpleNamespace(candidates=[cand])
-    monkeypatch.setattr(sim_mod, "recommend_for_race", _winning_recommend)
+    # 各 race で 100 円を当たり combo "1" に賭ける → odds 4.0 で payout 400
+    def _winning(*, race_budget, **_kw):
+        budgets_seen.append(race_budget)
+        return SimpleNamespace(
+            candidates=[SimpleNamespace(bet_type="単勝", combo="1", stake=100)]
+        )
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _winning)
 
     with Session(engine) as session:
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
-            start=None, end=None, budget=10_000, strategy="balanced",
-            # 既定は flat。**複利の挙動を検証するテストなので明示する**
-            staking="compound",
+            start=None, end=None, race_budget=5_000,
         )
 
+    # **予算は資産に連動しない** (以前は残資産 × 5% で膨らんでいた)
+    assert budgets_seen == [5_000, 5_000, 5_000]
     # race 毎: stake=100, payout=400, profit=+300
-    # bankroll 推移: 10000 → 10300 → 10600 → 10900
-    assert bankrolls_seen == [10_000, 10_300, 10_600]
-    assert result.final_bankroll == 10_900
-    assert result.peak_bankroll == 10_900
+    assert result.final_profit == 900
+    assert result.peak_profit == 900
+    assert result.trough_profit == 0
 
 
-def test_compounding_bankroll_shrinks_on_loss(monkeypatch):
-    """losing bet の場合は bankroll が stake 分減る。"""
+def test_profit_goes_negative_and_keeps_betting(monkeypatch):
+    """負け続けてもマイナスのまま賭け続ける (破産で評価が止まらない)。"""
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -290,35 +259,33 @@ def test_compounding_bankroll_shrinks_on_loss(monkeypatch):
     import ai.simulation.engine as sim_mod
 
     engine = _compounding_setup(monkeypatch, n_races=3)
+    n_calls = 0
 
-    bankrolls_seen: list[int] = []
-
-    # 各 race で combo "2" (= 2 着、winner ではない) に 100 円賭け → payout 0
-    def _losing_recommend(*, race_budget, **_kw):
-        bankroll = round(race_budget / 0.05)
-        bankrolls_seen.append(bankroll)
-        if bankroll < 100:
-            return SimpleNamespace(candidates=[])
-        cand = SimpleNamespace(bet_type="単勝", combo="2", stake=100)
-        return SimpleNamespace(candidates=[cand])
-    monkeypatch.setattr(sim_mod, "recommend_for_race", _losing_recommend)
+    def _losing(*, race_budget, **_kw):
+        nonlocal n_calls
+        n_calls += 1
+        # combo "9" は 1 着ではないので必ず外れ
+        return SimpleNamespace(
+            candidates=[SimpleNamespace(bet_type="単勝", combo="9", stake=100)]
+        )
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _losing)
 
     with Session(engine) as session:
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
-            start=None, end=None, budget=10_000, strategy="balanced",
-            # 既定は flat。**複利の挙動を検証するテストなので明示する**
-            staking="compound",
+            start=None, end=None, race_budget=5_000,
         )
 
-    # bankroll 推移: 10000 → 9900 → 9800 → 9700 (3 連敗)
-    assert bankrolls_seen == [10_000, 9_900, 9_800]
-    assert result.final_bankroll == 9_700
-    assert result.peak_bankroll == 10_000  # 初期値が peak
+    assert n_calls == 3  # 最後まで賭け続ける
+    assert result.final_profit == -300
+    assert result.trough_profit == -300
+    assert result.peak_profit == 0
+    # 途中で沈んだ分がそのまま「必要だった資金」
+    assert result.required_capital == 300
 
 
-def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
-    """bankroll が 0 を下回ると以降は実質 bet しない (破産)。"""
+def test_profit_timeseries_daily_aggregation(monkeypatch):
+    """profit_timeseries は日次集約 (同日複数 race でも 1 ポイント)。"""
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -328,38 +295,31 @@ def test_compounding_bankroll_zero_at_bankrupt(monkeypatch):
 
     engine = _compounding_setup(monkeypatch, n_races=3)
 
-    bankrolls_seen: list[int] = []
-
-    def _greedy_losing(*, race_budget, **_kw):
-        bankroll = round(race_budget / 0.05)
-        bankrolls_seen.append(bankroll)
-        # bankroll の全額を負け combo に賭ける
-        stake = bankroll // 100 * 100
-        if stake == 0:
-            return SimpleNamespace(candidates=[])
-        cand = SimpleNamespace(bet_type="単勝", combo="2", stake=stake)
-        return SimpleNamespace(candidates=[cand])
-    monkeypatch.setattr(sim_mod, "recommend_for_race", _greedy_losing)
+    def _winning(*, race_budget, **_kw):
+        return SimpleNamespace(
+            candidates=[SimpleNamespace(bet_type="単勝", combo="1", stake=100)]
+        )
+    monkeypatch.setattr(sim_mod, "recommend_for_race", _winning)
 
     with Session(engine) as session:
         result = sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
-            start=None, end=None, budget=5_000, strategy="balanced",
-            # 破産の検証なので複利を明示する (既定は flat で、定額は資金繰りから
-            # 切り離されているため破産しない)
-            staking="compound",
+            start=None, end=None, race_budget=5_000,
         )
 
-    # 1st で全額消化 → bankroll=0, 以降 bet なし
-    assert bankrolls_seen[0] == 5_000
-    assert bankrolls_seen[1] == 0
-    assert bankrolls_seen[2] == 0
-    assert result.final_bankroll == 0
+    # _compounding_setup は race ごとに別の日付を振る
+    assert len(result.profit_timeseries) == 3
+    assert [p.profit for p in result.profit_timeseries] == [300, 600, 900]
+    assert [p.date for p in result.profit_timeseries] == sorted(
+        p.date for p in result.profit_timeseries
+    )
+    for point in result.profit_timeseries:
+        assert point.n_bets == 1
+        assert point.invested == 100
 
 
-def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
-    """max_stake_per_race_yen を渡すと、bankroll が増えても 1 race の累計
-    stake はその絶対上限を超えない (compounding wealth でのインフレ抑制)。"""
+def test_points_come_from_confidence(monkeypatch):
+    """単複の点数は確信度から決まる (1 点 = 100 円)。連系は下限だけ。"""
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -367,81 +327,19 @@ def test_max_stake_per_race_yen_caps_absolute_bet(monkeypatch):
 
     import ai.simulation.engine as sim_mod
 
-    engine = _compounding_setup(monkeypatch, n_races=3)
+    engine = _compounding_setup(monkeypatch, n_races=1)
+    seen: dict = {}
 
-    seen_max_yen: list[int | None] = []
-
-    # recommend_for_race を stub。max_stake_per_race_yen が渡ってくることを観測。
-    def _fake(*, race_budget, **_kw):
-        # engine 側で race_budget = min(残資産 × 0.05, max_stake_per_race_yen)
-        # まで計算済みなので、stub はその予算をそのまま賭ける。
-        seen_max_yen.append(race_budget)
-        stake = int(race_budget) // 100 * 100
-        if stake == 0:
-            return SimpleNamespace(candidates=[])
-        cand = SimpleNamespace(bet_type="単勝", combo="1", stake=stake)
-        return SimpleNamespace(candidates=[cand])
+    def _fake(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(candidates=[])
     monkeypatch.setattr(sim_mod, "recommend_for_race", _fake)
 
     with Session(engine) as session:
-        result = sim_mod.simulate_active_model(
-            session=session,
-            model_path=Path("/tmp/dummy"),
-            start=None, end=None,
-            budget=1_000_000,
-            strategy="balanced",
-            max_stake_per_race_yen=2_000,  # 1 race max 2,000 円
-        )
-
-    # 1 race の予算が max_stake_per_race_yen で頭打ちになっている
-    # (残資産 100 万 × 5% = 5 万 だが、2,000 円が優先される)
-    assert all(v == 2_000 for v in seen_max_yen)
-    # 各 race の stake が 2000 円を超えない (recommend_for_race 内でも capping)
-    # bankroll は 1_000_000 → 1_000_000 * 0.05 = 50000 が pct cap だが
-    # max_stake_per_race_yen=2000 が優先される。
-    # 1 race ごとの invested は 2000 で頭打ち。
-    # winning combo "1" odds=4.0 → payout=8000、profit=+6000/race
-    # bankroll: 1000000 → 1006000 → 1012000 → 1018000
-    assert result.final_bankroll == 1_018_000
-
-
-def test_compounding_bankroll_timeseries_daily_aggregation(monkeypatch):
-    """bankroll_timeseries は日次集約 (同日複数 race の場合も 1 ポイント)。"""
-    from pathlib import Path
-    from types import SimpleNamespace
-
-    from sqlalchemy.orm import Session
-
-    import ai.simulation.engine as sim_mod
-
-    engine = _compounding_setup(monkeypatch, n_races=3)
-
-    def _const_winning(*, race_budget, **_kw):
-        bankroll = round(race_budget / 0.05)
-        if bankroll < 100:
-            return SimpleNamespace(candidates=[])
-        cand = SimpleNamespace(bet_type="単勝", combo="1", stake=100)
-        return SimpleNamespace(candidates=[cand])
-    monkeypatch.setattr(sim_mod, "recommend_for_race", _const_winning)
-
-    with Session(engine) as session:
-        result = sim_mod.simulate_active_model(
+        sim_mod.simulate_active_model(
             session=session, model_path=Path("/tmp/dummy"),
-            start=None, end=None, budget=10_000, strategy="balanced",
-            # 既定は flat。**複利の挙動を検証するテストなので明示する**
-            staking="compound",
+            start=None, end=None, race_budget=10_000,
         )
-
-    # _compounding_setup は race 毎に異なる日付を使うので 3 ポイント
-    assert len(result.bankroll_timeseries) == 3
-    # date 昇順
-    dates = [p.date for p in result.bankroll_timeseries]
-    assert dates == sorted(dates)
-    # 各日の bankroll は単調増加 (winning ばかり)
-    bankrolls = [p.bankroll for p in result.bankroll_timeseries]
-    assert bankrolls == [10_300, 10_600, 10_900]
-    # 各日 1 bet, stake=100, payout=400
-    for p in result.bankroll_timeseries:
-        assert p.n_bets == 1
-        assert p.invested == 100
-        assert p.payout == 400
+    # 確率モデル未設定なので基準の点数。券種ごとの上限は渡さない
+    assert seen["points_by_bet_type"] == {"単勝": 5, "複勝": 5}
+    assert "max_points_per_bet_type" not in seen

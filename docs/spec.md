@@ -105,7 +105,7 @@
 │   │   ├── routes/            # ページコンポーネント
 │   │   │   ├── Dashboard.tsx        # モデルの 1 画面（KPI + 一覧 + 学習 + 役割の割り当て）
 │   │   │   ├── Races.tsx            # RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
-│   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目 + 答え合わせ
+│   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目 (答え合わせはそのタブ)
 │   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
 │   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
@@ -118,10 +118,10 @@
 │   │   │   ├── DayIngestPanel.tsx   # 選択日の取込操作（過去=結果 / 当日=両方 / 未来=出馬表）
 │   │   │   ├── DataCoverageBand.tsx # データ取込のカバレッジ表示
 │   │   │   ├── Umaban.tsx           # 馬番チップ（枠色）
-│   │   │   ├── RecommendationsCard.tsx / RecommendationParamsBar.tsx  # 推奨買目と、その条件（予算 / 1点 / 券種 / 狙い方）
+│   │   │   ├── RecommendationsCard.tsx / RecommendationParamsBar.tsx  # 推奨買目と、その条件（1 レースの上限 / 券種）
 │   │   │   ├── PurchaseTable.tsx    # 買い目を流し / ボックス / フォーメーションに畳んだ購入用の表
 │   │   │   ├── ModelSimulationPanel.tsx # 期間・予算・戦略を選んでバックテストを回す
-│   │   │   ├── BankrollChart.tsx    # シミュレーションの資産推移
+│   │   │   ├── ProfitChart.tsx    # シミュレーションの資産推移
 │   │   │   ├── AddBetDialog.tsx     # 購入記録の手動登録
 │   │   │   ├── EmptyState.tsx / JobProgressCard.tsx
 │   │   │   ├── OperatingModels.tsx  # 運用中の 2 モデルと、それぞれの数字（回収率 / log-loss）
@@ -366,7 +366,8 @@ CREATE TABLE model_runs (
 | GET | `/api/races/this_weekend` | 200 | 今週末のレース一覧 |
 | GET | `/api/races/upcoming?days=7` | 200 | 直近 N 日の出馬表一覧 |
 | GET | `/api/races/recent?days=7` | 200 | 直近 N 日の結果確定済みレース一覧 |
-| GET | `/api/races/{race_id}` | 200 / 404 | レース詳細（出走馬・オッズ・天候等） |
+| GET | `/api/races/{race_id}` | 200 / 404 | レース詳細（出走馬・オッズ・天候・全券種の払戻） |
+| GET | `/api/horses/{horse_id}/history?before=&limit=` | 200 | その馬の過去走。`before` より**厳密に前**だけ返す（当日の結果は根拠にできない）。未知の馬でも 404 にせず空で返す |
 
 ```json
 // GET /api/races/upcoming レスポンス例（抜粋）
@@ -496,19 +497,19 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 レスポンスには `place_confidence` / `place_confidence_threshold` が入る（確率モデル未設定なら null）。
 複勝を見送ったレースでは、UI がこの値を使って理由を表示する。
 
-主なクエリ: `top_n_horses`（連系の候補にする上位頭数）/ `top_k`（券種ごとの上限点数）/
-`race_budget` / `stake_unit` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
+主なクエリ: `top_k`（券種ごとの候補上限）/ `race_budget` / `stake_unit` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
+**連系を組む上位頭数は固定**（`TOP_N_HORSES` = 3）。頭数を広げても的中確率の下限を超えない候補が増えるだけで買い目は変わらないため、選択肢にしていない。
 
 買い方は券種で異なる（`ai/betting/strategy.py`、根拠は `docs/ai-model.md`）:
 
 - **単勝**: モデル 1 位の 1 頭のみ。オッズ下限 `win_min_odds` だけ見る
 - **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば 3 着内率 `place_min_hit_prob` 未満は見送る。点数は確信度に比例 (1〜15 点)
-- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 `top_n_horses` 頭から組む
+- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 3 頭から組み、的中確率が `combo_min_hit_prob`（券種ごと）以上の買い目だけを買う。点数の上限は`race_budget` から決まる（¥5,000 で 2 点）
 
 **EV（期待値）はどの券種でも買う/買わないの判定に使わない。**
 
 買い目は **単勝 → 複勝 → 連系** の順に、同券種内は的中確率順で
-`stake_units`（券種別の 1 点あたり金額）を割り当て、`race_budget` を超えたら打ち切る。
+**1 点 = 100 円 × 点数**（単複は確信度から、連系は 1 組合せ 1 点）で割り当て、`race_budget` を超えたら打ち切る。
 
 ### シミュレーション
 
@@ -517,12 +518,16 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | POST | `/api/simulation/start` | 202 | バックテストをバックグラウンド起動（`job.result.run_id` に結果 id）|
 | GET | `/api/simulation/active_model` | 200 / 503 | active モデルで同期実行（短い window 用）|
 | GET | `/api/simulation/runs` | 200 | 保存済み run 一覧 |
-| GET | `/api/simulation/runs/{run_id}` | 200 / 404 | run 詳細（資産推移・券種別内訳）|
+| GET | `/api/simulation/runs/{run_id}` | 200 / 404 | run 詳細（損益推移・券種別内訳）|
 | DELETE | `/api/simulation/runs/{run_id}` | 200 / 404 | run 削除 |
 
-主なクエリ: `start` / `end` / `budget` / `strategy`（conservative / balanced / aggressive。変わるのは 1 点あたりの割合と、連系を組む上位頭数）/
-`model_id` / `max_stake_per_race_yen` / `exclude_low_information`。
-`exclude_low_information=true` で、出走馬全員が初出走のレース（新馬戦など）を集計から外す。
+主なクエリ: `start` / `end` / `race_budget`（1 レースに使う上限。使い切る目標ではない）/
+`model_id` / `bet_types`。
+
+**RACE 画面と同じ仕組みで回す**（2026-09-01）。初期資産・賭け金の決め方（定額/複利）・
+戦略プリセット・狙い方・履歴の無いレースの除外は廃止した。賭け金が残高に依存しないので
+破産が起きず、評価が途中で止まらない。結果は資産残高ではなく **0 から始まる累計損益**
+（`final_profit` / `peak_profit` / `trough_profit` / `profit_timeseries`）。
 確率モデルが設定されていれば、複勝の確信度フィルタと連系の確率もそれ由来になる。
 **実行条件は結果に記録される**（`conditions`）ので、設定を変えて回し直しても後から見分けられる。
 買い方・賭け金配分は推奨買目 API と同じ経路（`ai/simulation/engine.py` → `strategy.py`）を通る。
@@ -548,7 +553,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
 | GET | `/api/settings` | 200 | 現在の設定値取得 |
-| PUT | `/api/settings` | 200 | 設定値更新（User-Agent・レート制御値・買い方のパラメータ等）。`place_min_hit_prob` は 0〜1、`max_points_per_bet_type` は 0 以上（0 で無制限）|
+| PUT | `/api/settings` | 200 | 設定値更新（User-Agent・レート制御値・買い方のパラメータ等）。`place_min_hit_prob` と `combo_min_hit_prob` の各値は 0〜1 |
 
 設定値は `data/settings.json` に永続化される（`core/settings_store.py`）。主なキー:
 
@@ -561,11 +566,8 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | `win_min_odds` | 単勝で買うオッズ下限（EV 条件の代わり） | 1.1 |
 | `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
 | `place_min_hit_prob` | 複勝を買う 3 着内率の下限 | 0.60 |
-| `max_points_per_bet_type` | 連系を 1 券種あたり何点まで買うか（0 で無制限）。予算は上限であって使い切る目標ではない | 2 |
+| `combo_min_hit_prob` | 連系を買う的中確率の下限（券種ごと）。**連系の点数はこれだけで決まる**（線を超えた買い目を全部買う） | 馬連 0.075 / ワイド 0.26 / 馬単 0.025 / 三連複 0.024 / 三連単 0.019 |
 | `race_budget` | 1 レースに使う上限（円） | 5000 |
-| `stake_unit` | 1 点あたりの既定額（円） | 100 |
-| `stake_units` | 券種別の 1 点あたり（円） | 単勝 500 / 複勝 500 / 連系 100 |
-| `enabled_bet_types` | 対象券種 | 単勝・複勝・馬連・ワイド・馬単・三連複・三連単 |
 
 - 枠連は AI が買い目を生成しないので選択肢に出さない（`core/bet_types.py` の
   `supported_bet_types()` が保存済み設定からも落とす）
