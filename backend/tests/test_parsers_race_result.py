@@ -172,6 +172,12 @@ class TestSurfaceDistanceShapes:
         # surface が書かれていない障害は 障 のまま
         assert SURFACE_DIST_RE.search("障3000m").groups() == ("障", "3000")
 
+    def test_two_lap_course(self):
+        """中山のステイヤーズS はコースを 2 周する (「2周」が形状に入る)。"""
+        from scraper.parsers.common import SURFACE_DIST_RE
+
+        assert SURFACE_DIST_RE.search("芝右 内2周3600m").groups() == ("芝", "3600")
+
     def test_does_not_match_across_unrelated_text(self):
         """関係ない文字列をまたいでマッチしない (形状に出る文字だけ読み飛ばす)。"""
         from scraper.parsers.common import SURFACE_DIST_RE

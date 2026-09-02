@@ -42,11 +42,7 @@ logger = get_logger(__name__)
 _RACE_ID_RE = re.compile(r"^(\d{12})\.html$")
 
 
-def _collect_cache_files(
-    raw: Path,
-    start: datetime.date | None,
-    end: datetime.date | None,
-) -> list[tuple[str, Path]]:
+def _collect_cache_files(raw: Path) -> list[tuple[str, Path]]:
     """data/raw/<yyyy>/<mm>/<race_id>.html を列挙して (race_id, path) リストを返す。"""
     result: list[tuple[str, Path]] = []
 
@@ -67,30 +63,22 @@ def _collect_cache_files(
                     continue
                 race_id = m.group(1)
 
-                if start is not None or end is not None:
-                    try:
-                        race_date = datetime.date(
-                            int(race_id[:4]),
-                            int(race_id[4:6]),
-                            int(race_id[6:8]),
-                        )
-                    except ValueError:
-                        continue
-                    if start is not None and race_date < start:
-                        continue
-                    if end is not None and race_date > end:
-                        continue
-
                 result.append((race_id, html_file))
 
     return result
 
 
-def _race_exists(session: Session, race_id: str) -> bool:
+def _race_date(session: Session, race_id: str) -> str | None:
+    """races.date を返す。行が無ければ None。
+
+    **race_id から日付を作らないこと。** race_id は 年+場+回+日+R の構造化文字列で、
+    `race_id[4:6]` は月ではなく競馬場コードである (CLAUDE.md)。以前ここを日付として
+    parse しており、--start/--end を付けるとほぼ全件が範囲外に落ちていた。
+    """
     row = session.execute(
-        select(Race.race_id).where(Race.race_id == race_id).limit(1)
+        select(Race.date).where(Race.race_id == race_id).limit(1)
     ).first()
-    return row is not None
+    return row[0] if row is not None else None
 
 
 def run_refill_race_meta(
@@ -111,7 +99,7 @@ def run_refill_race_meta(
         }
     """
     raw = raw_dir()
-    cache_files = _collect_cache_files(raw, start, end)
+    cache_files = _collect_cache_files(raw)
 
     if limit is not None:
         cache_files = cache_files[:limit]
@@ -123,9 +111,14 @@ def run_refill_race_meta(
     class_dist: collections.Counter[str] = collections.Counter()
 
     for race_id, html_path in cache_files:
-        if not _race_exists(session, race_id):
+        race_date = _race_date(session, race_id)
+        if race_date is None:
             logger.debug("Skipping %s: no races row", race_id)
             skipped_no_race += 1
+            continue
+        if start is not None and race_date < start.isoformat():
+            continue
+        if end is not None and race_date > end.isoformat():
             continue
 
         try:
