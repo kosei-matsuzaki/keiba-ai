@@ -23,6 +23,15 @@ export interface ModelMetrics {
   nRaces: number | null;
   paybackWin: number | null;
   paybackPlace: number | null;
+  /** 回収率の 95% 区間 (レース単位ブートストラップ)。幅を出さないと読み手が誤解する。 */
+  paybackWinCi: [number, number] | null;
+  paybackPlaceCi: [number, number] | null;
+  /**
+   * 評価窓が学習期間と重なっているか。**true の値は out-of-sample ではない。**
+   * backtest は --start/--end を省くと DB 全期間を窓にするので、黙って in-sample に
+   * なりうる (確率モデルが実際にそうなっていた)。
+   */
+  inSample: boolean;
   top1Hit: number | null;
   placeHit: number | null;
   /** 本命の二値 log-loss。小さいほど良い。backtest でしか出ない。 */
@@ -46,6 +55,13 @@ function str(metrics: Record<string, unknown> | null, key: string): string | nul
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+/** `<key>_ci_low` / `_ci_high` の対。片方でも欠けたら null。 */
+function ci(metrics: Record<string, unknown> | null, key: string): [number, number] | null {
+  const lo = num(metrics, `${key}_ci_low`);
+  const hi = num(metrics, `${key}_ci_high`);
+  return lo != null && hi != null ? [lo, hi] : null;
+}
+
 export function readModelMetrics(metrics: Record<string, unknown> | null): ModelMetrics {
   const backtested = num(metrics, 'payback_win') !== null;
   const source: MetricSource = backtested ? 'backtest' : metrics ? 'training' : null;
@@ -59,6 +75,9 @@ export function readModelMetrics(metrics: Record<string, unknown> | null): Model
     nRaces: num(metrics, 'n_races'),
     paybackWin: num(metrics, 'payback_win', 'test_tansho_roi'),
     paybackPlace: num(metrics, 'payback_place', 'test_fukusho_roi'),
+    paybackWinCi: ci(metrics, 'payback_win'),
+    paybackPlaceCi: ci(metrics, 'payback_place'),
+    inSample: metrics?.['eval_overlaps_train'] === true,
     top1Hit: num(metrics, 'top1_hit', 'test_tansho_hit'),
     placeHit: num(metrics, 'place_hit', 'test_fukusho_hit'),
     // log-loss は backtest でしか計算していない。学習ループが持つのは PL 損失で
@@ -147,4 +166,26 @@ export function betRuleSummary(metrics: Record<string, unknown> | null): string 
 export function logLossEdge(m: ModelMetrics): number | null {
   if (m.logLoss === null || m.marketLogLoss === null) return null;
   return m.logLoss - m.marketLogLoss;
+}
+
+
+/**
+ * 回収率の下に出す 1 行。**幅を必ず添える。**
+ *
+ * 回収率は当たりが稀で配当の裾が重いので、点推定だけ見せると読み手が誤解する。
+ * 実測では 1.8 年 (6,000 レース) でも単勝の標準誤差が 0.016、連系は 0.04〜0.05 ある。
+ * 幅が 1.00 をまたいでいるうちは「勝っている」と言えない。
+ */
+export function roiNote(ci: [number, number] | null, nRaces: number | null): string {
+  const parts = ['1.00 = 収支トントン'];
+  if (ci) parts.push(`95% ${ci[0].toFixed(2)}–${ci[1].toFixed(2)}`);
+  if (nRaces != null) parts.push(`${nRaces.toLocaleString()} レース`);
+  return parts.join(' · ');
+}
+
+/** in-sample の値に付ける警告。null なら問題なし。 */
+export function inSampleWarning(m: ModelMetrics): string | null {
+  return m.inSample
+    ? '評価窓が学習期間と重なっています。この数字は out-of-sample ではありません'
+    : null;
 }

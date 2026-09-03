@@ -11,7 +11,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { formatDateTime, formatRatio, formatScore } from '@/lib/formatters';
-import { readModelMeta, sourceDescription, sourceLabel } from '@/lib/modelMetrics';
+import {
+  inSampleWarning,
+  readModelMeta,
+  sourceDescription,
+  sourceLabel,
+} from '@/lib/modelMetrics';
 import type { ModelMeta } from '@/types/api';
 
 interface ModelTableProps {
@@ -104,6 +109,12 @@ export function ModelTable({
                 {sourceLabel(m.source)}
                 {m.nRaces != null && ` · ${m.nRaces.toLocaleString()} レース`}
               </div>
+              {/* 学習期間と重なった窓の値は out-of-sample ではない。並べると横比較が崩れる */}
+              {m.inSample && (
+                <div className="text-destructive" title={inSampleWarning(m) ?? undefined}>
+                  学習期間を含む
+                </div>
+              )}
             </TableCell>
             <TableCell className="text-right tabular-nums">{ratio(m.paybackWin)}</TableCell>
             <TableCell className="text-right tabular-nums">{ratio(m.paybackPlace)}</TableCell>

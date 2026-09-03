@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+import json
 import math
 import os
 
@@ -278,8 +280,9 @@ def test_evaluate_persist_merges_into_model_run(trained_scenario):
         before = json.loads(run_before.metrics_json)
         assert "top1_hit" not in before  # まだ無い
 
-    # evaluate を persist=True で実行
-    evaluate(model_path=model_dir, db=db_file, persist=True)
+    # evaluate を persist=True で実行。合成 DB は全期間が学習範囲なので、
+    # ここでは in-sample ガードを明示的に外す (見たいのは merge の挙動)。
+    evaluate(model_path=model_dir, db=db_file, persist=True, allow_in_sample=True)
 
     # metrics_json に top1_hit / payback_win 等が merge されている
     with Session(engine) as session:
@@ -495,3 +498,46 @@ def test_bootstrap_ci_helper_empty_arrays_returns_nan():
     import math
     for key in ("ndcg1", "ndcg3", "top1_hit", "place_hit", "payback_win", "payback_place"):
         assert math.isnan(ci[key][0]) and math.isnan(ci[key][1])
+
+
+# ---------------------------------------------------------------------------
+# 評価窓が学習期間と重なっていないか
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_flags_in_sample_window(trained_scenario):
+    """--start/--end を省くと DB 全期間が窓になるので、重なりを検出して残す。
+
+    実害があった: 確率モデル 20260827T140017-nn は eval_start=2015-01-04
+    (= 学習開始日) で測られ、38,691 レース中 33,000 が学習データだった。それが
+    画面に out-of-sample の「実測」として並んでいた。
+    """
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(model_path=model_dir, db=db_file)
+
+    # 窓を指定していないので DB 全期間 = 学習期間を含む
+    assert metrics["eval_overlaps_train"] is True
+    assert metrics["model_train_end"] is not None
+    assert metrics["eval_start"] <= metrics["model_train_end"]
+
+
+def test_evaluate_refuses_to_persist_in_sample(trained_scenario):
+    """in-sample の数字は保存しない。一度出ると横比較できない値が黙って混ざる。"""
+    db_file, model_dir = trained_scenario
+    with pytest.raises(ValueError, match="学習期間"):
+        evaluate(model_path=model_dir, db=db_file, persist=True)
+
+    # 意図的なら通せる
+    metrics = evaluate(model_path=model_dir, db=db_file, persist=True, allow_in_sample=True)
+    assert metrics["eval_overlaps_train"] is True
+
+
+def test_evaluate_out_of_sample_window_not_flagged(trained_scenario):
+    """学習終了より後だけを見れば重なりは立たない。"""
+    db_file, model_dir = trained_scenario
+    meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
+    train_end = str(meta["train_range"]).split("/")[-1]
+    after = (datetime.date.fromisoformat(train_end) + datetime.timedelta(days=1)).isoformat()
+
+    metrics = evaluate(model_path=model_dir, db=db_file, start=after)
+    assert metrics["eval_overlaps_train"] is False

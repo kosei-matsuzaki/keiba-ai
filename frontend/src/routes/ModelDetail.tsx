@@ -16,8 +16,10 @@ import { toast } from '@/lib/toast';
 import { formatDateTime, formatScore } from '@/lib/formatters';
 import { formatErrorMessage } from '@/lib/api';
 import {
+  inSampleWarning,
   placeHitLabel,
   readModelMeta,
+  roiNote,
 } from '@/lib/modelMetrics';
 import type { ModelMeta } from '@/types/api';
 
@@ -55,14 +57,14 @@ function ModelScoreBand({ model }: { model: ModelMeta }) {
           value={m.paybackWin}
           format="ratio"
           tone={m.paybackWin != null && m.paybackWin >= 1 ? 'positive' : 'negative'}
-          description="1.00 = 収支トントン"
+          description={roiNote(m.paybackWinCi, m.nRaces)}
         />
         <MetricItem
           title="複勝回収率"
           value={m.paybackPlace}
           format="ratio"
           tone={m.paybackPlace != null && m.paybackPlace >= 1 ? 'positive' : 'negative'}
-          description="1.00 = 収支トントン"
+          description={roiNote(m.paybackPlaceCi, m.nRaces)}
         />
         <MetricItem
           title="本命の的中率"
@@ -190,6 +192,11 @@ export function ModelDetail() {
               <MetaRow label="学習期間" value={model.train_range ?? PLACEHOLDER} />
               <MetaRow label="検証期間" value={model.valid_range ?? PLACEHOLDER} />
               <MetaRow label="評価窓" value={readModelMeta(model).evalRange ?? PLACEHOLDER} />
+              {inSampleWarning(readModelMeta(model)) && (
+                <p className="pt-1 text-xs text-destructive">
+                  {inSampleWarning(readModelMeta(model))}
+                </p>
+              )}
             </CardContent>
           </Card>
 

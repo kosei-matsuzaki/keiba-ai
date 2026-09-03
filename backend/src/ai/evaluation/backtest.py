@@ -448,6 +448,7 @@ def evaluate(
     max_popularity: int | None = None,
     bootstrap_iters: int = 0,
     bootstrap_seed: int = 42,
+    allow_in_sample: bool = False,
     bundle: ModelBundle | None = None,
     place_odds_mode: str = "estimated",
     place_takeout: float = 0.20,
@@ -746,10 +747,25 @@ def evaluate(
     if "date" in frame.columns and not frame.empty:
         eval_start = eval_start or str(frame["date"].min())
         eval_end = eval_end or str(frame["date"].max())
+    # **評価窓が学習期間と重なっていないか。** --start/--end を省くと DB 全期間が
+    # 窓になるので、黙って in-sample の数字が出る。実際 20260827T140017-nn は
+    # eval_start=2015-01-04 (= 学習開始日) で測られ、38,691 レース中 33,000 が
+    # 学習データだった。画面はこれを out-of-sample の実測として並べていた。
+    train_end = str((getattr(bundle, "meta", None) or {}).get("train_range") or "").split("/")[-1]
+    overlaps = bool(train_end and eval_start and eval_start <= train_end)
+    if overlaps:
+        log.warning(
+            "評価窓が学習期間と重なっている (eval_start=%s <= train_end=%s)。"
+            "この数字は out-of-sample ではない。",
+            eval_start, train_end,
+        )
+
     metrics = {
         "eval_start": eval_start,
         "eval_end": eval_end,
         "n_races": n_races,
+        "model_train_end": train_end or None,
+        "eval_overlaps_train": overlaps,
         "ndcg1": float(np.mean(ndcg1_list)) if ndcg1_list else float("nan"),
         "ndcg3": float(np.mean(ndcg3_list)) if ndcg3_list else float("nan"),
         "top1_hit": float(np.mean(top1_hits)) if top1_hits else float("nan"),
@@ -817,6 +833,14 @@ def evaluate(
     log.info("Evaluation metrics: %s", metrics)
 
     if persist:
+        # **in-sample の数字を画面に出さない。** 一度出ると「実測」として
+        # 他モデルと並び、横比較できない数字が黙って混ざる。
+        if metrics.get("eval_overlaps_train") and not allow_in_sample:
+            raise ValueError(
+                f"評価窓 ({eval_start}〜{eval_end}) が学習期間 (〜{train_end}) と重なって"
+                f"いるので保存しない。--start を学習終了の翌日以降にするか、"
+                f"意図的なら allow_in_sample=True を渡すこと。"
+            )
         # Dashboard が読みやすいよう、top-level に flat な model 系キー
         # (top1_hit / payback_win 等) を merge する。baseline mode でも
         # 比較用 baseline / delta は混ぜず、model 側のみ保存。
@@ -851,6 +875,14 @@ def _cli() -> None:
         choices=["favorite"],
         default=None,
         help="Also evaluate a baseline strategy alongside the model and report deltas",
+    )
+    parser.add_argument(
+        "--allow-in-sample",
+        action="store_true",
+        help=(
+            "評価窓が学習期間と重なっていても --persist を通す。**通常は使わない** — "
+            "in-sample の数字が画面に出ると、他モデルと横比較できない値が黙って混ざる。"
+        ),
     )
     parser.add_argument(
         "--persist",
@@ -928,11 +960,12 @@ def _cli() -> None:
     parser.add_argument(
         "--bootstrap-iters",
         type=int,
-        default=0,
+        default=2000,
         help=(
             "Race-level bootstrap iteration count for 95%% CI on ndcg / hit / "
-            "payback metrics. 0 (default) = no CI. 1000 is a reasonable choice "
-            "for production reports."
+            "payback metrics. 0 = no CI. **既定 2000** — 回収率は当たりが稀で配当の"
+            "裾が重く、1.8 年 (6,000 レース) でも単勝の標準誤差が 0.016 ある。"
+            "幅を出さない数字は読み手に誤解させるので既定で付ける。"
         ),
     )
     parser.add_argument(
@@ -985,6 +1018,7 @@ def _cli() -> None:
         end=args.end,
         baseline=args.baseline,
         persist=args.persist,
+        allow_in_sample=args.allow_in_sample,
         win_min_odds=args.win_min_odds,
         win_bet_rule=args.win_bet_rule,
         place_bet_rule=args.place_bet_rule,
