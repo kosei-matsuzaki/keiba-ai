@@ -1306,6 +1306,12 @@ def train_nn(
             else None
         ),
         "combo_weight": combo_weight if loss == "multi" else None,
+        # 損失の形を決める引数。**推論には要らないが、記録しないと後から
+        # 「どちらの条件で学習したモデルか」が分からなくなる。** 実際、確率モデル
+        # (20260827T140017-nn) は top-k=5 で学習したことが model_runs.notes の
+        # 手書きメモにしか残っておらず、artifact だけでは判別できなかった。
+        "pl_top_k": pl_top_k if loss == "plackett_luce" else None,
+        "place_temp": place_temp if loss == "place_growth" else None,
         # 学習時だけ head の odds を潰した割合 (推論には影響しないが、
         # どの条件で学習したかが分からないと比較できないので残す)。
         "odds_dropout": odds_dropout,

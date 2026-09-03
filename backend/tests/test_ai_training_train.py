@@ -524,3 +524,26 @@ def test_train_nn_odds_route_encoder(syn_engine_small, tmp_path, monkeypatch):
     assert meta["odds_feat_dim"] == 0
     assert meta["odds_feature_cols"] == []
     assert "odds_win" in meta["horse_feature_cols"]
+
+
+def test_train_nn_records_loss_shape_args(syn_engine_small, tmp_path, monkeypatch):
+    """損失の形を決める引数が meta.json に残る。
+
+    推論には要らないが、記録しないと後から「どちらの条件で学習したモデルか」が
+    分からなくなる。確率モデル 20260827T140017-nn は top-k=5 で学習したことが
+    model_runs.notes の手書きメモにしか残っておらず、artifact だけでは判別
+    できなかった。
+    """
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="plackett_luce", pl_top_k=5, hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu", monitor="valid_ndcg3",
+    )
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta["loss_type"] == "plackett_luce"
+    assert meta["pl_top_k"] == 5
+    # 関係のない損失の引数は None にして、混同できないようにする
+    assert meta["place_temp"] is None
