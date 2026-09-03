@@ -22,7 +22,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { TrainModelDialog } from '@/components/TrainModelDialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { toast } from '@/components/ui/toast';
+import { toast } from '@/lib/toast';
 import { formatErrorMessage } from '@/lib/api';
 import { useTrainingStore } from '@/store/app';
 import type { ModelMeta, TrainRequest } from '@/types/api';

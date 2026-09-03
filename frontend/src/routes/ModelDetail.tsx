@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { toast } from '@/components/ui/toast';
+import { toast } from '@/lib/toast';
 import { formatDateTime, formatScore } from '@/lib/formatters';
 import { formatErrorMessage } from '@/lib/api';
 import {

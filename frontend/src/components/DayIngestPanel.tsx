@@ -11,7 +11,7 @@ import { useUpdateSettings } from '@/hooks/useSettings';
 import { useScraperStore } from '@/store/app';
 import { JobProgressCard } from '@/components/JobProgressCard';
 import { Button } from '@/components/ui/button';
-import { toast } from '@/components/ui/toast';
+import { toast } from '@/lib/toast';
 import { discoverTodayRaceIds, formatErrorMessage } from '@/lib/api';
 
 interface DayIngestPanelProps {

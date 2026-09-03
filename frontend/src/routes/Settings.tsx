@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { toast } from '@/components/ui/toast';
+import { toast } from '@/lib/toast';
 import { formatErrorMessage } from '@/lib/api';
 import type { SettingsUpdate } from '@/types/api';
 

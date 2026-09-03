@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { runShutubaScraper } from '@/lib/api';
 import { useJobStatus } from '@/hooks/useJobStatus';
-import { toast } from '@/components/ui/toast';
+import { toast } from '@/lib/toast';
 import type { ScraperRunShutubaRequest } from '@/types/api';
 
 /**
