@@ -189,6 +189,15 @@ def _bootstrap_ci(
     if n == 0 or iters <= 0:
         return {k: (float("nan"), float("nan")) for k in _BOOTSTRAP_METRIC_KEYS}
 
+    # **すべての配列が同じレース列を指していること。** ずれていると同じ添字が
+    # 別のレースを指し、CI が黙って嘘になる (範囲外にならない限り気づけない)。
+    bad = {k: len(v) for k, v in per_race.items() if len(v) != n}
+    if bad:
+        raise ValueError(
+            f"per-race 配列の長さが揃っていない (ndcg1={n}, {bad})。"
+            "レースごとに全部の配列へ 1 つずつ足すこと。"
+        )
+
     rng = np.random.default_rng(seed)
     # idx: shape (iters, n) — each row is a bootstrap sample of race indices
     idx = rng.integers(0, n, size=(iters, n))
@@ -668,6 +677,12 @@ def evaluate(
                 )
                 if not is_place_worth_buying(conf, place_min_confidence):
                     n_place_skipped += 1
+                    # **win 側も必ず足す。** ここで place だけ足して continue すると、
+                    # per-race 配列の長さが ndcg1_list とずれて bootstrap の
+                    # レース単位リサンプルが範囲外を引く (点推定は別集計なので無事だが
+                    # CI が壊れる)。既定で bootstrap を切っていたので露見していなかった。
+                    per_race_win_invested.append(race_win_invested)
+                    per_race_win_payout.append(race_win_payout)
                     per_race_place_invested.append(race_place_invested)
                     per_race_place_payout.append(race_place_payout)
                     continue

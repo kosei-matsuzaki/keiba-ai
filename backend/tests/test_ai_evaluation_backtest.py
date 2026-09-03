@@ -541,3 +541,34 @@ def test_evaluate_out_of_sample_window_not_flagged(trained_scenario):
 
     metrics = evaluate(model_path=model_dir, db=db_file, start=after)
     assert metrics["eval_overlaps_train"] is False
+
+
+def test_bootstrap_ci_rejects_misaligned_arrays():
+    """per-race 配列の長さが揃っていなければ弾く。
+
+    複勝の確信度フィルタでスキップしたレースで place だけ足して continue して
+    いたため、win 側が 271 レース分短くなっていた。点推定は別集計なので無事だが
+    CI が壊れる。範囲外にならない限り気づけないので、明示的に検査する。
+    """
+    from ai.evaluation.backtest import _bootstrap_ci
+
+    per_race = {
+        "ndcg1": np.ones(5), "ndcg3": np.ones(5),
+        "top1_hit": np.ones(5), "place_hit": np.ones(5),
+        "win_invested": np.full(3, 100.0), "win_payout": np.zeros(3),
+        "place_invested": np.full(5, 100.0), "place_payout": np.zeros(5),
+    }
+    with pytest.raises(ValueError, match="揃っていない"):
+        _bootstrap_ci(per_race, iters=10, seed=0)
+
+
+def test_evaluate_bootstrap_ci_with_confidence_filter(trained_scenario):
+    """確信度フィルタが効いている状態でも CI が計算できる (配列がずれない)。"""
+    db_file, model_dir = trained_scenario
+    metrics = evaluate(
+        model_path=model_dir, db=db_file,
+        probability_model_path=model_dir, place_min_confidence=0.9,
+        bootstrap_iters=50,
+    )
+    assert "payback_win_ci_low" in metrics
+    assert metrics["payback_win_ci_low"] <= metrics["payback_win_ci_high"]
