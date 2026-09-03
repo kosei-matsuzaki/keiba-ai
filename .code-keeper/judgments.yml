@@ -1,0 +1,349 @@
+# code-keeper の判断台帳。Claude が「このままでよい」と決めたものを覚えておく。
+#
+# 消せばまた指摘される。判断が変わったら消すか、why を書き直す。
+# at はそのときの大きさ。ここから 3 割伸びたら、判断を無視してもう一度言う。
+
+judgments:
+  - path: backend/src/ai/betting/strategy.py
+    key: "comment_thick"
+    decision: "減らさない"
+    why: "比率は高いが中身は全部「なぜ」。実測値・否定された仮説・踏んだバグの経緯で、コードから読み取れない。この repo は判断の根拠をコードの隣に残す方針 (CLAUDE.md)"
+    at: 81
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/ai/core/probabilities.py
+    key: "comment_thick"
+    decision: "減らさない"
+    why: "比率は高いが中身は全部「なぜ」。実測値・否定された仮説・踏んだバグの経緯で、コードから読み取れない。この repo は判断の根拠をコードの隣に残す方針 (CLAUDE.md)"
+    at: 120
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/ai/core/temperature.py
+    key: "dead_symbol:transform_place_scores"
+    decision: "消さない"
+    why: "テストからだけ使われている。tests は .code-policy.yml の scope 外なので、この道具には参照が見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/ai/inference/confidence.py
+    key: "comment_thick"
+    decision: "減らさない"
+    why: "比率は高いが中身は全部「なぜ」。実測値・否定された仮説・踏んだバグの経緯で、コードから読み取れない。この repo は判断の根拠をコードの隣に残す方針 (CLAUDE.md)"
+    at: 196
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/ai/model/loss.py
+    key: "comment_thick"
+    decision: "減らさない"
+    why: "比率は高いが中身は全部「なぜ」。実測値・否定された仮説・踏んだバグの経緯で、コードから読み取れない。この repo は判断の根拠をコードの隣に残す方針 (CLAUDE.md)"
+    at: 110
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/ai/model/preprocess.py
+    key: "dead_symbol:categorical_cardinalities"
+    decision: "消さない"
+    why: "テストからだけ使われている。tests は .code-policy.yml の scope 外なので、この道具には参照が見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/ai/training/train_nn.py
+    key: "dead_symbol:configure_optimizers"
+    decision: "消さない"
+    why: "PyTorch Lightning が呼ぶ規定のフック名。定義側に呼び出しは無くて当たり前"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/ai/training/train_nn.py
+    key: "dead_symbol:training_step"
+    decision: "消さない"
+    why: "PyTorch Lightning が呼ぶ規定のフック名。定義側に呼び出しは無くて当たり前"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/ai/training/train_nn.py
+    key: "dead_symbol:validation_step"
+    decision: "消さない"
+    why: "PyTorch Lightning が呼ぶ規定のフック名。定義側に呼び出しは無くて当たり前"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:bulk_delete_bets"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:create_bet"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:create_bets_bulk"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:delete_bet"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:export_bets_csv"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:get_bet"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:get_bet_breakdown"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:get_bet_summary"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:get_bet_timeseries"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:list_bets"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "dead_symbol:update_bet"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/bets.py
+    key: "symbol:get_bet_summary"
+    decision: "消さない"
+    why: "FastAPI の @router.get デコレータが呼ぶ。この道具は名前の出現回数で見るので、枠組み経由の呼び出しは見えない。routers 配下と Lightning のフックは全部これ"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/api/routers/health.py
+    key: "dead_symbol:get_health"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/horses.py
+    key: "dead_symbol:get_horse_history"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/jobs.py
+    key: "comment_thin"
+    decision: "足さない"
+    why: "下層を呼ぶだけ / 表を組むだけで、判断が入っていない。長い関数の説明は別途 1 行足した"
+    at: 2
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/api/routers/jobs.py
+    key: "dead_symbol:get_job"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/api/routers/jobs.py
+    key: "dead_symbol:list_jobs"
+    decision: "消さない"
+    why: "FastAPI の @router デコレータが呼ぶ。この道具は名前の出現回数で見るので枠組み経由の呼び出しが見えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: backend/src/core/tls.py
+    key: "comment_thick"
+    decision: "減らさない"
+    why: "比率は高いが中身は全部「なぜ」。実測値・否定された仮説・踏んだバグの経緯で、コードから読み取れない。この repo は判断の根拠をコードの隣に残す方針 (CLAUDE.md)"
+    at: 143
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/features/extractors/horse_history.py
+    key: "dup:backend/src/features/extractors/horse_history.py"
+    decision: "キー列だけ共通化して、dict 本体は残す"
+    why: "SQL 版と cache 版で値の作り方が違う (ORM 行 vs DataFrame)。共通化できるのはキー列だけで、それは HORSE_HISTORY_KEYS にした。ずれていないことは test_all_three_paths_return_the_same_keys が固定している"
+    at: 26
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/features/extractors/relative_features.py
+    key: "commented_out"
+    decision: "消さない"
+    why: "誤検知。59-85 行は compute_within_race_features の docstring であってコメントアウトされたコードではない。この道具は構文解析をせず行の並びだけを見るので、引数リストの長い関数の docstring をコード片と誤る"
+    at: 27
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: backend/src/jobs/ingest.py
+    key: "similar:_parse_args:5"
+    decision: "まとめない"
+    why: "argparse の定型。ingest 系は取る引数が違う (--date / --start --end / --race-ids)。共通化すると「どのジョブがどの引数を取るか」が分岐に沈む。refill 2 本だけは引数が完全一致だったので add_range_args に寄せた"
+    at: 5
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/jobs/ingest_range.py
+    key: "similar:_parse_args:5"
+    decision: "まとめない"
+    why: "argparse の定型。ingest 系は取る引数が違う (--date / --start --end / --race-ids)。共通化すると「どのジョブがどの引数を取るか」が分岐に沈む。refill 2 本だけは引数が完全一致だったので add_range_args に寄せた"
+    at: 5
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/jobs/ingest_results.py
+    key: "similar:_parse_args:5"
+    decision: "まとめない"
+    why: "argparse の定型。ingest 系は取る引数が違う (--date / --start --end / --race-ids)。共通化すると「どのジョブがどの引数を取るか」が分岐に沈む。refill 2 本だけは引数が完全一致だったので add_range_args に寄せた"
+    at: 5
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/jobs/ingest_shutuba.py
+    key: "similar:_parse_args:5"
+    decision: "まとめない"
+    why: "argparse の定型。ingest 系は取る引数が違う (--date / --start --end / --race-ids)。共通化すると「どのジョブがどの引数を取るか」が分岐に沈む。refill 2 本だけは引数が完全一致だったので add_range_args に寄せた"
+    at: 5
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/jobs/refill_payouts.py
+    key: "similar:_parse_args:5"
+    decision: "まとめない"
+    why: "argparse の定型。ingest 系は取る引数が違う (--date / --start --end / --race-ids)。共通化すると「どのジョブがどの引数を取るか」が分岐に沈む。refill 2 本だけは引数が完全一致だったので add_range_args に寄せた"
+    at: 5
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/services/bet_analytics.py
+    key: "dead:backend/src/services/bet_analytics.py"
+    decision: "消さない"
+    why: "誤検知。api/routers/bets.py が 'from services import bet_analytics' とパッケージ経由で import していて、6 箇所から呼ばれている。この道具はファイル名で import を引くのでパッケージ経由の参照を見落とす"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: backend/src/services/bet_analytics.py
+    key: "dead_file"
+    decision: "消さない"
+    why: "誤検知。api/routers/bets.py が 'from services import bet_analytics' とパッケージ経由で import していて 6 箇所から呼ばれている。この道具はファイル名で import を引くので、パッケージ属性経由の参照を追えない"
+    at: 1
+    date: 2026-09-02
+    by: "/code-keeper:prune"
+  - path: frontend/src/components/AddBetDialog.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/DeleteModelDialog.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/EditModelNameDialog.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/JobProgressCard.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/ModelTable.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/PurchaseTable.tsx
+    key: "dup:frontend/src/components/RecommendationsCard.tsx"
+    decision: "まとめない"
+    why: "列も title も違う。片方は連系を展開した入れ子テーブル、もう片方は券種をまたぐ一覧で、列が増減する理由が別。骨組みが同じだけ"
+    at: 13
+    date: 2026-09-02
+    by: "/code-keeper:review"
+  - path: frontend/src/components/TrainModelDialog.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/ui/dialog.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/components/ui/select.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "JSX の組み立てで、コードから読み取れないことが無い。推測でコメントを書くと嘘が固定される (comment.md 3 節)"
+    at: 3
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/lib/formatters.ts
+    key: "comment_thick"
+    decision: "減らさない"
+    why: "比率は高いが中身は全部「なぜ」。実測値・否定された仮説・踏んだバグの経緯で、コードから読み取れない。この repo は判断の根拠をコードの隣に残す方針 (CLAUDE.md)"
+    at: 125
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/routes/Ledger.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "下層を呼ぶだけ / 表を組むだけで、判断が入っていない。長い関数の説明は別途 1 行足した"
+    at: 2
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/routes/ModelDetail.tsx
+    key: "comment_thin"
+    decision: "足さない"
+    why: "下層を呼ぶだけ / 表を組むだけで、判断が入っていない。長い関数の説明は別途 1 行足した"
+    at: 2
+    date: 2026-09-02
+    by: "/code-keeper:comment"
+  - path: frontend/src/routes/RaceDetail.tsx
+    key: "dup:frontend/src/routes/RaceDetail.tsx"
+    decision: "まとめない"
+    why: "SortableHeader の 5 連。列ごとに title / className / sortKey が違い、config 配列 + map にすると列の追加削除がしづらくなる。ここは頻繁に手を入れている場所"
+    at: 13
+    date: 2026-09-02
+    by: "/code-keeper:review"
