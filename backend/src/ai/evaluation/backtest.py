@@ -26,6 +26,7 @@ apply only to the model side. analyze_place_bets.py で発見した
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import logging
 import math
@@ -526,6 +527,20 @@ def evaluate(
     # the on-disk artifacts.
     if bundle is None:
         bundle = load_model_full(model_path)
+
+    # **窓を省いたら「そのモデルが見ていない期間」を既定にする。**
+    # 以前は DB 全期間になり、学習データ込みの in-sample な値が黙って出ていた
+    # (画面の「計測」ボタンは窓を渡さないので、常にこれを踏んでいた)。
+    # 起点は valid の翌日 — valid は early stopping に使っているので out-of-sample
+    # ではない。valid が無ければ train の翌日。
+    if start is None:
+        meta = getattr(bundle, "meta", None) or {}
+        seen_until = str(meta.get("valid_range") or meta.get("train_range") or "").split("/")[-1]
+        if seen_until:
+            start = (
+                datetime.date.fromisoformat(seen_until) + datetime.timedelta(days=1)
+            ).isoformat()
+            log.info("窓を省略。モデルが見ていない %s 以降を既定にする", start)
 
     log.info("Building evaluation frame from %s", resolved_db)
     with session_scope(engine) as session:

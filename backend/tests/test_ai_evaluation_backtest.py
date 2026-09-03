@@ -280,9 +280,8 @@ def test_evaluate_persist_merges_into_model_run(trained_scenario):
         before = json.loads(run_before.metrics_json)
         assert "top1_hit" not in before  # まだ無い
 
-    # evaluate を persist=True で実行。合成 DB は全期間が学習範囲なので、
-    # ここでは in-sample ガードを明示的に外す (見たいのは merge の挙動)。
-    evaluate(model_path=model_dir, db=db_file, persist=True, allow_in_sample=True)
+    # 既定の窓はモデルが見ていない期間になるので、そのまま persist できる
+    evaluate(model_path=model_dir, db=db_file, persist=True)
 
     # metrics_json に top1_hit / payback_win 等が merge されている
     with Session(engine) as session:
@@ -510,25 +509,38 @@ def test_evaluate_flags_in_sample_window(trained_scenario):
 
     実害があった: 確率モデル 20260827T140017-nn は eval_start=2015-01-04
     (= 学習開始日) で測られ、38,691 レース中 33,000 が学習データだった。それが
-    画面に out-of-sample の「実測」として並んでいた。
+    画面に out-of-sample の「実測」として並んでいた (単勝 0.945、正しくは 0.821)。
+    既定の窓は直したので、ここでは重なる窓を明示的に渡して検出を確かめる。
     """
     db_file, model_dir = trained_scenario
-    metrics = evaluate(model_path=model_dir, db=db_file)
+    meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
+    train_start = str(meta["train_range"]).split("/")[0]
 
-    # 窓を指定していないので DB 全期間 = 学習期間を含む
+    # 学習開始日を窓の起点に指定すれば、当然重なる
+    metrics = evaluate(model_path=model_dir, db=db_file, start=train_start)
+
     assert metrics["eval_overlaps_train"] is True
     assert metrics["model_train_end"] is not None
     assert metrics["eval_start"] <= metrics["model_train_end"]
 
 
 def test_evaluate_refuses_to_persist_in_sample(trained_scenario):
-    """in-sample の数字は保存しない。一度出ると横比較できない値が黙って混ざる。"""
+    """in-sample の数字は保存しない。一度出ると横比較できない値が黙って混ざる。
+
+    既定の窓は「モデルが見ていない期間」なので、ここでは学習開始日を明示的に渡す。
+    """
     db_file, model_dir = trained_scenario
+    meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
+    train_start = str(meta["train_range"]).split("/")[0]
+
     with pytest.raises(ValueError, match="学習期間"):
-        evaluate(model_path=model_dir, db=db_file, persist=True)
+        evaluate(model_path=model_dir, db=db_file, start=train_start, persist=True)
 
     # 意図的なら通せる
-    metrics = evaluate(model_path=model_dir, db=db_file, persist=True, allow_in_sample=True)
+    metrics = evaluate(
+        model_path=model_dir, db=db_file, start=train_start,
+        persist=True, allow_in_sample=True,
+    )
     assert metrics["eval_overlaps_train"] is True
 
 
@@ -572,3 +584,18 @@ def test_evaluate_bootstrap_ci_with_confidence_filter(trained_scenario):
     )
     assert "payback_win_ci_low" in metrics
     assert metrics["payback_win_ci_low"] <= metrics["payback_win_ci_high"]
+
+
+def test_evaluate_defaults_window_to_unseen_period(trained_scenario):
+    """窓を省いたら「モデルが見ていない期間」を既定にする。
+
+    画面の「計測」ボタンは窓を渡さない。以前は DB 全期間になり、学習データ込みの
+    in-sample な値が黙って書き込まれていた。
+    """
+    db_file, model_dir = trained_scenario
+    meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
+    seen_until = str(meta.get("valid_range") or meta["train_range"]).split("/")[-1]
+
+    metrics = evaluate(model_path=model_dir, db=db_file)
+    assert metrics["eval_start"] > seen_until
+    assert metrics["eval_overlaps_train"] is False
