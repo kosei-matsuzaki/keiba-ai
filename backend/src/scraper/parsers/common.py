@@ -5,7 +5,14 @@ race_result.py と shutuba.py が同じパターンを別実装しないよう�
 
 from __future__ import annotations
 
+import contextlib
 import re
+
+from bs4 import Tag
+
+from core.logging import get_logger
+
+logger = get_logger(__name__)
 
 # ── 共通正規表現 ──────────────────────────────────────────────────────────────
 
@@ -99,3 +106,123 @@ def extract_id_from_href(href: str, kind: str) -> str | None:
     """
     m = re.search(rf"/{kind}/(?:[a-z_]+/)*([0-9a-zA-Z]+)", href)
     return m.group(1) if m else None
+
+
+# ── 出走表の 1 行を読む ────────────────────────────────────────────────────────
+#
+# 結果ページ (race_result.py) と出馬表 (shutuba.py) は、テーブルの列名も行の形も
+# ほぼ同じで、以前は同じヘルパを 2 つの関数の中に丸ごと写していた (34 行そのまま
+# 一致)。netkeiba の表構造が変われば両方が同時に変わる = 同じ理由で変わるので、
+# ここに 1 つだけ置く。
+
+def build_column_index(table: Tag, *, what: str) -> dict[str, int]:
+    """ヘッダ行から {列名: 列番号} を作る。
+
+    <thead> が無く最初の <tr> の <th> が列名、というページが多いので両方見る。
+    列名が 1 つも取れなければ空 dict を返す。呼び出し側は位置 (fallback_idx) で
+    引くことになるので、警告だけ出して続ける。
+    """
+    headers: list[str] = []
+    thead = table.find("thead")
+    if thead:
+        headers = [th.get_text(strip=True) for th in thead.find_all("th")]
+    if not headers:
+        first_tr = table.find("tr")
+        if first_tr:
+            headers = [th.get_text(strip=True) for th in first_tr.find_all("th")]
+
+    col = {name: idx for idx, name in enumerate(headers)}
+    if not col:
+        logger.warning("No %s table headers found; falling back to fixed column positions", what)
+    return col
+
+
+class RowCells:
+    """1 行の <td> を「列名、無ければ位置」で引く。
+
+    netkeiba はページによって列名が違い、合成フィクスチャでは列名が無いことも
+    ある。そのため列名と位置の二段構えが要る。
+    """
+
+    def __init__(self, tds: list[Tag], col: dict[str, int]) -> None:
+        self._tds = tds
+        self._col = col
+
+    def _index(self, name: str, fallback_idx: int | None) -> int | None:
+        idx = self._col.get(name, fallback_idx)
+        if idx is None or idx >= len(self._tds):
+            return None
+        return idx
+
+    def text(self, name: str, fallback_idx: int | None = None) -> str:
+        idx = self._index(name, fallback_idx)
+        return "" if idx is None else self._tds[idx].get_text(strip=True)
+
+    def link(self, name: str, fallback_idx: int | None = None) -> Tag | None:
+        idx = self._index(name, fallback_idx)
+        return None if idx is None else self._tds[idx].find("a", href=True)
+
+
+def to_int(text: str) -> int | None:
+    """数字なら int。空欄・"**" (発走前の人気) などは None。"""
+    try:
+        return int(text)
+    except (ValueError, TypeError):
+        return None
+
+
+def to_float(text: str) -> float | None:
+    """数字なら float。空欄・"---.-" (発走前のオッズ) などは None。"""
+    try:
+        return float(text)
+    except (ValueError, TypeError):
+        return None
+
+
+def name_from_link(tag: Tag | None) -> str | None:
+    """<a> の title 属性か表示文字列から名前を取る。全角/半角スペースは詰める。"""
+    if tag is None:
+        return None
+    raw = tag.get("title") or tag.get_text(strip=True)
+    if not raw:
+        return None
+    cleaned = raw.strip().replace("　", "").replace(" ", "")
+    return cleaned or None
+
+
+def parse_sex_age(text: str) -> tuple[str | None, int | None]:
+    """"牡3" のような性齢を (性, 齢) に分ける。読めない部分は None。"""
+    if not text:
+        return None, None
+    sex = text[0] if text[0] in ("牡", "牝", "セ") else None
+    age: int | None = None
+    with contextlib.suppress(ValueError, IndexError):
+        age = int(text[1:])
+    return sex, age
+
+
+def parse_entry_rows(table: Tag, col: dict[str, int], parse_row, *, what: str) -> list:
+    """テーブルのデータ行を 1 行ずつ `parse_row(tds, col)` に渡して集める。
+
+    ヘッダ行 (<th> を含む) と、<td> が 5 個未満の飾り行は飛ばす。1 行が壊れていても
+    そのレース全体を捨てないよう、例外は握って警告に落とす — netkeiba は取消馬や
+    注記でしばしば形の違う行を混ぜてくる。
+
+    結果ページと出馬表で同じ走査をしていたので 1 つにした。行の読み方 (parse_row)
+    だけが違う。
+    """
+    entries = []
+    for tr in table.find_all("tr"):
+        if tr.find("th"):  # ヘッダ行
+            continue
+        tds = tr.find_all("td")
+        if len(tds) < 5:
+            continue
+        try:
+            entry = parse_row(tds, col)
+        except Exception as exc:  # noqa: BLE001 — 1 行の失敗でレースを捨てない
+            logger.warning("Failed to parse %s entry row: %s", what, exc)
+            continue
+        if entry is not None:
+            entries.append(entry)
+    return entries

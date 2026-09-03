@@ -155,39 +155,57 @@ def _clip01(x: float) -> float:
     return min(max(x, 0.0), 1.0)
 
 
+# 馬の過去成績として builder に渡すキー。**単一の真実。**
+#
+# 同じ値を SQL から作る版 (compute_horse_history) と、まとめ読みした DataFrame から
+# 作る版 (compute_horse_history_from_cache) と、履歴 0 件の版 (_empty_horse_history)
+# の 3 つがあり、値の作り方は違ってよいが **キーがずれると学習と推論で列がずれる**。
+# 以前は 3 箇所に同じキー列を書いていた。ずれていないことは
+# test_features_horse_history.py が固定している。
+HORSE_HISTORY_KEYS: tuple[str, ...] = (
+    "recent_avg_finish",
+    "recent_n_starts",
+    "starts_same_distance",
+    "starts_same_course",
+    "recent_avg_agari_3f",
+    "recent_avg_agari_rel",
+    "recent_avg_agari_rank_pct",
+    "recent_avg_time_rel",
+    "days_since_last_race",
+    "wins_same_course",
+    "horse_course_place_rate",
+    "recent_finish_1",
+    "recent_finish_2",
+    "recent_finish_3",
+    "recent_avg_class_weight",
+    "high_class_starts",
+    "high_class_places",
+    "recent_avg_margin",
+    "recent_avg_finish_time_norm",
+    "recent_best_margin_in_top3",
+    "recent_avg_position_change",
+    "recent_passing_volatility",
+    "recent_early_position_ratio",
+    "recent_late_position_ratio",
+    "recent_best_agari_3f",
+    "last_class_weight",
+    "last_weight_carried",
+)
+
+# 履歴が 1 件も無いときに 0 を返すキー (件数の類)。残りは NaN。
+_COUNT_KEYS: frozenset[str] = frozenset((
+    "recent_n_starts",
+    "starts_same_distance",
+    "starts_same_course",
+    "wins_same_course",
+    "high_class_starts",
+    "high_class_places",
+))
+
+
 def _empty_horse_history() -> dict[str, float | int | None]:
     """履歴 0 件のときの返却値テンプレート。SQL/cache 両方が同一を返すよう一元化。"""
-    nan = math.nan
-    return {
-        "recent_avg_finish": nan,
-        "recent_n_starts": 0,
-        "starts_same_distance": 0,
-        "starts_same_course": 0,
-        "recent_avg_agari_3f": nan,
-        "recent_avg_agari_rel": nan,
-        "recent_avg_agari_rank_pct": nan,
-        "recent_avg_time_rel": nan,
-        "days_since_last_race": nan,
-        "wins_same_course": 0,
-        "horse_course_place_rate": nan,
-        "recent_finish_1": nan,
-        "recent_finish_2": nan,
-        "recent_finish_3": nan,
-        "recent_avg_class_weight": nan,
-        "high_class_starts": 0,
-        "high_class_places": 0,
-        "recent_avg_margin": nan,
-        "recent_avg_finish_time_norm": nan,
-        "recent_best_margin_in_top3": nan,
-        "recent_avg_position_change": nan,
-        "recent_passing_volatility": nan,
-        # Phase C
-        "recent_early_position_ratio": nan,
-        "recent_late_position_ratio": nan,
-        "recent_best_agari_3f": nan,
-        "last_class_weight": nan,
-        "last_weight_carried": nan,
-    }
+    return {k: (0 if k in _COUNT_KEYS else math.nan) for k in HORSE_HISTORY_KEYS}
 
 
 def compute_horse_history(

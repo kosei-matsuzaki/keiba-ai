@@ -297,3 +297,56 @@ def test_log_growth_collapses_to_cross_entropy_without_cash():
     # 本番設定 (0.25) では odds が効くので CE とは一致しない
     g_prod = grad_of(lambda: log_growth_loss(scores, pos, odds, mask, cash_fraction=0.25))
     assert not torch.allclose(g_prod, g_ce, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# _races_with_priced_winner — 3 つの賭けリターン損失が共有する前処理
+# ---------------------------------------------------------------------------
+
+
+def test_races_with_priced_winner_skips_unusable_races():
+    """値が計算できないレースだけを落とし、それ以外は素通しする。
+
+    log_growth / kelly_deploy / flat_ev はこの 18 行を写して持っていた。1 つに
+    まとめた以上、落とす条件がここに揃っていることを固定しておく。
+    """
+    import torch
+
+    from ai.model.loss import _races_with_priced_winner
+
+    n = 4
+    scores = torch.zeros(5, n)
+    pos = torch.tile(torch.arange(1.0, n + 1), (5, 1))
+    odds = torch.full((5, n), 3.0)
+    mask = torch.ones(5, n, dtype=torch.bool)
+
+    pos[0] = float("nan")          # 着順が無い
+    pos[1][pos[1] == 1] = 2.0      # 1 着がいない
+    odds[2, 0] = float("nan")      # 勝ち馬のオッズが不明
+    mask[3, 1:] = False            # 有効 1 頭 (softmax が意味を持たない)
+    # 4 番目だけが使える
+
+    got = list(_races_with_priced_winner(scores, pos, odds, mask))
+    assert len(got) == 1
+    p, o, w = got[0]
+    assert int(w) == 0                        # 添字 0 が 1 着
+    assert p.shape == (n,)
+    assert torch.isclose(p.sum(), torch.tensor(1.0))   # softmax 済み
+    assert torch.equal(o, odds[4])            # オッズは生のまま渡す
+
+
+def test_races_with_priced_winner_keeps_only_masked_horses():
+    """mask で外れた馬は p にも o にも入らない (レース内で詰めてから softmax)。"""
+    import torch
+
+    from ai.model.loss import _races_with_priced_winner
+
+    scores = torch.zeros(1, 4)
+    pos = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    odds = torch.tensor([[2.0, 5.0, 9.0, 99.0]])
+    mask = torch.tensor([[True, True, True, False]])
+
+    p, o, w = next(iter(_races_with_priced_winner(scores, pos, odds, mask)))
+    assert p.shape == (3,)
+    assert torch.equal(o, torch.tensor([2.0, 5.0, 9.0]))
+    assert int(w) == 0

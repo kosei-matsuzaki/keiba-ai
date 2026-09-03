@@ -62,7 +62,6 @@ race_result.py と同様に ParsedEntry / 新規 ShutubaEntry dataclass を使�
 
 from __future__ import annotations
 
-import contextlib
 import re
 from dataclasses import dataclass, field
 
@@ -75,8 +74,15 @@ from scraper.parsers.common import (
     TRACK_CONDITION_RE,
     WEATHER_RE,
     WEIGHT_RE,
+    RowCells,
+    build_column_index,
     extract_id_from_href,
+    name_from_link,
     normalize_race_class,
+    parse_entry_rows,
+    parse_sex_age,
+    to_float,
+    to_int,
 )
 
 logger = get_logger(__name__)
@@ -269,38 +275,14 @@ def _parse_entries(soup: BeautifulSoup, race_id: str) -> list[ShutubaEntry]:
         logger.error("Shutuba table not found — netkeiba page structure may have changed")
         raise ParseError("Shutuba table not found")
 
-    # ヘッダ行から列番号辞書を構築（テキストベース）
-    headers: list[str] = []
-    thead = table.find("thead")
-    if thead:
-        headers = [th.get_text(strip=True) for th in thead.find_all("th")]
-    if not headers:
-        first_tr = table.find("tr")
-        if first_tr:
-            headers = [th.get_text(strip=True) for th in first_tr.find_all("th")]
-
-    col: dict[str, int] = {name: idx for idx, name in enumerate(headers)}
-    if not col:
-        logger.warning("No shutuba table headers found; falling back to fixed column positions")
+    col = build_column_index(table, what="shutuba")
 
     # 実 HTML の列名（厩舎/馬体重(増減)/更新）を合成 fixture 共通の列名に正規化する
     col = _build_col_aliases(col)
 
-    entries: list[ShutubaEntry] = []
-    for tr in table.find_all("tr"):
-        if tr.find("th"):
-            continue
-        tds = tr.find_all("td")
-        if len(tds) < 5:
-            continue
-        try:
-            entry = _parse_entry_row(tds, race_id, col)
-        except Exception as exc:
-            logger.warning("Failed to parse shutuba entry row: %s", exc)
-            continue
-        if entry is not None:
-            entries.append(entry)
-    return entries
+    return parse_entry_rows(
+        table, col, lambda tds, c: _parse_entry_row(tds, race_id, c), what="shutuba"
+    )
 
 
 def _parse_entry_row(
@@ -308,40 +290,9 @@ def _parse_entry_row(
     race_id: str,
     col: dict[str, int],
 ) -> ShutubaEntry | None:
-    def text_for(name: str, fallback_idx: int | None = None) -> str:
-        idx = col.get(name, fallback_idx)
-        if idx is None or idx >= len(tds):
-            return ""
-        return tds[idx].get_text(strip=True)
+    cell = RowCells(tds, col)
 
-    def link_for(name: str, fallback_idx: int | None = None) -> Tag | None:
-        idx = col.get(name, fallback_idx)
-        if idx is None or idx >= len(tds):
-            return None
-        return tds[idx].find("a", href=True)
-
-    def to_int(text: str) -> int | None:
-        try:
-            return int(text)
-        except (ValueError, TypeError):
-            return None
-
-    def to_float(text: str) -> float | None:
-        try:
-            return float(text)
-        except (ValueError, TypeError):
-            return None
-
-    def name_from_link(tag: Tag | None) -> str | None:
-        if tag is None:
-            return None
-        raw = tag.get("title") or tag.get_text(strip=True)
-        if not raw:
-            return None
-        cleaned = raw.strip().replace("　", "").replace(" ", "")
-        return cleaned or None
-
-    horse_link = link_for("馬名", 3)
+    horse_link = cell.link("馬名", 3)
     if horse_link is None:
         return None
     horse_id = extract_id_from_href(horse_link["href"], "horse")
@@ -352,24 +303,20 @@ def _parse_entry_row(
     entry.horse_name = name_from_link(horse_link)
 
     # 馬番: "馬番" 列、なければ fallback_idx=2
-    entry.post_position = to_int(text_for("馬番", 2))
+    entry.post_position = to_int(cell.text("馬番", 2))
 
-    sex_age = text_for("性齢", 4)
-    if sex_age:
-        entry.sex = sex_age[0] if sex_age[0] in ("牡", "牝", "セ") else None
-        with contextlib.suppress(ValueError, IndexError):
-            entry.age = int(sex_age[1:])
+    entry.sex, entry.age = parse_sex_age(cell.text("性齢", 4))
 
-    entry.weight_carried = to_float(text_for("斤量", 5))
+    entry.weight_carried = to_float(cell.text("斤量", 5))
 
-    jockey_link = link_for("騎手", 6)
+    jockey_link = cell.link("騎手", 6)
     if jockey_link:
         entry.jockey_id = extract_id_from_href(jockey_link["href"], "jockey")
         entry.jockey_name = name_from_link(jockey_link)
 
     # "調教師" は合成 fixture の列名。実 HTML では "厩舎" が使われるが、
     # _build_col_aliases() で "調教師" にエイリアスされている。
-    trainer_link = link_for("調教師")
+    trainer_link = cell.link("調教師")
     if trainer_link:
         entry.trainer_id = extract_id_from_href(trainer_link["href"], "trainer")
         entry.trainer_name = name_from_link(trainer_link)
@@ -378,7 +325,7 @@ def _parse_entry_row(
     # "馬体重" は合成 fixture の列名。実 HTML では "馬体重(増減)" が使われるが、
     # _build_col_aliases() で "馬体重" にエイリアスされている。
     # 実 HTML では "484 (0)" のようにスペースあり -> WEIGHT_RE の \s* で吸収。
-    hw_text = text_for("馬体重")
+    hw_text = cell.text("馬体重")
     m = WEIGHT_RE.search(hw_text)
     if m:
         entry.horse_weight = int(m.group(1))
@@ -388,9 +335,9 @@ def _parse_entry_row(
     # 単勝オッズ: 実 HTML では発走前に "---.-" と表示され to_float が None を返す（正常）。
     # "単勝" は合成 fixture の列名。実 HTML では "更新" が使われるが、
     # _build_col_aliases() で "単勝" にエイリアスされている。
-    entry.odds_win = to_float(text_for("単勝"))
+    entry.odds_win = to_float(cell.text("単勝"))
     # 人気: 実 HTML では発走前に "**" と表示され to_int が None を返す（正常）。
-    entry.popularity = to_int(text_for("人気"))
+    entry.popularity = to_int(cell.text("人気"))
 
     return entry
 

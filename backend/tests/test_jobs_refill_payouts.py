@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from db.models.payout import Payout
 from db.models.race import Race
-from jobs.refill_payouts import _collect_cache_files, run_refill
+from jobs.refill_payouts import run_refill
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ALL_PAYOUT_HTML = (FIXTURES / "race_result_all_payout_types.html").read_text(encoding="utf-8")
@@ -41,59 +41,6 @@ def _insert_race(session, race_id: str) -> None:
     ).on_conflict_do_nothing(index_elements=["race_id"])
     session.execute(stmt)
     session.commit()
-
-
-# ── _collect_cache_files() ──────────────────────────────────────────────────
-
-def test_collect_cache_files_finds_html(tmp_path):
-    """キャッシュディレクトリの HTML を正しく列挙する。"""
-    raw = tmp_path / "raw"
-    _write_cache(raw, _RACE_ID_ALL, ALL_PAYOUT_HTML)
-
-    files = _collect_cache_files(raw, start=None, end=None)
-    assert len(files) == 1
-    assert files[0][0] == _RACE_ID_ALL
-
-
-def test_collect_cache_files_date_filter_start(tmp_path):
-    """--start より前の race_id はスキップされる。"""
-    raw = tmp_path / "raw"
-    _write_cache(raw, "202401010101", BASIC_HTML)
-    _write_cache(raw, "202406010101", ALL_PAYOUT_HTML)
-
-    files = _collect_cache_files(raw, start=datetime.date(2024, 6, 1), end=None)
-    race_ids = [f[0] for f in files]
-    assert "202406010101" in race_ids
-    assert "202401010101" not in race_ids
-
-
-def test_collect_cache_files_date_filter_end(tmp_path):
-    """--end より後の race_id はスキップされる。"""
-    raw = tmp_path / "raw"
-    _write_cache(raw, "202401010101", BASIC_HTML)
-    _write_cache(raw, "202412310101", ALL_PAYOUT_HTML)
-
-    files = _collect_cache_files(raw, start=None, end=datetime.date(2024, 1, 31))
-    race_ids = [f[0] for f in files]
-    assert "202401010101" in race_ids
-    assert "202412310101" not in race_ids
-
-
-def test_collect_cache_files_ignores_non_html(tmp_path):
-    """HTML ファイル以外は無視される。"""
-    raw = tmp_path / "raw"
-    html_path = _write_cache(raw, _RACE_ID_ALL, ALL_PAYOUT_HTML)
-    (html_path.parent / "note.txt").write_text("ignore me")
-
-    files = _collect_cache_files(raw, start=None, end=None)
-    assert len(files) == 1
-
-
-def test_collect_cache_files_empty_dir(tmp_path):
-    """キャッシュディレクトリが存在しない場合は空リストを返す。"""
-    raw = tmp_path / "raw_nonexistent"
-    files = _collect_cache_files(raw, start=None, end=None)
-    assert files == []
 
 
 # ── run_refill() ─────────────────────────────────────────────────────────────

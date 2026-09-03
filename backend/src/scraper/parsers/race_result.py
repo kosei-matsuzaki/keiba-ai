@@ -19,7 +19,6 @@ Target URL:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -32,8 +31,15 @@ from scraper.parsers.common import (
     SURFACE_DIST_RE,
     WEATHER_RE,
     WEIGHT_RE,
+    RowCells,
+    build_column_index,
     extract_id_from_href,
+    name_from_link,
     normalize_race_class,
+    parse_entry_rows,
+    parse_sex_age,
+    to_float,
+    to_int,
 )
 from scraper.parsers.payout import parse_payout
 
@@ -188,35 +194,11 @@ def _parse_entries(soup: BeautifulSoup, race_id: str, *, quiet: bool = False) ->
             logger.error("Race result table not found — netkeiba page structure may have changed")
         raise ParseError("Race result table not found")
 
-    # ヘッダ行を取得（<thead> が無く最初の <tr> の <th> が列名というケースが多い）
-    headers: list[str] = []
-    thead = table.find("thead")
-    if thead:
-        headers = [th.get_text(strip=True) for th in thead.find_all("th")]
-    if not headers:
-        first_tr = table.find("tr")
-        if first_tr:
-            headers = [th.get_text(strip=True) for th in first_tr.find_all("th")]
+    col = build_column_index(table, what="race result")
 
-    col: dict[str, int] = {name: idx for idx, name in enumerate(headers)}
-    if not col:
-        logger.warning("No table headers found; falling back to fixed column positions")
-
-    entries: list[ParsedEntry] = []
-    for tr in table.find_all("tr"):
-        if tr.find("th"):  # skip header row
-            continue
-        tds = tr.find_all("td")
-        if len(tds) < 5:
-            continue
-        try:
-            entry = _parse_entry_row(tds, race_id, col)
-        except Exception as exc:
-            logger.warning("Failed to parse entry row: %s", exc)
-            continue
-        if entry is not None:
-            entries.append(entry)
-    return entries
+    return parse_entry_rows(
+        table, col, lambda tds, c: _parse_entry_row(tds, race_id, c), what="race result"
+    )
 
 
 def _parse_entry_row(
@@ -224,41 +206,9 @@ def _parse_entry_row(
     race_id: str,
     col: dict[str, int],
 ) -> ParsedEntry | None:
-    def text_for(name: str, fallback_idx: int | None = None) -> str:
-        idx = col.get(name, fallback_idx)
-        if idx is None or idx >= len(tds):
-            return ""
-        return tds[idx].get_text(strip=True)
+    cell = RowCells(tds, col)
 
-    def link_for(name: str, fallback_idx: int | None = None) -> Tag | None:
-        idx = col.get(name, fallback_idx)
-        if idx is None or idx >= len(tds):
-            return None
-        return tds[idx].find("a", href=True)
-
-    def to_int(text: str) -> int | None:
-        try:
-            return int(text)
-        except (ValueError, TypeError):
-            return None
-
-    def to_float(text: str) -> float | None:
-        try:
-            return float(text)
-        except (ValueError, TypeError):
-            return None
-
-    def name_from_link(tag: Tag | None) -> str | None:
-        """Extract display name from an <a> tag via title attr or inner text."""
-        if tag is None:
-            return None
-        raw = tag.get("title") or tag.get_text(strip=True)
-        if not raw:
-            return None
-        cleaned = raw.strip().replace("　", "").replace(" ", "")
-        return cleaned or None
-
-    horse_link = link_for("馬名", 3)
+    horse_link = cell.link("馬名", 3)
     if horse_link is None:
         return None
     horse_id = extract_id_from_href(horse_link["href"], "horse")
@@ -268,45 +218,41 @@ def _parse_entry_row(
     entry = ParsedEntry(race_id=race_id, horse_id=horse_id)
     entry.horse_name = name_from_link(horse_link)
 
-    entry.finish_position = to_int(text_for("着順", 0))
-    entry.post_position = to_int(text_for("馬番", 2))
+    entry.finish_position = to_int(cell.text("着順", 0))
+    entry.post_position = to_int(cell.text("馬番", 2))
 
-    sex_age = text_for("性齢", 4)
-    if sex_age:
-        entry.sex = sex_age[0] if sex_age[0] in ("牡", "牝", "セ") else None
-        with contextlib.suppress(ValueError, IndexError):
-            entry.age = int(sex_age[1:])
+    entry.sex, entry.age = parse_sex_age(cell.text("性齢", 4))
 
-    entry.weight_carried = to_float(text_for("斤量", 5))
+    entry.weight_carried = to_float(cell.text("斤量", 5))
 
-    jockey_link = link_for("騎手", 6)
+    jockey_link = cell.link("騎手", 6)
     if jockey_link:
         entry.jockey_id = extract_id_from_href(jockey_link["href"], "jockey")
         entry.jockey_name = name_from_link(jockey_link)
 
-    entry.finish_time = _parse_time_to_seconds(text_for("タイム", 7))
-    entry.margin = text_for("着差", 8) or None
+    entry.finish_time = _parse_time_to_seconds(cell.text("タイム", 7))
+    entry.margin = cell.text("着差", 8) or None
 
-    hw_text = text_for("馬体重")
+    hw_text = cell.text("馬体重")
     m = WEIGHT_RE.search(hw_text)
     if m:
         entry.horse_weight = int(m.group(1))
         entry.horse_weight_diff = int(m.group(2))
 
-    entry.odds_win = to_float(text_for("単勝"))
-    entry.popularity = to_int(text_for("人気"))
+    entry.odds_win = to_float(cell.text("単勝"))
+    entry.popularity = to_int(cell.text("人気"))
 
-    trainer_link = link_for("調教師")
+    trainer_link = cell.link("調教師")
     if trainer_link:
         entry.trainer_id = extract_id_from_href(trainer_link["href"], "trainer")
         entry.trainer_name = name_from_link(trainer_link)
 
     # 上り3F（<span>38.5</span> 等、innerTextをfloat変換）
-    agari_raw = text_for("上り")
+    agari_raw = cell.text("上り")
     entry.agari_3f = to_float(agari_raw)
 
     # 通過（"2-2" 等の生文字列）
-    passing_raw = text_for("通過").strip()
+    passing_raw = cell.text("通過").strip()
     entry.passing = passing_raw or None
 
     return entry

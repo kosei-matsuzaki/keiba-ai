@@ -77,6 +77,44 @@ def plackett_luce_loss(
     return (total_loss / n_valid).squeeze()
 
 
+def _races_with_priced_winner(
+    scores: torch.Tensor,
+    finish_positions: torch.Tensor,
+    odds_win: torch.Tensor,
+    mask: torch.Tensor,
+):
+    """賭けリターン系の損失が使えるレースだけを (p, o, w) で順に返す。
+
+    条件は 3 つとも「値が計算できない」で、モデルの良し悪しとは無関係:
+      - 有効な馬が 2 頭未満 (softmax が意味を持たない)
+      - 1 着が確定していない (finish_positions に 1 が無い)
+      - 勝ち馬のオッズが不明 / 非正 (払戻を値付けできない)
+
+    log_growth / kelly_deploy / flat_ev がこの 18 行を丸ごと写していたので
+    1 つにした。ここを変えると 3 つの損失が同時に変わる = 同じ理由で変わる。
+
+    Yields:
+        p: [K] softmax(scores)、o: [K] 生オッズ、w: 勝ち馬の添字
+    """
+    for b in range(scores.size(0)):
+        valid = mask[b] & ~torch.isnan(finish_positions[b])
+        if valid.sum() < 2:
+            continue
+
+        s = scores[b][valid]                 # [K]
+        pos = finish_positions[b][valid]     # [K]
+        o = odds_win[b][valid]               # [K]
+
+        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
+        if winner_idx.numel() == 0:
+            continue
+        w = winner_idx[0]
+        if torch.isnan(o[w]) or o[w] <= 0:
+            continue
+
+        yield torch.softmax(s, dim=0), o, w
+
+
 def log_growth_loss(
     scores: torch.Tensor,
     finish_positions: torch.Tensor,
@@ -126,26 +164,8 @@ def log_growth_loss(
     total_loss = torch.zeros(1, device=device)
     n_valid = 0
 
-    for b in range(scores.size(0)):
-        valid = mask[b] & ~torch.isnan(finish_positions[b])
-        if valid.sum() < 2:
-            continue
-
-        s = scores[b][valid]                 # [K]
-        pos = finish_positions[b][valid]     # [K]
-        o = odds_win[b][valid]               # [K]
-
-        # Winner = finishing position 1.  Skip races with no clean winner or
-        # whose winner has no recorded odds (can't price the payoff).
-        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
-        if winner_idx.numel() == 0:
-            continue
-        w = winner_idx[0]
+    for p, o, w in _races_with_priced_winner(scores, finish_positions, odds_win, mask):
         o_w = o[w]
-        if torch.isnan(o_w) or o_w <= 0:
-            continue
-
-        p = torch.softmax(s, dim=0)          # [K] allocation weights
         p_w = p[w]
 
         wealth = 1.0 + kf * (p_w * o_w - 1.0)  # > 1 - kf > 0 for kf < 1
@@ -279,24 +299,8 @@ def kelly_deploy_loss(
     total_loss = torch.zeros(1, device=device)
     n_valid = 0
 
-    for b in range(scores.size(0)):
-        valid = mask[b] & ~torch.isnan(finish_positions[b])
-        if valid.sum() < 2:
-            continue
-
-        s = scores[b][valid]                 # [K]
-        pos = finish_positions[b][valid]     # [K]
-        o = odds_win[b][valid]               # [K]
-
-        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
-        if winner_idx.numel() == 0:
-            continue
-        w = winner_idx[0]
+    for p, o, w in _races_with_priced_winner(scores, finish_positions, odds_win, mask):
         o_w = o[w]
-        if torch.isnan(o_w) or o_w <= 0:
-            continue
-
-        p = torch.softmax(s, dim=0)          # [K] win probabilities
 
         # Per-horse edge & stake; unknown / non-positive odds → no stake.
         o_ok = torch.nan_to_num(o, nan=0.0)
@@ -383,24 +387,8 @@ def flat_ev_loss(
     total_loss = torch.zeros(1, device=device)
     n_valid = 0
 
-    for b in range(scores.size(0)):
-        valid = mask[b] & ~torch.isnan(finish_positions[b])
-        if valid.sum() < 2:
-            continue
-
-        s = scores[b][valid]                 # [K]
-        pos = finish_positions[b][valid]     # [K]
-        o = odds_win[b][valid]               # [K]
-
-        winner_idx = (pos == 1).nonzero(as_tuple=True)[0]
-        if winner_idx.numel() == 0:
-            continue
-        w = winner_idx[0]
+    for p, o, w in _races_with_priced_winner(scores, finish_positions, odds_win, mask):
         o_w = o[w]
-        if torch.isnan(o_w) or o_w <= 0:
-            continue
-
-        p = torch.softmax(s, dim=0)          # [K] win probabilities
 
         # オッズ不明 / 非正の馬は買えない → gate 0
         o_ok = torch.nan_to_num(o, nan=0.0)

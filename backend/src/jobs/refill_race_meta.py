@@ -22,11 +22,9 @@ import argparse
 import collections
 import datetime
 import json
-import re
 import sys
-from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from core.logging import configure_logging, get_logger
@@ -34,51 +32,11 @@ from core.paths import db_path, raw_dir
 from db.base import Base
 from db.models.race import Race
 from db.session import make_engine, session_scope
+from jobs.cache_scan import add_range_args, select_cached_races
 from scraper.parsers.race_result import ParseError, parse_race_result
 
 logger = get_logger(__name__)
 
-# race_id はファイル名から導出（12 桁数字）
-_RACE_ID_RE = re.compile(r"^(\d{12})\.html$")
-
-
-def _collect_cache_files(raw: Path) -> list[tuple[str, Path]]:
-    """data/raw/<yyyy>/<mm>/<race_id>.html を列挙して (race_id, path) リストを返す。"""
-    result: list[tuple[str, Path]] = []
-
-    if not raw.exists():
-        return result
-
-    for yyyy_dir in sorted(raw.iterdir()):
-        if not yyyy_dir.is_dir() or not yyyy_dir.name.isdigit():
-            continue
-
-        for mm_dir in sorted(yyyy_dir.iterdir()):
-            if not mm_dir.is_dir() or not mm_dir.name.isdigit():
-                continue
-
-            for html_file in sorted(mm_dir.iterdir()):
-                m = _RACE_ID_RE.match(html_file.name)
-                if not m:
-                    continue
-                race_id = m.group(1)
-
-                result.append((race_id, html_file))
-
-    return result
-
-
-def _race_date(session: Session, race_id: str) -> str | None:
-    """races.date を返す。行が無ければ None。
-
-    **race_id から日付を作らないこと。** race_id は 年+場+回+日+R の構造化文字列で、
-    `race_id[4:6]` は月ではなく競馬場コードである (CLAUDE.md)。以前ここを日付として
-    parse しており、--start/--end を付けるとほぼ全件が範囲外に落ちていた。
-    """
-    row = session.execute(
-        select(Race.date).where(Race.race_id == race_id).limit(1)
-    ).first()
-    return row[0] if row is not None else None
 
 
 def run_refill_race_meta(
@@ -98,29 +56,16 @@ def run_refill_race_meta(
             "class_distribution": {race_class: count},
         }
     """
-    raw = raw_dir()
-    cache_files = _collect_cache_files(raw)
-
-    if limit is not None:
-        cache_files = cache_files[:limit]
+    cache_files, skipped_no_race = select_cached_races(
+        session, raw_dir(), start=start, end=end, limit=limit
+    )
 
     processed = 0
-    skipped_no_race = 0
     skipped_parse_error = 0
     errors = 0
     class_dist: collections.Counter[str] = collections.Counter()
 
     for race_id, html_path in cache_files:
-        race_date = _race_date(session, race_id)
-        if race_date is None:
-            logger.debug("Skipping %s: no races row", race_id)
-            skipped_no_race += 1
-            continue
-        if start is not None and race_date < start.isoformat():
-            continue
-        if end is not None and race_date > end.isoformat():
-            continue
-
         try:
             html = html_path.read_text(encoding="utf-8")
         except Exception as exc:
@@ -209,28 +154,8 @@ def main(args: argparse.Namespace) -> int:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Retro-fill races.name / race_class from cached race HTML files"
-    )
-    parser.add_argument(
-        "--start",
-        default=None,
-        metavar="YYYY-MM-DD",
-        help="Start date (inclusive). Filters by race_id date prefix.",
-    )
-    parser.add_argument(
-        "--end",
-        default=None,
-        metavar="YYYY-MM-DD",
-        help="End date (inclusive). Filters by race_id date prefix.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Maximum number of cache files to process (debug use).",
-    )
+    parser = argparse.ArgumentParser(description="Retro-fill races.name / race_class from cached race HTML files")
+    add_range_args(parser)
     return parser.parse_args()
 
 

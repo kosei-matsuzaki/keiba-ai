@@ -17,80 +17,20 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
-import re
 import sys
-from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.logging import configure_logging, get_logger
 from core.paths import db_path, raw_dir
 from db.base import Base
 from db.models.payout import Payout
-from db.models.race import Race
 from db.session import make_engine, session_scope
+from jobs.cache_scan import add_range_args, select_cached_races
 from scraper.parsers.payout import parse_payouts
 
 logger = get_logger(__name__)
 
-# race_id はファイル名から導出（12 桁数字）
-_RACE_ID_RE = re.compile(r"^(\d{12})\.html$")
-
-
-def _collect_cache_files(
-    raw: Path,
-    start: datetime.date | None,
-    end: datetime.date | None,
-) -> list[tuple[str, Path]]:
-    """data/raw/<yyyy>/<mm>/<race_id>.html を列挙して (race_id, path) リストを返す。
-
-    start/end でフィルタリングする場合は race_id 先頭 8 桁（YYYYMMDD）を使う。
-    """
-    result: list[tuple[str, Path]] = []
-
-    if not raw.exists():
-        return result
-
-    for yyyy_dir in sorted(raw.iterdir()):
-        if not yyyy_dir.is_dir() or not yyyy_dir.name.isdigit():
-            continue
-
-        for mm_dir in sorted(yyyy_dir.iterdir()):
-            if not mm_dir.is_dir() or not mm_dir.name.isdigit():
-                continue
-
-            for html_file in sorted(mm_dir.iterdir()):
-                m = _RACE_ID_RE.match(html_file.name)
-                if not m:
-                    continue
-                race_id = m.group(1)
-
-                if start is not None or end is not None:
-                    # race_id 先頭 8 桁が YYYYMMDD
-                    try:
-                        race_date = datetime.date(
-                            int(race_id[:4]),
-                            int(race_id[4:6]),
-                            int(race_id[6:8]),
-                        )
-                    except ValueError:
-                        continue
-                    if start is not None and race_date < start:
-                        continue
-                    if end is not None and race_date > end:
-                        continue
-
-                result.append((race_id, html_file))
-
-    return result
-
-
-def _race_exists(session: Session, race_id: str) -> bool:
-    row = session.execute(
-        select(Race.race_id).where(Race.race_id == race_id).limit(1)
-    ).first()
-    return row is not None
 
 
 def run_refill(
@@ -104,25 +44,19 @@ def run_refill(
     Returns:
         counters: {"processed": int, "skipped_no_race": int, "skipped_no_payouts": int, "errors": int}
     """
-    raw = raw_dir()
-    cache_files = _collect_cache_files(raw, start, end)
-
-    if limit is not None:
-        cache_files = cache_files[:limit]
+    cache_files, skipped_no_race = select_cached_races(
+        session, raw_dir(), start=start, end=end, limit=limit
+    )
 
     counters = {
         "processed": 0,
-        "skipped_no_race": 0,
+        # races 行が無いレースは FK 制約に触るので、走らせる前に落としてある。
+        "skipped_no_race": skipped_no_race,
         "skipped_no_payouts": 0,
         "errors": 0,
     }
 
     for race_id, html_path in cache_files:
-        if not _race_exists(session, race_id):
-            logger.debug("Skipping %s: no races row (FK constraint)", race_id)
-            counters["skipped_no_race"] += 1
-            continue
-
         try:
             html = html_path.read_text(encoding="utf-8")
             payout_rows = parse_payouts(html)
@@ -189,28 +123,8 @@ def main(args: argparse.Namespace) -> int:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Retro-fill payouts table from cached race HTML files"
-    )
-    parser.add_argument(
-        "--start",
-        default=None,
-        metavar="YYYY-MM-DD",
-        help="Start date (inclusive). Filters by race_id date prefix.",
-    )
-    parser.add_argument(
-        "--end",
-        default=None,
-        metavar="YYYY-MM-DD",
-        help="End date (inclusive). Filters by race_id date prefix.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Maximum number of cache files to process (debug use).",
-    )
+    parser = argparse.ArgumentParser(description="Retro-fill payouts table from cached race HTML files")
+    add_range_args(parser)
     return parser.parse_args()
 
 

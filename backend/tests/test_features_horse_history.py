@@ -19,6 +19,8 @@ from db.models.entry import Entry
 from db.models.horse import Horse
 from db.models.race import Race
 from features.extractors.horse_history import (
+    HORSE_HISTORY_KEYS,
+    _empty_horse_history,
     build_horse_history_cache,
     compute_horse_history,
     compute_horse_history_from_cache,
@@ -848,3 +850,31 @@ def test_phase_b_partial_missing_data():
         else:
             assert sv == pytest.approx(cv), f"{k}: {sv!r} vs {cv!r}"
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 3 つの経路が同じキーを返すこと
+# ---------------------------------------------------------------------------
+
+
+def test_all_three_paths_return_the_same_keys(rich_engine):
+    """SQL 版 / cache 版 / 履歴 0 件版 のキー集合が HORSE_HISTORY_KEYS と一致する。
+
+    値が合っているかは test_cache_parity_with_sql_version が見ている。ここが見るのは
+    **キー列そのもの**で、以前はこれが 3 箇所に書き写されていた。ずれると学習と
+    推論で特徴量の列がずれる。
+    """
+    expected = set(HORSE_HISTORY_KEYS)
+    assert set(_empty_horse_history()) == expected
+
+    with Session(rich_engine) as session:
+        sql_result = compute_horse_history(
+            session, horse_id="H001", before_date=date(2024, 6, 15),
+            distance=1600, course="東京",
+        )
+        cache_result = compute_horse_history_from_cache(
+            build_horse_history_cache(session), horse_id="H001",
+            before_date=date(2024, 6, 15), distance=1600, course="東京",
+        )
+    assert set(sql_result) == expected
+    assert set(cache_result) == expected
