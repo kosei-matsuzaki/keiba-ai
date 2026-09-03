@@ -79,20 +79,36 @@ RACE_FEATURE_COLS: list[str] = [
 
 def _split_feature_cols(
     all_feature_cols: list[str],
+    odds_route: str = "head",
 ) -> tuple[list[str], list[str], list[str]]:
     """Split feature columns into (horse, race, odds) groups.
 
-    Race-level features are constant within a race (RACE_FEATURE_COLS).  Odds
-    (ODDS_FEATURE_COLUMNS) are always routed out of the horse (ability) encoder
-    into the scoring head (ability→value separation).  Under
-    ``KEIBA_EXCLUDE_ODDS_FEATURES`` the odds group is empty.  Each returned list
-    contains only columns present in ``all_feature_cols``.
+    Race-level features are constant within a race (RACE_FEATURE_COLS).
+    Under ``KEIBA_EXCLUDE_ODDS_FEATURES`` the odds group is empty.  Each returned
+    list contains only columns present in ``all_feature_cols``.
+
+    odds_route は ODDS_FEATURE_COLUMNS をどこに流すか:
+
+    ``head`` (既定)
+        ability encoder から外して scoring head へ (ability→value 分離)。
+    ``encoder``
+        馬の特徴として encoder に入れ、head には渡さない。**transformer を通る**
+        ので、レース内の相対的な市場位置を表現できる — head 直結だと odds は
+        その馬単体のスコア補正にしかならない、という疑いを測るための実験用。
+    ``both``
+        両方に入れる。深さの効果だけを分離したいとき。
+
+    encoder / both では列の並びを崩さない (categorical の位置は後段でこのリストから
+    数え直すので、順序が変わると埋め込みの対応がずれる)。
     """
     race_set = set(RACE_FEATURE_COLS)
     odds_set = set(ODDS_FEATURE_COLUMNS)
     race_cols = [c for c in all_feature_cols if c in race_set]
-    odds_cols = [c for c in all_feature_cols if c in odds_set]
-    horse_cols = [c for c in all_feature_cols if c not in race_set and c not in odds_set]
+    odds_cols = [c for c in all_feature_cols if c in odds_set] if odds_route != "encoder" else []
+    if odds_route == "head":
+        horse_cols = [c for c in all_feature_cols if c not in race_set and c not in odds_set]
+    else:
+        horse_cols = [c for c in all_feature_cols if c not in race_set]
     return horse_cols, race_cols, odds_cols
 
 
@@ -830,6 +846,8 @@ def train_nn(
     place_temp: float = 0.5,
     odds_dropout: float = 0.0,
     head_norm: str = "ability",
+    odds_route: str = "head",
+    head_mode: str = "concat",
     persist: bool = True,
     history_seq_len: int = 15,
     prebuilt_history=None,
@@ -885,7 +903,7 @@ def train_nn(
     # Feature column split (3-way): odds は ability encoder から外し head へ。
     all_feature_cols = get_active_features()
     horse_feature_cols, race_feature_cols, odds_feature_cols = _split_feature_cols(
-        all_feature_cols
+        all_feature_cols, odds_route
     )
 
     # Only keep cols that are actually present in the frame
@@ -1030,6 +1048,7 @@ def train_nn(
         history_feat_dim=history_feat_dim,
         odds_feat_dim=len(odds_feature_cols),
         head_norm_mode=head_norm,
+        head_mode=head_mode,
     )
 
     # Two-stage / fine-tuning: warm-start weights from a previously saved model.
@@ -1292,6 +1311,12 @@ def train_nn(
         "odds_dropout": odds_dropout,
         # head の正規化の掛け方。serving の再構築に必要 (層の形が変わる)。
         "head_norm_mode": head_norm,
+        # odds を encoder / head のどちらに流したか。列の分け方そのものは
+        # horse_feature_cols / odds_feature_cols に出ているので serving には不要だが、
+        # どの条件で学習したかが分からないと比較できないので残す。
+        "odds_route": odds_route,
+        # head の形。serving の再構築に必要 (層の構成が変わる)。
+        "head_mode": head_mode,
         # flat_ev の決定ルールは推論側では使わないが、どの EV 閾値・gate 温度で
         # 学習したかが分からないと再現も比較もできないので meta に残す。
         "flat_ev": (
@@ -1471,6 +1496,23 @@ def _cli() -> None:
             "だけが正規化を免れている非対称が、odds を効かせすぎている疑いを測るため。"
         ),
     )
+    parser.add_argument(
+        "--odds-route", choices=("head", "encoder", "both"), default="head",
+        help=(
+            "odds をどこに入れるか。head (既定) は scoring head に concat する"
+            " (ability→value 分離)。encoder は馬の特徴として transformer に通す —"
+            " head 直結だと odds がその馬単体の補正にしかならず、レース内の相対的な"
+            " 市場位置を表現できない、という疑いを測るため。both は両方。"
+        ),
+    )
+    parser.add_argument(
+        "--head-mode", choices=("concat", "residual"), default="concat",
+        help=(
+            "head の形。concat (既定) は ability と odds を混ぜる。residual は"
+            " score = 市場項(odds) + ability 補正 の加法分解で、ability 側を 0 から"
+            " 始める — 市場予想からのズレだけを学習させる。"
+        ),
+    )
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden layer size")
     parser.add_argument("--embed-dim", type=int, default=32, help="Embedding dimension")
     parser.add_argument("--n-heads", type=int, default=4, help="Number of attention heads")
@@ -1591,6 +1633,8 @@ def _cli() -> None:
         place_temp=args.place_temp,
         odds_dropout=args.odds_dropout,
         head_norm=args.head_norm,
+        odds_route=args.odds_route,
+        head_mode=args.head_mode,
         history_seq_len=args.history_seq_len,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

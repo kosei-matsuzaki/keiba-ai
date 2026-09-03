@@ -72,6 +72,8 @@ def load_nn_artifacts(path: Path, meta: dict) -> dict[str, object]:
         n_transformer_layers=int(params.get("n_transformer_layers", 2)),
         history_feat_dim=history_feat_dim,
         odds_feat_dim=odds_feat_dim,
+        head_norm_mode=str(meta.get("head_norm_mode", "ability")),
+        head_mode=str(meta.get("head_mode", "concat")),
     )
 
     state_dict = torch.load(path / "model.pt", map_location="cpu", weights_only=True)

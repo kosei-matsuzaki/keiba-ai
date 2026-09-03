@@ -425,3 +425,102 @@ def test_train_nn_multi_objective_loss(syn_engine_small, tmp_path, monkeypatch):
     meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
     assert meta["loss_type"] == "multi"
     assert meta["combo_weight"] == 0.01
+
+
+# ---------------------------------------------------------------------------
+# --odds-dropout: 学習中だけ head の odds を潰す (推論経路は変えない)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_odds_dropout_flattens_whole_races():
+    """p=1.0 で全レースの odds が *有効馬だけの* 平均に潰れる。
+
+    padding 位置を平均に含めてしまうと、頭数の少ないレースで基準がずれる。
+    """
+    import torch
+
+    from ai.training.train_nn import apply_odds_dropout
+
+    torch.manual_seed(0)
+    odds = torch.randn(64, 5, 2)
+    mask = torch.ones(64, 5, dtype=torch.bool)
+    mask[:, 4] = False  # 1 頭は padding
+
+    assert torch.equal(apply_odds_dropout(odds, mask, 0.0), odds)
+
+    out = apply_odds_dropout(odds, mask, 1.0)
+    valid = out[:, :4]
+    assert torch.allclose(valid, valid[:, :1].expand_as(valid), atol=1e-6)
+    assert torch.allclose(valid[:, 0], odds[:, :4].mean(1), atol=1e-6)
+
+    out = apply_odds_dropout(odds, mask, 0.5)
+    flattened = 1 - (out[:, :4] == odds[:, :4]).all(-1).all(-1).float().mean().item()
+    assert 0.3 < flattened < 0.7
+
+
+def test_train_nn_odds_dropout(syn_engine_small, tmp_path, monkeypatch):
+    """--odds-dropout で学習が通り、値が meta.json に残る。"""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu",
+        monitor="valid_tansho_roi", odds_dropout=0.3,
+    )
+
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta.get("odds_dropout") == 0.3
+
+
+# ---------------------------------------------------------------------------
+# --odds-route: odds を encoder / head のどちらに流すか
+# ---------------------------------------------------------------------------
+
+
+def test_split_feature_cols_routes_odds():
+    """head は odds を encoder から外し、encoder は逆に head へ渡さない。
+
+    encoder / both では **列の並びを崩さない**。categorical の位置は後段でこの
+    リストから数え直すので、順序が変わると埋め込みの対応がずれる。
+    """
+    from ai.training.train_nn import _split_feature_cols
+
+    cols = ["distance", "post_position", "odds_win", "age", "popularity", "n_runners"]
+
+    horse, race, odds = _split_feature_cols(cols, "head")
+    assert odds == ["odds_win", "popularity"]
+    assert "odds_win" not in horse and "popularity" not in horse
+
+    horse_e, _, odds_e = _split_feature_cols(cols, "encoder")
+    assert odds_e == []
+    assert "odds_win" in horse_e and "popularity" in horse_e
+
+    horse_b, _, odds_b = _split_feature_cols(cols, "both")
+    assert odds_b == ["odds_win", "popularity"]
+    assert "odds_win" in horse_b
+
+    # 並びは元の all_feature_cols のまま (race 列を抜いただけ)
+    assert horse_e == [c for c in cols if c not in race]
+    assert horse_e == horse_b
+
+
+def test_train_nn_odds_route_encoder(syn_engine_small, tmp_path, monkeypatch):
+    """--odds-route encoder で学習が通り、列の分け方が meta.json に出る。"""
+    engine, db_file = syn_engine_small
+    monkeypatch.setenv("KEIBA_DATA_DIR", str(tmp_path / "data"))
+
+    result = train_nn(
+        db=db_file, train_end=None, valid_months=2, test_months=1,
+        loss="log_growth", hidden_dim=16, embed_dim=8, n_heads=2,
+        batch_size=4, max_epochs=2, device="cpu",
+        monitor="valid_tansho_roi", odds_route="encoder",
+    )
+
+    meta = json.loads((Path(result["model_dir"]) / "meta.json").read_text())
+    assert meta["odds_route"] == "encoder"
+    # head には渡らない = odds_feat_dim 0。serving はこの列リストだけで再構築できる。
+    assert meta["odds_feat_dim"] == 0
+    assert meta["odds_feature_cols"] == []
+    assert "odds_win" in meta["horse_feature_cols"]

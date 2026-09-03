@@ -48,6 +48,10 @@ _TREATMENT_FLAGS = {
     "pace": {"KEIBA_PACE_FEATURES": "1"},
     "loss_kelly": {},    # differs by --loss, not env
     "loss_flat_ev": {},  # 同上 (--loss flat_ev)
+    "odds_dropout": {},  # env でも loss でもなく train_nn の引数で切替
+    "head_norm": {},     # 同上 (--head-norm joint)
+    "odds_route": {},    # 同上 (--odds-route encoder)
+    "head_mode": {},     # 同上 (--head-mode residual)
 }
 _KNOB_ALL_FLAGS = [
     "KEIBA_MISSING_INDICATORS", "KEIBA_LOG_FEATURES", "KEIBA_LOG_FEATURE_COLS",
@@ -100,7 +104,9 @@ def _build_history():
     return h
 
 
-def _run(args, label, frame, history, *, seed, flags, loss, no_odds) -> dict:
+def _run(args, label, frame, history, *, seed, flags, loss, no_odds,
+         odds_dropout=0.0, head_norm="ability", odds_route="head",
+         head_mode="concat") -> dict:
     _apply(flags)
     os.environ["KEIBA_EXCLUDE_ODDS_FEATURES"] = "1" if no_odds else "0"
     _seed(seed)
@@ -110,7 +116,10 @@ def _run(args, label, frame, history, *, seed, flags, loss, no_odds) -> dict:
         train_end=args.train_end, valid_months=args.valid_months,
         test_months=args.test_months, loss=loss, monitor="valid_tansho_roi",
         device=args.device, max_epochs=args.max_epochs,
+        batch_size=args.batch_size,
         prebuilt_frame=frame, prebuilt_history=history, persist=False,
+        odds_dropout=odds_dropout, head_norm=head_norm, odds_route=odds_route,
+        head_mode=head_mode,
     )
     keep = {k: m.get(k) for k in _METRICS}
     print(f"[result] s{seed} {label}: {json.dumps(keep)}", flush=True)
@@ -143,35 +152,73 @@ def main() -> None:
     ap.add_argument("--test-months", type=int, default=6)
     ap.add_argument("--max-epochs", type=int, default=60)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument(
+        "--batch-size", type=int, default=32,
+        help="学習の batch size (既定 32 = 本番)。CPU では大きいほど速いが、絶対値は"
+             "本番と一致しなくなる。paired の差分は両アーム共通なので比較には使える。",
+    )
+    ap.add_argument(
+        "--frame-start", default=None,
+        help="学習フレームをこの日付以降に絞る (既定 None = 全期間)。1 本の所要時間を"
+             "下げる用。valid/test は train_end 基準なので窓の位置は変わらない。",
+    )
+    ap.add_argument(
+        "--base-loss", default="log_growth",
+        help="baseline の損失 (既定 log_growth)。本番と同じ multi で測りたいときに使う。",
+    )
+    ap.add_argument(
+        "--odds-route", choices=("encoder", "both"), default="encoder",
+        help="--knob odds_route の treatment 側 (既定 encoder)。",
+    )
+    ap.add_argument(
+        "--odds-dropout", type=float, default=0.3,
+        help="--knob odds_dropout の treatment 側の確率 (既定 0.3)。",
+    )
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
     seeds = [int(s) for s in args.seeds.split(",")]
     knob = args.knob
     treat_flags = _TREATMENT_FLAGS[knob]
-    base_loss = "log_growth"
+    base_loss = args.base_loss
     _LOSS_BY_KNOB = {"loss_kelly": "kelly_deploy", "loss_flat_ev": "flat_ev"}
-    treat_loss = _LOSS_BY_KNOB.get(knob, "log_growth")
+    treat_loss = _LOSS_BY_KNOB.get(knob, base_loss)
+    # このノブの treatment は「学習時だけ odds を潰す」ので、no-odds regime では
+    # 潰す対象が無く base と同一になる。回すだけ無駄なので odds regime だけにする。
+    treat_dropout = args.odds_dropout if knob == "odds_dropout" else 0.0
+    treat_head_norm = "joint" if knob == "head_norm" else "ability"
+    treat_odds_route = args.odds_route if knob == "odds_route" else "head"
+    treat_head_mode = "residual" if knob == "head_mode" else "concat"
+    # odds に関わるノブは no-odds regime だと base と同一になる。回すだけ無駄。
+    _ODDS_KNOBS = ("odds_dropout", "head_norm", "odds_route", "head_mode")
+    regimes = (False,) if knob in _ODDS_KNOBS else (False, True)
 
     print(f"knob={knob} seeds={seeds} train_end={args.train_end} "
           f"valid/test {args.valid_months}/{args.test_months}m epochs={args.max_epochs}", flush=True)
 
     frame_base = _build_frame({})
+    if args.frame_start:
+        n0 = len(frame_base)
+        frame_base = frame_base[frame_base["date"] >= args.frame_start].reset_index(drop=True)
+        print(f"[frame] trimmed to >= {args.frame_start}: {n0} -> {len(frame_base)}", flush=True)
     frame_treat = _build_frame(treat_flags) if knob in _KNOB_CHANGES_FRAME else frame_base
     # speed changes history dim → rebuild per run (prebuilt_history=None); else share.
     history = None if knob in _KNOB_CHANGES_HISTORY else _build_history()
 
     rows = []
     for seed in seeds:
-        for no_odds in (False, True):
+        for no_odds in regimes:
             tag = "no-odds" if no_odds else "odds"
             rows.append(_run(args, f"base/{tag}", frame_base, history,
                              seed=seed, flags={}, loss=base_loss, no_odds=no_odds))
             rows.append(_run(args, f"treat/{tag}", frame_treat, history,
-                             seed=seed, flags=treat_flags, loss=treat_loss, no_odds=no_odds))
+                             seed=seed, flags=treat_flags, loss=treat_loss, no_odds=no_odds,
+                             odds_dropout=treat_dropout, head_norm=treat_head_norm,
+                             odds_route=treat_odds_route, head_mode=treat_head_mode))
 
     _print_deltas(rows, seeds, "base/odds", "treat/odds", "WITH-ODDS (production)")
-    _print_deltas(rows, seeds, "base/no-odds", "treat/no-odds", "NO-ODDS (ability)")
+    if True in regimes:
+        _print_deltas(rows, seeds, "base/no-odds", "treat/no-odds", "NO-ODDS (ability)")
 
     out = args.out or f"/tmp/model_side_ab_{knob}.json"
     with open(out, "w") as f:

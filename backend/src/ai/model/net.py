@@ -204,6 +204,8 @@ class RaceTransformerModel(nn.Module):
         history_feat_dim: int = 0,
         history_hidden: int = 64,
         odds_feat_dim: int = 0,
+        head_norm_mode: str = "ability",
+        head_mode: str = "concat",
     ) -> None:
         super().__init__()
 
@@ -256,13 +258,39 @@ class RaceTransformerModel(nn.Module):
         # スコアリング head: ability(transformer 出力) を LayerNorm したものに
         # 標準化済み odds(市場価値) を concat して MLP に通す (ability→value 分離)。
         # odds_feat_dim=0 (exclude-odds) のとき odds concat なし = ability-only。
+        #
+        # head_norm_mode:
+        #   "ability" (既定) ability だけ LayerNorm し、odds は素のまま concat。
+        #   "joint"          concat してから 1 回 LayerNorm する。ability は 32 次元に
+        #                    押し込まれたうえ正規化で振幅が均されるのに、odds 2 列は
+        #                    無加工で入る — この非対称が「odds が効きすぎる」原因では
+        #                    ないか、を測るための実験用。
         self.odds_feat_dim = max(odds_feat_dim, 0)
-        self.head_norm = nn.LayerNorm(embed_dim)
+        self.head_norm_mode = head_norm_mode
+        head_in = embed_dim + self.odds_feat_dim
+        if head_norm_mode == "joint" and self.odds_feat_dim > 0:
+            self.head_norm = nn.LayerNorm(head_in)
+        else:
+            self.head_norm = nn.LayerNorm(embed_dim)
+        # head_mode:
+        #   "concat" (既定)  ability と odds を concat して隠れ層で混ぜる。両者が
+        #                    乗算的に絡める代わりに、odds が出力の直前から強く効く。
+        #   "residual"       score = 市場項(odds) + ability 補正 の加法分解。ability
+        #                    側の最終層を 0 初期化するので、学習は「純粋な市場予想」
+        #                    から始まり、説明できる分だけ ability が足していく。
+        self.head_mode = head_mode
+        residual = head_mode == "residual" and self.odds_feat_dim > 0
+        self.market_head = nn.Linear(self.odds_feat_dim, 1) if residual else None
         self.head_mlp = nn.Sequential(
-            nn.Linear(embed_dim + self.odds_feat_dim, hidden_dim),
+            nn.Linear(embed_dim if residual else head_in, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
+        if residual:
+            # ability 補正は 0 から始める。勾配は ability の活性を通って流れるので
+            # 学習は止まらない (重みが 0 でも d(score)/dW は 0 でない)。
+            nn.init.zeros_(self.head_mlp[-1].weight)
+            nn.init.zeros_(self.head_mlp[-1].bias)
 
     def _encode_history(
         self, history_seq: torch.Tensor, history_lengths: torch.Tensor
@@ -316,14 +344,24 @@ class RaceTransformerModel(nn.Module):
         key_padding_mask = ~mask
         attended = self.transformer(encoded, src_key_padding_mask=key_padding_mask)
 
-        normed = self.head_norm(attended)  # [B, N, embed]
-        if self.odds_feat_dim > 0:
-            if odds_features is None:
-                # 欠損オッズ: ability-only で評価 (zeros = 標準化平均)
-                b, n, _ = normed.shape
-                odds_features = normed.new_zeros(b, n, self.odds_feat_dim)
-            normed = torch.cat([normed, odds_features], dim=-1)  # [B, N, embed+odds]
-        scores = self.head_mlp(normed).squeeze(-1)
+        if self.odds_feat_dim > 0 and odds_features is None:
+            # 欠損オッズ: ability-only で評価 (zeros = 標準化平均)
+            b, n, _ = attended.shape
+            odds_features = attended.new_zeros(b, n, self.odds_feat_dim)
+
+        if self.market_head is not None:
+            # residual: 市場項と ability 補正を足すだけ。両者は混ざらない。
+            normed = self.head_norm(attended)
+            scores = (self.market_head(odds_features) + self.head_mlp(normed)).squeeze(-1)
+        else:
+            joint = self.head_norm_mode == "joint" and self.odds_feat_dim > 0
+            # ability だけ正規化するのが既定。joint は concat してからまとめて正規化する。
+            normed = attended if joint else self.head_norm(attended)  # [B, N, embed]
+            if self.odds_feat_dim > 0:
+                normed = torch.cat([normed, odds_features], dim=-1)  # [B, N, embed+odds]
+                if joint:
+                    normed = self.head_norm(normed)
+            scores = self.head_mlp(normed).squeeze(-1)
 
         scores = scores.masked_fill(~mask, float("-inf"))
         return scores

@@ -312,3 +312,75 @@ class TestRaceTransformerOddsHead:
         grads = [p.grad for p in model.head_mlp.parameters()]
         assert all(g is not None and torch.isfinite(g).all() for g in grads)
         assert any(g.abs().sum() > 0 for g in grads)
+
+
+# ---------------------------------------------------------------------------
+# head_norm_mode — head の正規化を odds にも掛けるか
+# ---------------------------------------------------------------------------
+
+
+def test_head_norm_mode_changes_where_layernorm_applies():
+    """joint は concat 後の次元で正規化する。既定 (ability) は今までどおり。
+
+    既定を変えると保存済みモデルの state_dict が読めなくなるので、既定が
+    LayerNorm(embed_dim) のままであることも一緒に固定する。
+    """
+    import torch
+
+    from ai.model.net import RaceTransformerModel
+
+    kw = dict(horse_feat_dim=8, race_feat_dim=4, embed_dim=16, hidden_dim=8,
+              n_heads=2, odds_feat_dim=2)
+
+    assert RaceTransformerModel(**kw).head_norm.normalized_shape == (16,)
+    assert RaceTransformerModel(**kw, head_norm_mode="joint").head_norm.normalized_shape == (18,)
+
+    # odds を使わない構成では concat する相手がいないので ability に落ちる
+    no_odds = dict(kw, odds_feat_dim=0)
+    assert RaceTransformerModel(**no_odds, head_norm_mode="joint").head_norm.normalized_shape == (16,)
+
+    torch.manual_seed(0)
+    x, r = torch.randn(3, 6, 8), torch.randn(3, 4)
+    mask = torch.ones(3, 6, dtype=torch.bool)
+    mask[0, 4:] = False
+    odds = torch.randn(3, 6, 2)
+    for mode in ("ability", "joint"):
+        scores = RaceTransformerModel(**kw, head_norm_mode=mode).eval()(
+            x, r, mask, odds_features=odds
+        )
+        assert scores.shape == (3, 6)
+        assert torch.isinf(scores[0, 4:]).all()
+        assert torch.isfinite(scores[mask]).all()
+
+
+def test_residual_head_starts_as_pure_market_and_still_learns():
+    """residual は score = 市場項 + ability 補正。補正は 0 から始まる。
+
+    0 初期化でも d(score)/dW は ability の活性なので勾配は流れる。ここが止まって
+    いると「市場予想のまま何も学習しない」モデルになるので、必ず一緒に確かめる。
+    """
+    import torch
+
+    from ai.model.net import RaceTransformerModel
+
+    kw = dict(horse_feat_dim=8, race_feat_dim=4, embed_dim=16, hidden_dim=8,
+              n_heads=2, odds_feat_dim=2)
+    torch.manual_seed(0)
+    x, r = torch.randn(3, 6, 8), torch.randn(3, 4)
+    mask = torch.ones(3, 6, dtype=torch.bool)
+    mask[0, 4:] = False
+    odds = torch.randn(3, 6, 2)
+
+    model = RaceTransformerModel(**kw, head_mode="residual")
+    model.eval()
+    scores = model(x, r, mask, odds_features=odds)
+    market_only = model.market_head(odds).squeeze(-1)
+    assert torch.allclose(scores[mask], market_only[mask], atol=1e-6)
+
+    model.train()
+    model(x, r, mask, odds_features=odds)[mask].sum().backward()
+    assert model.head_mlp[-1].weight.grad.abs().sum() > 0
+
+    # 既定は今までどおり (市場項を持たない)。odds が無ければ residual は無効。
+    assert RaceTransformerModel(**kw).market_head is None
+    assert RaceTransformerModel(**dict(kw, odds_feat_dim=0), head_mode="residual").market_head is None
