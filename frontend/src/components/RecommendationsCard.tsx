@@ -262,13 +262,13 @@ export function RecommendationsCard({
           />
         ) : (
           <>
-            <Tabs defaultValue="detail">
+            {/* 出馬表を先頭かつ既定にする。まず何が走るかを見て、それから
+                買い目に進むのが読む順序。 */}
+            <Tabs defaultValue={entriesTab != null ? 'entries' : 'detail'}>
               <TabsList>
+                {entriesTab != null && <TabsTrigger value="entries">出馬表</TabsTrigger>}
                 <TabsTrigger value="detail">1 点ずつ</TabsTrigger>
                 <TabsTrigger value="purchase">購入用</TabsTrigger>
-                {/* 出走馬は参照するデータなので買い目の後ろ。既定は「1 点ずつ」の
-                    まま — 買い目を先に見せる方針は変えない */}
-                {entriesTab != null && <TabsTrigger value="entries">出走馬</TabsTrigger>}
                 {/* 結果が出ているレースだけ。買い目と同じ場所で振り返れるようにする */}
                 {payouts.length > 0 && <TabsTrigger value="review">答え合わせ</TabsTrigger>}
               </TabsList>

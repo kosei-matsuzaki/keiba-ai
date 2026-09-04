@@ -297,8 +297,6 @@ describe('RaceDetail', () => {
     expect(screen.queryByText('2.500')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
-    // 出走馬一覧はタブの中。買い目が出ているときは 1 つのタブ列にまとまる
-    await user.click(await screen.findByRole('tab', { name: '出走馬' }));
 
     // Score values for both horses appear after running AI
     expect(await screen.findByText('2.500')).toBeInTheDocument();
@@ -371,8 +369,6 @@ describe('RaceDetail', () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
-    // 出走馬一覧はタブの中。買い目が出ているときは 1 つのタブ列にまとまる
-    await user.click(await screen.findByRole('tab', { name: '出走馬' }));
     await screen.findByText('2.500');
     expect(screen.queryByText('BUY')).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '推奨' })).not.toBeInTheDocument();
@@ -443,6 +439,8 @@ describe('RaceDetail', () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
+    // 既定は出馬表なので、買い目のタブを開く
+    await user.click(await screen.findByRole('tab', { name: '1 点ずつ' }));
     await screen.findByText('推奨買目');
     // 「単勝」は条件バーの券種チップにも出るので、買い目の combo で特定する
     expect(await screen.findByTitle('1')).toBeInTheDocument();
@@ -497,7 +495,7 @@ describe('RaceDetail', () => {
     expect(rows[rows.length - 1]).toHaveTextContent('テスト馬A');
   });
 
-  it('出走馬一覧はタブに入り、買い目が出ないときだけ単独で出る', async () => {
+  it('出馬表はタブの先頭かつ既定。買い目が出ないときだけ単独で出る', async () => {
     // 画面に表が 2 つ縦に並ぶのをやめ、1 つのタブ列にまとめた。ただし買い目が
     // 取れないとタブ自体が立たないので、そのときは単独カードで出す。
     const user = userEvent.setup();
@@ -505,16 +503,16 @@ describe('RaceDetail', () => {
     await screen.findByText('出走馬一覧');
 
     // 予想前: タブは無く、単独カードとして出ている
-    expect(screen.queryByRole('tab', { name: '出走馬' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '出馬表' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
     // 予想後: タブに入り、単独カードは消える
-    expect(await screen.findByRole('tab', { name: '出走馬' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: '出馬表' })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByText('出走馬一覧')).not.toBeInTheDocument();
     });
-    // 既定は「1 点ずつ」のまま (買い目を先に見せる)
-    expect(screen.getByRole('tab', { name: '1 点ずつ' })).toHaveAttribute(
+    // 既定は出馬表。まず何が走るかを見て、それから買い目に進む
+    expect(screen.getByRole('tab', { name: '出馬表' })).toHaveAttribute(
       'aria-selected',
       'true'
     );
@@ -539,14 +537,21 @@ describe('RaceDetail', () => {
     // ので、別の場所に出すと対応を取りながら読む羽目になる
     // 「確信度」は推奨買目の表にもある見出しなので、説明パネル内に限定して探す
     const panel = within(summary.closest('details') as HTMLElement);
-    expect(panel.getByRole('columnheader', { name: '確信度' })).toBeInTheDocument();
+    expect(panel.getByRole('columnheader', { name: /確信度/ })).toBeInTheDocument();
     expect(panel.getByRole('columnheader', { name: /1 点 = 100 円/ })).toBeInTheDocument();
-    expect(screen.getByText('1着になる確率')).toBeInTheDocument();
-    expect(screen.getByText('3着以内に入る確率')).toBeInTheDocument();
-    expect(screen.getByText('その組合せが当たる確率')).toBeInTheDocument();
-    expect(screen.getByText(/5 ×（確信度 ÷ 25%）²/)).toBeInTheDocument();
-    expect(screen.getByText(/5 ×（確信度 ÷ 50%）²/)).toBeInTheDocument();
-    expect(screen.getByText(/1 組合せ 1 点（下限超えを全部・上限なし）/)).toBeInTheDocument();
+    // **全券種を 1 行ずつ出す。** 下限も数え方も券種で違うので、まとめると
+    // 表の外に書くことになる
+    expect(panel.getByText('1着だった割合')).toBeInTheDocument();
+    expect(panel.getByText('3着以内だった割合')).toBeInTheDocument();
+    expect(panel.getByText('1-2着がこの2頭')).toBeInTheDocument();
+    expect(panel.getByText('3着以内にこの2頭')).toBeInTheDocument();
+    expect(panel.getByText('1-2-3着がこの順')).toBeInTheDocument();
+    // 連系は 5 券種を 1 行ずつ。下限は「買う条件」の列に入り、表の外に別行を出さない
+    for (const bt of ['馬連', 'ワイド', '馬単', '三連複', '三連単']) {
+      expect(panel.getByRole('cell', { name: bt })).toBeInTheDocument();
+    }
+    expect(panel.queryByText(/^連系の下限：/)).not.toBeInTheDocument();
+    expect(panel.getByText(/5 ×（確信度 ÷ 25%）²/)).toBeInTheDocument();
   });
 
   it('shows race name in PageHeader title when name is set', async () => {

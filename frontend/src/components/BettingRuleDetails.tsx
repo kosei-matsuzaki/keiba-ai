@@ -1,12 +1,18 @@
 import { useSettings } from '@/hooks/useSettings';
 
-const COMBO_LABELS: Record<string, string> = {
-  馬連: '馬連',
-  ワイド: 'ワイド',
-  馬単: '馬単',
-  三連複: '三連複',
-  三連単: '三連単',
-};
+/**
+ * 連系の券種と、その確信度が何を数えた割合か。
+ *
+ * **全券種を 1 行ずつ出す。** 「連系」でまとめると、下限も数え方も券種で違うのに
+ * 1 行に収まらず、結局表の外に書くことになる。
+ */
+const COMBO_ROWS: ReadonlyArray<{ key: string; counted: string }> = [
+  { key: '馬連', counted: '1-2着がこの2頭' },
+  { key: 'ワイド', counted: '3着以内にこの2頭' },
+  { key: '馬単', counted: '1着→2着がこの順' },
+  { key: '三連複', counted: '3着以内がこの3頭' },
+  { key: '三連単', counted: '1-2-3着がこの順' },
+];
 
 /**
  * 買い方の説明を **1 箇所** にまとめ、既定では畳んでおく。
@@ -23,12 +29,6 @@ export function BettingRuleDetails() {
   const minOdds = settings?.win_min_odds ?? 1.1;
   const placeMin = settings?.place_min_hit_prob ?? 0.6;
   const floors = settings?.combo_min_hit_prob ?? {};
-  const floorText = Object.entries(COMBO_LABELS)
-    .map(([key, label]) =>
-      floors[key] != null ? `${label} ${(floors[key] * 100).toFixed(1)}%` : null
-    )
-    .filter(Boolean)
-    .join(' / ');
 
   return (
     <details className="group border-t border-border pt-3 text-xs">
@@ -50,7 +50,7 @@ export function BettingRuleDetails() {
             <tr>
               <th className="py-0.5 pr-4 font-normal">券種</th>
               <th className="py-0.5 pr-4 font-normal">買う条件</th>
-              <th className="py-0.5 pr-4 font-normal">確信度</th>
+              <th className="py-0.5 pr-4 font-normal">確信度＝抽選で数える割合</th>
               <th className="py-0.5 font-normal">点数（1 点 = 100 円）</th>
             </tr>
           </thead>
@@ -58,7 +58,7 @@ export function BettingRuleDetails() {
             <tr>
               <td className="py-0.5 pr-4 text-foreground">単勝</td>
               <td className="py-0.5 pr-4">モデル1位。オッズ {minOdds} 倍超</td>
-              <td className="py-0.5 pr-4">1着になる確率</td>
+              <td className="py-0.5 pr-4">1着だった割合</td>
               <td className="py-0.5">
                 <span className="font-mono">5 ×（確信度 ÷ 25%）²</span> → 1〜15 点
               </td>
@@ -68,35 +68,33 @@ export function BettingRuleDetails() {
               <td className="py-0.5 pr-4">
                 モデル1位。確信度 {(placeMin * 100).toFixed(0)}% 以上
               </td>
-              <td className="py-0.5 pr-4">3着以内に入る確率</td>
+              <td className="py-0.5 pr-4">3着以内だった割合</td>
               <td className="py-0.5">
                 <span className="font-mono">5 ×（確信度 ÷ 50%）²</span> → 1〜15 点
               </td>
             </tr>
-            <tr>
-              <td className="py-0.5 pr-4 text-foreground">連系</td>
-              <td className="py-0.5 pr-4">上位3頭の組合せ。確信度が下限以上</td>
-              <td className="py-0.5 pr-4">その組合せが当たる確率</td>
-              <td className="py-0.5">1 組合せ 1 点（下限超えを全部・上限なし）</td>
-            </tr>
+            {COMBO_ROWS.map(({ key, counted }) => (
+              <tr key={key}>
+                <td className="py-0.5 pr-4 text-foreground">{key}</td>
+                <td className="py-0.5 pr-4">
+                  上位3頭の組合せ。確信度{' '}
+                  {floors[key] != null ? `${(floors[key] * 100).toFixed(1)}%` : '下限'} 以上
+                </td>
+                <td className="py-0.5 pr-4">{counted}</td>
+                <td className="py-0.5">1 組合せ 1 点（上限なし）</td>
+              </tr>
+            ))}
           </tbody>
         </table>
 
-        {floorText && (
-          <p className="text-subtle-foreground">
-            連系の下限：{floorText}
-            <span className="ml-1">（Settings で変えられます）</span>
-          </p>
-        )}
+        <p className="text-subtle-foreground">
+          確信度はモデルのスコアを温度較正し、
+          <strong className="font-medium">1〜3着の並びを 1 万回サンプリング</strong>
+          して上の割合を数えたもの。出走馬表の 1着確率 / 3着内率 は単勝 / 複勝の
+          確信度と同じ数字です。連系の下限は Settings で変えられます。
+        </p>
 
-        {/* 用語と作り方。**文章にしない** — 読み飛ばせる行の集まりにする */}
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-subtle-foreground">
-          <dt className="text-foreground">作り方</dt>
-          <dd>
-            スコア → 温度較正 → 1〜3着の並びを 1 万回サンプリング → 出た割合。
-            出走馬表の 1着確率 / 3着内率 は単勝 / 複勝の確信度と同じ数字
-          </dd>
-
           <dt className="text-foreground">2 つのモデル</dt>
           <dd>
             馬を選ぶのは買い目モデル（回収率で学習。確率は不正確で、本命の確率と
@@ -109,18 +107,6 @@ export function BettingRuleDetails() {
           <dd>
             使わない。較正済みの確率で EV を条件にすると大穴に寄り、単勝回収率が
             0.93 → 0.70 に落ちる。表の EV は参考値
-          </dd>
-
-          <dt className="text-foreground">予算</dt>
-          <dd>
-            上限であって使い切らない。条件を満たす買い目が少なければ余る
-            （連系を 1 点も買わないレースが 4 分の 1 ほど）
-          </dd>
-
-          <dt className="text-foreground">実測</dt>
-          <dd>
-            単勝 0.91 / 複勝 0.92（2024-10〜2026-08・6,244 レース）。
-            <strong className="font-medium">どちらも 1.0 未満</strong>
           </dd>
         </dl>
       </div>
