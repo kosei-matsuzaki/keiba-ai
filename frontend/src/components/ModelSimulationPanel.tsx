@@ -15,7 +15,6 @@ import { ProfitChart } from '@/components/ProfitChart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { EmptyState } from '@/components/EmptyState';
-import { MetricBand, MetricItem } from '@/components/MetricBand';
 import { MetricCard } from '@/components/MetricCard';
 import {
   deleteSimulationRun,
@@ -59,44 +58,62 @@ const MAX_WINDOW_DAYS = 366;
 // ── Group breakdown table ─────────────────────────────────────────────────────
 
 interface GroupTableProps {
+  /** 1 列目の見出し。タブごとに何で切った表かが変わるので必ず渡す。 */
+  label: string;
   rows: SimulationGroupStats[];
 }
 
-function GroupTable({ rows }: GroupTableProps) {
+function GroupTable({ rows, label }: GroupTableProps) {
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground">該当するベットがありません。</p>;
   }
+  // **投資の多い順に並べる。** 回収率だけ見ると 10 点で 0.5 の行と 5,000 点で
+  // 0.9 の行が同じ重さに見えるが、損益への効き方はまるで違う。
+  const sorted = [...rows].sort((a, b) => b.invested - a.invested);
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>ラベル</TableHead>
-          <TableHead className="text-right">bet 数</TableHead>
+          <TableHead>{label}</TableHead>
+          <TableHead className="text-right">点数</TableHead>
           <TableHead className="text-right">投資</TableHead>
           <TableHead className="text-right">払戻</TableHead>
+          <TableHead className="text-right">収支</TableHead>
           <TableHead className="text-right">回収率</TableHead>
           <TableHead className="text-right">的中率</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((r) => (
-          <TableRow key={r.label}>
-            <TableCell className="font-medium">{r.label}</TableCell>
-            <TableCell className="text-right tabular-nums">{r.n_bets}</TableCell>
-            <TableCell className="text-right tabular-nums">{formatYen(r.invested)}</TableCell>
-            <TableCell className="text-right tabular-nums">{formatYen(r.payout)}</TableCell>
-            <TableCell
-              className={`text-right tabular-nums ${
-                r.payback_rate >= 1 ? 'text-success' : 'text-muted-foreground'
-              }`}
-            >
-              {formatRatio(r.payback_rate)}
-            </TableCell>
-            <TableCell className="text-right tabular-nums">
-              {formatPercent(r.hit_rate)}
-            </TableCell>
-          </TableRow>
-        ))}
+        {sorted.map((r) => {
+          const profit = r.payout - r.invested;
+          return (
+            <TableRow key={r.label}>
+              <TableCell className="font-medium">{r.label}</TableCell>
+              <TableCell className="text-right tabular-nums">
+                {r.n_bets.toLocaleString()}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{formatYen(r.invested)}</TableCell>
+              <TableCell className="text-right tabular-nums">{formatYen(r.payout)}</TableCell>
+              <TableCell
+                className={`text-right tabular-nums ${
+                  profit >= 0 ? 'text-success' : 'text-destructive'
+                }`}
+              >
+                {formatSignedYen(profit)}
+              </TableCell>
+              <TableCell
+                className={`text-right tabular-nums ${
+                  r.payback_rate >= 1 ? 'text-success' : 'text-muted-foreground'
+                }`}
+              >
+                {formatRatio(r.payback_rate)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums text-muted-foreground">
+                {formatPercent(r.hit_rate)}
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -605,57 +622,31 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
             </CardContent>
           </Card>
 
-          {/* Bet stats KPI cards: bet 単位の統計 */}
-          <MetricBand cols={5}>
-            <MetricItem
-              title="累計投資"
-              value={result.summary.invested}
-              format="yen"
-              description={`${result.summary.n_bets} bets / ${result.n_settled_races} race`}
-            />
-            <MetricItem
-              title="累計払戻"
-              value={result.summary.payout}
-              format="yen"
-              description={`的中 ${formatPercent(result.summary.hit_rate)}`}
-            />
-            <MetricItem
-              title="純利益"
-              value={result.summary.payout - result.summary.invested}
-              format="yen"
-              tone={
-                result.summary.payout >= result.summary.invested
-                  ? 'positive'
-                  : 'negative'
-              }
-              description={
-                result.summary.payout >= result.summary.invested
-                  ? 'プラス収支'
-                  : 'マイナス収支'
-              }
-            />
-            <MetricItem
-              title="回収率"
-              value={result.summary.payback_rate}
-              format="ratio"
-              description="1.00 = 損益分岐"
-            />
-            <MetricItem
-              title="的中率"
-              value={result.summary.hit_rate}
-              format="percent"
-              description="bet 全体"
-            />
-          </MetricBand>
-
           {/* ── 4. 内訳 ───────────────────────────────────────
-              3 つの表を積むと縦に伸びるだけで見比べられない。同じ形の表なので
-              タブで切り替える。 */}
+              以前は「bet 単位の統計 5 枚」と「内訳の表」が別のパネルだった。
+              5 枚のうち回収率と純利益は上の「結果」と同じ数字で、同じ値が画面に
+              2 度出ていた。**残りの 4 つ (投資・払戻・的中率・点数) は表の合計**
+              なので、表の見出し行として 1 つのカードに畳む。 */}
           <Card className="border-t border-border pt-6">
-            <CardHeader>
+            <CardHeader className="flex flex-row flex-wrap items-baseline justify-between gap-x-6 gap-y-1 space-y-0">
               <CardTitle className="text-label-ja">内訳</CardTitle>
+              <p className="font-mono text-xs tabular-nums text-subtle-foreground">
+                {formatYen(result.summary.invested)}
+                <span className="mx-1.5 font-sans">→</span>
+                {formatYen(result.summary.payout)}
+                <span className="mx-2 font-sans text-border">|</span>
+                <span className="font-sans">的中 </span>
+                {formatPercent(result.summary.hit_rate)}
+                <span className="mx-2 font-sans text-border">|</span>
+                {result.summary.n_bets.toLocaleString()}
+                <span className="font-sans"> 点 / </span>
+                {result.n_settled_races.toLocaleString()}
+                <span className="font-sans"> レース</span>
+              </p>
             </CardHeader>
             <CardContent>
+              {/* 3 つの表を積むと縦に伸びるだけで見比べられない。同じ形の表なので
+                  タブで切り替える。 */}
               <Tabs defaultValue="bet_type">
                 <TabsList>
                   <TabsTrigger value="bet_type">馬券種別</TabsTrigger>
@@ -663,13 +654,13 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                   <TabsTrigger value="course">コース別</TabsTrigger>
                 </TabsList>
                 <TabsContent value="bet_type" className="pt-3">
-                  <GroupTable rows={result.by_bet_type} />
+                  <GroupTable rows={result.by_bet_type} label="券種" />
                 </TabsContent>
                 <TabsContent value="race_class" className="pt-3">
-                  <GroupTable rows={result.by_race_class} />
+                  <GroupTable rows={result.by_race_class} label="レース格" />
                 </TabsContent>
                 <TabsContent value="course" className="pt-3">
-                  <GroupTable rows={result.by_course} />
+                  <GroupTable rows={result.by_course} label="コース" />
                 </TabsContent>
               </Tabs>
             </CardContent>

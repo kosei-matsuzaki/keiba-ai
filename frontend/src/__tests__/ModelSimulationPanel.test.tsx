@@ -17,7 +17,7 @@ vi.mock('../lib/api', () => ({
   formatErrorMessageSync: vi.fn().mockReturnValue('エラー'),
 }));
 
-import { listSimulationRuns, startSimulationJob } from '../lib/api';
+import { getSimulationRun, listSimulationRuns, startSimulationJob } from '../lib/api';
 
 function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -78,5 +78,91 @@ describe('ModelSimulationPanel', () => {
     expect(req.model_id).toBe(7);
     // 廃止したパラメータが復活していないこと
     expect(Object.keys(req).sort()).toEqual(['end', 'model_id', 'race_budget', 'start']);
+  });
+});
+
+// ── 結果パネル ───────────────────────────────────────────────────────────────
+
+const GROUP = (label: string, n: number, inv: number, pay: number) => ({
+  label,
+  n_bets: n,
+  invested: inv,
+  payout: pay,
+  payback_rate: pay / inv,
+  hit_rate: 0.2,
+});
+
+const RESULT = {
+  window: { start: '2024-11-01', end: '2026-08-23' },
+  model_path: 'models/x-nn',
+  model_run_id: 1,
+  race_budget: 5000,
+  n_races: 1300,
+  n_settled_races: 1200,
+  final_profit: -12000,
+  peak_profit: 3000,
+  trough_profit: -20000,
+  required_capital: 20000,
+  summary: GROUP('all', 2345, 234500, 222500),
+  // 投資の多い順に並ぶことを見たいので、あえて昇順で渡す
+  by_bet_type: [GROUP('三連単', 10, 1000, 500), GROUP('単勝', 1200, 120000, 130000)],
+  by_race_class: [GROUP('G1', 40, 4000, 3000)],
+  by_course: [GROUP('東京', 300, 30000, 28000)],
+  profit_timeseries: [{ date: '2024-11-02', profit: -100, invested: 500, payout: 400, n_bets: 5 }],
+  conditions: null,
+  run_id: 9,
+};
+
+describe('ModelSimulationPanel の結果', () => {
+  beforeEach(() => {
+    vi.mocked(listSimulationRuns).mockResolvedValue({
+      runs: [
+        {
+          id: 9,
+          created_at: '2026-09-01T00:00:00Z',
+          window_start: '2024-11-01',
+          window_end: '2026-08-23',
+          race_budget: 5000,
+          n_settled_races: 1200,
+          final_profit: -12000,
+        },
+      ],
+      total: 1,
+    } as never);
+    vi.mocked(getSimulationRun).mockResolvedValue(RESULT as never);
+  });
+
+  async function loadRun() {
+    const user = userEvent.setup();
+    renderPanel();
+    // 保存済みの実行は <tr onClick> なので row を押す
+    await user.click(await screen.findByRole('row', { name: /2024-11-01/ }));
+    return user;
+  }
+
+  it('bet 単位の統計と内訳を 1 つのパネルにまとめる', async () => {
+    await loadRun();
+    // **同じ数字を 2 度出さない。** 以前は「回収率」「純利益」が結果カードと
+    // KPI カードの両方にあった。合計は内訳の見出し行に畳む。
+    const panel = (await screen.findByText('内訳')).closest('div')?.parentElement;
+    expect(panel).toBeTruthy();
+    expect(screen.queryByText('累計投資')).not.toBeInTheDocument();
+    expect(screen.queryByText('純利益')).not.toBeInTheDocument();
+    // 合計は見出し行に出る
+    expect(await screen.findByText(/2,345/)).toBeInTheDocument();
+  });
+
+  it('内訳は投資の多い順に並び、収支と切り口の見出しを出す', async () => {
+    await loadRun();
+    await screen.findByText('内訳');
+    // 1 列目の見出しは「ラベル」ではなく何で切ったか
+    expect(screen.getByRole('columnheader', { name: '券種' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '収支' })).toBeInTheDocument();
+    // 投資の多い順 = 単勝 (120,000) が 三連単 (1,000) より先
+    const rows = screen.getAllByRole('row').map((r) => r.textContent ?? '');
+    const tansho = rows.findIndex((t) => t.startsWith('単勝'));
+    const sanrentan = rows.findIndex((t) => t.startsWith('三連単'));
+    expect(tansho).toBeGreaterThan(-1);
+    expect(tansho).toBeLessThan(sanrentan);
   });
 });
