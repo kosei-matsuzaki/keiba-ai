@@ -567,8 +567,14 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
 
           {/* ── 2. 結果のまとめ ────────────────────────────────
               収支は 0 スタート。元手が無いので「増えたか減ったか」だけを出す。 */}
-          <Card className="flex flex-col gap-3 border-t border-border pt-6">
-            <h3 className="text-label-ja">結果</h3>
+          <Card className="border-t border-border pt-6">
+            <CardHeader>
+              {/* 見出しは 条件 / 損益推移 / 内訳 と同じ CardTitle にする。
+                  素の h3 だと .text-label-ja の 11px だけが効いて、ここだけ
+                  小さく出ていた。 */}
+              <CardTitle className="text-label-ja">結果</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
 
             {/* **どの条件で走ったかを結果と一緒に置く。** 設定を変えれば同じボタンでも
                 別条件で走るので、離すと後から比べられない。
@@ -621,15 +627,10 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 className="min-w-[11rem]"
               />
               <dl className="flex flex-wrap gap-x-8 gap-y-3 pt-1">
-                <div>
-                  <dt className="text-xs text-muted-foreground">最大益 / 最大損</dt>
-                  <dd className="font-mono text-lg tabular-nums">
-                    {formatSignedYen(result.peak_profit)}
-                    <span className="mx-1 text-subtle-foreground">/</span>
-                    {formatSignedYen(result.trough_profit)}
-                  </dd>
-                </div>
-                <div title="途中で止まらずに回すのに要した額 (= 最大損の絶対値)">
+                {/* 最大益 / 最大損は出さない。**最大損は「必要だった資金」と同じ数字**
+                    (符号違い) で、山と谷はすぐ下の損益推移グラフが示している。
+                    グラフから読み取れないのは「いくら要ったか」だけなので、それを残す。 */}
+                <div title="途中で止まらずに回すのに要した額 (= 累計損益の最小値の絶対値)">
                   <dt className="text-xs text-muted-foreground">必要だった資金</dt>
                   <dd className="font-mono text-lg tabular-nums">
                     {formatYen(result.required_capital)}
@@ -641,8 +642,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                     {formatRatio(result.summary.payback_rate)}
                   </dd>
                 </div>
-              </dl>
-            </div>
+                </dl>
+              </div>
+            </CardContent>
           </Card>
 
           {/* ── 3. 損益推移 ───────────────────────────────────── */}
