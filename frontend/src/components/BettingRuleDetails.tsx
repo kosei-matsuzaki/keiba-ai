@@ -43,33 +43,41 @@ export function BettingRuleDetails() {
       </summary>
 
       <div className="mt-3 flex flex-col gap-3">
-        <table className="w-full max-w-3xl text-left">
+        {/* **券種ごとに全部この表で読み切れること。** 確信度の中身も点数の式も
+            券種で変わるので、別行に出すと対応を取りながら読む羽目になる */}
+        <table className="w-full text-left">
           <thead className="text-subtle-foreground">
             <tr>
               <th className="py-0.5 pr-4 font-normal">券種</th>
               <th className="py-0.5 pr-4 font-normal">買う条件</th>
+              <th className="py-0.5 pr-4 font-normal">確信度</th>
               <th className="py-0.5 font-normal">点数（1 点 = 100 円）</th>
             </tr>
           </thead>
           <tbody className="text-muted-foreground">
             <tr>
               <td className="py-0.5 pr-4 text-foreground">単勝</td>
-              <td className="py-0.5 pr-4">モデル1位の馬。オッズ {minOdds} 倍超のとき</td>
-              <td className="py-0.5">確信度で 1〜15 点（25% のとき 5 点）</td>
+              <td className="py-0.5 pr-4">モデル1位。オッズ {minOdds} 倍超</td>
+              <td className="py-0.5 pr-4">1着になる確率</td>
+              <td className="py-0.5">
+                <span className="font-mono">5 ×（確信度 ÷ 25%）²</span> → 1〜15 点
+              </td>
             </tr>
             <tr>
               <td className="py-0.5 pr-4 text-foreground">複勝</td>
               <td className="py-0.5 pr-4">
-                モデル1位の馬。確信度が {(placeMin * 100).toFixed(0)}% 以上のとき
+                モデル1位。確信度 {(placeMin * 100).toFixed(0)}% 以上
               </td>
-              <td className="py-0.5">確信度で 1〜15 点（50% のとき 5 点）</td>
+              <td className="py-0.5 pr-4">3着以内に入る確率</td>
+              <td className="py-0.5">
+                <span className="font-mono">5 ×（確信度 ÷ 50%）²</span> → 1〜15 点
+              </td>
             </tr>
             <tr>
               <td className="py-0.5 pr-4 text-foreground">連系</td>
-              <td className="py-0.5 pr-4">
-                上位 3 頭で組んだ買い目のうち、確信度が下限以上のもの
-              </td>
-              <td className="py-0.5">下限を超えた買い目を 1 点ずつ（上限なし）</td>
+              <td className="py-0.5 pr-4">上位3頭の組合せ。確信度が下限以上</td>
+              <td className="py-0.5 pr-4">その組合せが当たる確率</td>
+              <td className="py-0.5">1 組合せ 1 点（下限超えを全部・上限なし）</td>
             </tr>
           </tbody>
         </table>
@@ -83,19 +91,6 @@ export function BettingRuleDetails() {
 
         {/* 用語と作り方。**文章にしない** — 読み飛ばせる行の集まりにする */}
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-subtle-foreground">
-          <dt className="text-foreground">確信度</dt>
-          <dd>
-            その買い目が当たる確率。単勝＝1着 / 複勝＝3着以内 / 連系＝その組合せ。
-            券種が違っても意味は同じ
-          </dd>
-
-          <dt className="text-foreground">点数</dt>
-          <dd>
-            <span className="font-mono">5 ×（確信度 ÷ 基準）²</span> を 1〜15 点に。
-            基準は単勝 25% / 複勝 50%。連系は 1 組合せ 1 点で、
-            <strong className="font-medium">点数＝下限を超えた買い目の数</strong>
-          </dd>
-
           <dt className="text-foreground">作り方</dt>
           <dd>
             スコア → 温度較正 → 1〜3着の並びを 1 万回サンプリング → 出た割合。

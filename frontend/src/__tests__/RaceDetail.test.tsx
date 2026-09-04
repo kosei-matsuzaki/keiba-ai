@@ -507,14 +507,19 @@ describe('RaceDetail', () => {
     // 畳んだ状態で置く (毎回読むものではない)
     expect(summary.closest('details')).not.toHaveAttribute('open');
     expect(screen.getByRole('columnheader', { name: '買う条件' })).toBeInTheDocument();
-    expect(screen.getByText(/モデル1位の馬。オッズ/)).toBeInTheDocument();
-    // **表の中身は実装と揃っていること。** 1 点 = 100 円で、点数は確信度が決め、
-    // 連系に点数の上限は無い (ここが古いままだと画面が嘘をつく)
-    expect(screen.getByRole('columnheader', { name: /1 点 = 100 円/ })).toBeInTheDocument();
-    // 用語は「確信度」に統一した。券種で呼び名が変わると読み手が対応を取れない
-    expect(screen.getByText(/確信度で 1〜15 点（25% のとき 5 点）/)).toBeInTheDocument();
-    expect(screen.getByText(/確信度で 1〜15 点（50% のとき 5 点）/)).toBeInTheDocument();
-    expect(screen.getByText(/1 点ずつ（上限なし）/)).toBeInTheDocument();
+    expect(screen.getByText(/モデル1位。オッズ/)).toBeInTheDocument();
+    // **券種ごとに 1 行で読み切れること。** 確信度の中身も点数の式も券種で変わる
+    // ので、別の場所に出すと対応を取りながら読む羽目になる
+    // 「確信度」は推奨買目の表にもある見出しなので、説明パネル内に限定して探す
+    const panel = within(summary.closest('details') as HTMLElement);
+    expect(panel.getByRole('columnheader', { name: '確信度' })).toBeInTheDocument();
+    expect(panel.getByRole('columnheader', { name: /1 点 = 100 円/ })).toBeInTheDocument();
+    expect(screen.getByText('1着になる確率')).toBeInTheDocument();
+    expect(screen.getByText('3着以内に入る確率')).toBeInTheDocument();
+    expect(screen.getByText('その組合せが当たる確率')).toBeInTheDocument();
+    expect(screen.getByText(/5 ×（確信度 ÷ 25%）²/)).toBeInTheDocument();
+    expect(screen.getByText(/5 ×（確信度 ÷ 50%）²/)).toBeInTheDocument();
+    expect(screen.getByText(/1 組合せ 1 点（下限超えを全部・上限なし）/)).toBeInTheDocument();
   });
 
   it('shows race name in PageHeader title when name is set', async () => {
