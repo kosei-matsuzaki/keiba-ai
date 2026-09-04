@@ -216,7 +216,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
 
 
                 <FieldRow
-                  label="連系を買う的中確率の下限"
+                  label="連系を買う確信度の下限"
                   id="combo_min_hit_prob"
                   help="これを超えた買い目だけ買う。超えた数だけ買うので点数はレースごとに変わる"
                   error={errors.combo_min_hit_prob?.root?.message}
@@ -232,7 +232,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                           step="0.5"
                           min="0"
                           max="100"
-                          aria-label={`${betType} を買う的中確率の下限`}
+                          aria-label={`${betType} を買う確信度の下限`}
                           className="text-right font-mono tabular-nums"
                           {...register(`combo_min_hit_prob.${betType}` as const)}
                         />

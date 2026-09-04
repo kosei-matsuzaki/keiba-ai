@@ -217,14 +217,14 @@ export function EntryPredictionTable({
             label="1着確率"
             sortKey="win_prob"
             className={`text-right ${AI_SURFACE}`}
-            title="この馬が1着になる確率 (較正済み)"
+            title="この馬が1着になる確率。推奨買目の「単勝の確信度」と同じ数字"
             {...headerProps}
           />
           <SortableHeader
             label="3着内率"
             sortKey="place_prob"
             className={`text-right ${AI_SURFACE}`}
-            title="この馬が3着以内に入る確率"
+            title="この馬が3着以内に入る確率。推奨買目の「複勝の確信度」と同じ数字"
             {...headerProps}
           />
           <SortableHeader

@@ -213,7 +213,7 @@ function shapeFormula(shape: PurchaseShape, candidates: RecommendationCandidate[
  * 賭ける買い目を券種ごとにまとめ、買い方の形に変換する。
  *
  * `stake === 0` の候補 (予算に入らなかったもの) は購入対象ではないので外す。
- * 券種の並びは推奨と同じ「単勝 → 複勝 → 連系」で、同券種内は的中確率の高い順。
+ * 券種の並びは推奨と同じ「単勝 → 複勝 → 連系」で、同券種内は確信度の高い順。
  */
 export function buildPurchaseGroups(candidates: RecommendationCandidate[]): PurchaseGroup[] {
   const buying = candidates.filter((c) => c.stake > 0);

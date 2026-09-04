@@ -179,15 +179,15 @@ export function PurchaseTable({ candidates, runners, raceId, renderBuy }: Purcha
                               <TableHead>組合せ</TableHead>
                               <TableHead
                                 className="text-right"
-                                title="この組合せが当たる確率。買う順序はこれで決めている"
+                                title="その組合せが当たる確率。買う順序はこれで決めている"
                               >
-                                的中確率
+                                確信度
                               </TableHead>
                               <TableHead
                                 className="text-right"
-                                title="確率モデルから見た「この買い目が当たる確率」"
+                                title="連系の確信度は確率モデルが直接出しているので、左と同じ数字"
                               >
-                                確信度
+                                確率モデル
                               </TableHead>
                               <TableHead className="text-right">オッズ</TableHead>
                               <TableHead className="text-right">賭け金 / 購入</TableHead>

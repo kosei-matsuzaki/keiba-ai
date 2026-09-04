@@ -494,7 +494,7 @@ describe('RaceDetail', () => {
   });
 
   it('買い方の説明は 1 箇所にまとめ、既定では畳んでおく', async () => {
-    // EV / 期待値 / 確信度 / 的中確率 の注記が画面のあちこちに散っていて、
+    // EV / 期待値 / 確信度 の注記が画面のあちこちに散っていて、
     // 肝心の買い目が埋もれていた。推奨買目の下の折り畳み 1 つに集約する。
     const user = userEvent.setup();
     renderRaceDetail();
@@ -511,8 +511,9 @@ describe('RaceDetail', () => {
     // **表の中身は実装と揃っていること。** 1 点 = 100 円で、点数は確信度が決め、
     // 連系に点数の上限は無い (ここが古いままだと画面が嘘をつく)
     expect(screen.getByRole('columnheader', { name: /1 点 = 100 円/ })).toBeInTheDocument();
-    expect(screen.getByText(/1着確率で 1〜15 点/)).toBeInTheDocument();
-    expect(screen.getByText(/3着内率で 1〜15 点/)).toBeInTheDocument();
+    // 用語は「確信度」に統一した。券種で呼び名が変わると読み手が対応を取れない
+    expect(screen.getByText(/確信度で 1〜15 点（25% のとき 5 点）/)).toBeInTheDocument();
+    expect(screen.getByText(/確信度で 1〜15 点（50% のとき 5 点）/)).toBeInTheDocument();
     expect(screen.getByText(/1 点ずつ（上限なし）/)).toBeInTheDocument();
   });
 

@@ -293,7 +293,7 @@ export interface SettingsResponse {
   probability_model_path: string | null;
   /** 複勝を買う下限。確率モデルが本命に付けた 3 着内率 */
   place_min_hit_prob: number;
-  /** 連系を買う的中確率の下限 (券種ごと)。線を超えた買い目だけを買う。 */
+  /** 連系を買う確信度の下限 (券種ごと)。線を超えた買い目だけを買う。 */
   combo_min_hit_prob: Record<string, number>;
 }
 
@@ -500,7 +500,7 @@ export interface SimulationConditions {
   race_budget: number;
   /** 連系の点数の上限 (予算から決まる)。 */
   max_points_per_bet_type: number;
-  /** 連系を買う的中確率の下限 (券種ごと)。 */
+  /** 連系を買う確信度の下限 (券種ごと)。 */
   combo_min_hit_prob: Record<string, number>;
 }
 
@@ -565,7 +565,7 @@ export interface SimulationRequest {
   end?: string;            // YYYY-MM-DD
   /**
    * 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
-   * 実際に賭ける額は複勝の確信度と連系の的中確率の下限が決めるので、
+   * 実際に賭ける額は複勝と連系の確信度の下限が決めるので、
    * レースごとに変わる。RACE 画面の「使う金額」と同じ意味。
    */
   race_budget: number;

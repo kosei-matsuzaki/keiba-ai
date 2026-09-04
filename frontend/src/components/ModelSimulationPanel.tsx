@@ -288,7 +288,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
   const [end, setEnd] = useState(defaultEnd);
   const [betTypes, setBetTypes] = useState<BetType[] | null>(null);
   // 1 レースに使ってよい上限 (円)。**使い切る目標ではない。**
-  // RACE 画面と同じ意味で、実際に賭ける額は確信度と的中確率の下限が決める。
+  // RACE 画面と同じ意味で、実際に賭ける額は確信度の下限が決める。
   // 既定は Settings の値に合わせる (未取得のうちは 5,000 円)。
   const [raceBudget, setRaceBudget] = useState(5_000);
   // Settings は実行時にバックエンドが読む。ここでは「何が引き継がれるか」の表示用。

@@ -16,6 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { BettingRuleDetails } from '@/components/BettingRuleDetails';
+import { isComboBetType } from '@/lib/betTypes';
 import { ResultReviewTab } from '@/components/ResultReviewTab';
 import { EmptyState } from '@/components/EmptyState';
 import { PurchaseTable } from '@/components/PurchaseTable';
@@ -171,7 +172,7 @@ function StakeInputAndBuy({ candidate, raceId }: StakeInputAndBuyProps) {
 const BET_TYPE_PRIORITY: Record<string, number> = { 単勝: 0, 複勝: 1 };
 
 /**
- * **エンジンが賭ける順序をそのまま出す**: 買う → 単勝 → 複勝 → 連系 → 的中確率の高い順。
+ * **エンジンが賭ける順序をそのまま出す**: 買う → 単勝 → 複勝 → 連系 → 確信度の高い順。
  *
  * 以前は EV の降順で並べていたが、エンジンは EV を見ていない。表の順序と実際の
  * 買い方が違うと「上から順に買えばよい」という読み方ができなくなる。EV 順は
@@ -282,15 +283,15 @@ export function RecommendationsCard({
                   <TableHead>組合せ</TableHead>
                   <TableHead
                     className="text-right"
-                    title="単勝=1着になる確率 / 複勝=3着以内に入る確率 / 連系=その組合せが当たる確率。買う順序はこれで決めている"
+                    title="その買い目が当たる確率。単勝=1着 / 複勝=3着以内 / 連系=その組合せ。買う順序はこれで決めている"
                   >
-                    的中確率
+                    確信度
                   </TableHead>
                   <TableHead
                     className="text-right"
-                    title="確率モデルから見た「この買い目が当たる確率」。券種をまたいで同じ意味 (単勝=1着 / 複勝=3着以内 / 連系=組合せ的中)。複勝の可否と厚みはこれで決めている"
+                    title="同じ確信度を、確率専用モデルが答えたもの。複勝を買うかと厚みはこれで決める。連系はもともと確率モデルが出しているので「同じ」と表示する"
                   >
-                    確信度
+                    確率モデル
                   </TableHead>
                   <TableHead className="text-right">推定オッズ</TableHead>
                   <TableHead
@@ -301,7 +302,7 @@ export function RecommendationsCard({
                   </TableHead>
                   <TableHead
                     className="text-right text-subtle-foreground"
-                    title="参考値。的中確率 × オッズ。買う / 買わないの判定には使っていない (使うと大穴に寄り、実測で回収率が落ちる)"
+                    title="参考値。確信度 × オッズ。買う / 買わないの判定には使っていない (使うと大穴に寄り、実測で回収率が落ちる)"
                   >
                     参考 EV
                   </TableHead>
@@ -320,7 +321,15 @@ export function RecommendationsCard({
                       </TableCell>
                       <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {c.confidence == null ? (
+                        {isComboBetType(c.bet_type) ? (
+                          // 連系の確信度は確率モデルが直接出したもの。左の列と同じ値
+                          <span
+                            className="text-subtle-foreground"
+                            title="連系の確信度は確率モデルが直接出しているので、左と同じ数字です"
+                          >
+                            同じ
+                          </span>
+                        ) : c.confidence == null ? (
                           <span className="text-subtle-foreground">—</span>
                         ) : (
                           formatPercent(c.confidence)

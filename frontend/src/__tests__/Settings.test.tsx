@@ -215,7 +215,7 @@ describe('Settings', () => {
 
   it('買い方の設定は 4 つだけ（券種も 1 点あたりも設定しない）', async () => {
     // 1 点 = 100 円で固定、何点買うかは確信度が決める。どの券種を買うかも
-    // 確信度 (的中確率の下限) が決めるので、どちらも設定項目ではない。
+    // 確信度 (確信度の下限) が決めるので、どちらも設定項目ではない。
     renderSettings();
     await screen.findByLabelText('1 レースに使う上限');
     expect(screen.queryByLabelText('1 点あたりの賭け金（既定）')).not.toBeInTheDocument();
@@ -223,7 +223,7 @@ describe('Settings', () => {
     expect(screen.queryByLabelText('連系の点数の上限')).not.toBeInTheDocument();
   });
 
-  it('連系を買う的中確率の下限を BETTING に置き、% で入出力する', async () => {
+  it('連系を買う確信度の下限を BETTING に置き、% で入出力する', async () => {
     const user = userEvent.setup();
     renderSettings();
     await screen.findByLabelText('1 レースに使う上限');
@@ -231,11 +231,11 @@ describe('Settings', () => {
     expect(screen.getByLabelText('複勝を買う確信度の下限')).toBeInTheDocument();
     for (const betType of ['馬連', 'ワイド', '馬単', '三連複', '三連単']) {
       expect(
-        screen.getByLabelText(`${betType} を買う的中確率の下限`)
+        screen.getByLabelText(`${betType} を買う確信度の下限`)
       ).toBeInTheDocument();
     }
     // API は 0〜1、画面は % (0.075 → 7.5)
-    const umaren = screen.getByLabelText('馬連 を買う的中確率の下限') as HTMLInputElement;
+    const umaren = screen.getByLabelText('馬連 を買う確信度の下限') as HTMLInputElement;
     expect(umaren.value).toBe('7.5');
 
     fireEvent.change(umaren, { target: { value: '9' } });

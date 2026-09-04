@@ -20,13 +20,23 @@ export const ALL_BET_TYPES = [
   '三連単',
 ] as const satisfies readonly BetType[];
 
+/**
+ * 連系か。**確信度の列を出し分けるのに使う。**
+ *
+ * 連系の確信度はもともと確率モデルが直接出しているので、「確率モデル」列に
+ * 同じ数字が並ぶ。二度書くと別の情報に見えるので「同じ」と出す。
+ */
+export function isComboBetType(betType: string): boolean {
+  return (COMBO_BET_TYPES as readonly string[]).includes(betType);
+}
+
 /** UI で選べる馬券種。`BetType` は枠連を含むが、こちらは含まない。 */
 export type SelectableBetType = (typeof ALL_BET_TYPES)[number];
 
 /**
  * 連系（2 頭以上の組合せ）。単複と扱いが違う場所で使う。
  *
- * 単複は「AI の本命を買う」ルールで点数が固定だが、連系は**的中確率の下限**で
+ * 単複は「AI の本命を買う」ルールで点数が固定だが、連系は**確信度の下限**で
  * 買う点数がレースごとに変わる（combo_min_hit_prob）。
  */
 export const COMBO_BET_TYPES = [
