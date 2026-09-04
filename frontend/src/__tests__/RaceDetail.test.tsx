@@ -297,6 +297,8 @@ describe('RaceDetail', () => {
     expect(screen.queryByText('2.500')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
+    // 出走馬一覧はタブの中。買い目が出ているときは 1 つのタブ列にまとまる
+    await user.click(await screen.findByRole('tab', { name: '出走馬' }));
 
     // Score values for both horses appear after running AI
     expect(await screen.findByText('2.500')).toBeInTheDocument();
@@ -369,6 +371,8 @@ describe('RaceDetail', () => {
     renderRaceDetail();
     await screen.findByText('出走馬一覧');
     await user.click(screen.getByRole('button', { name: '予想を見る' }));
+    // 出走馬一覧はタブの中。買い目が出ているときは 1 つのタブ列にまとまる
+    await user.click(await screen.findByRole('tab', { name: '出走馬' }));
     await screen.findByText('2.500');
     expect(screen.queryByText('BUY')).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '推奨' })).not.toBeInTheDocument();
@@ -491,6 +495,29 @@ describe('RaceDetail', () => {
     expect(rows[0]).toHaveTextContent('テスト馬B');
     // テスト馬A has null finish_position, should be last
     expect(rows[rows.length - 1]).toHaveTextContent('テスト馬A');
+  });
+
+  it('出走馬一覧はタブに入り、買い目が出ないときだけ単独で出る', async () => {
+    // 画面に表が 2 つ縦に並ぶのをやめ、1 つのタブ列にまとめた。ただし買い目が
+    // 取れないとタブ自体が立たないので、そのときは単独カードで出す。
+    const user = userEvent.setup();
+    renderRaceDetail();
+    await screen.findByText('出走馬一覧');
+
+    // 予想前: タブは無く、単独カードとして出ている
+    expect(screen.queryByRole('tab', { name: '出走馬' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '予想を見る' }));
+    // 予想後: タブに入り、単独カードは消える
+    expect(await screen.findByRole('tab', { name: '出走馬' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('出走馬一覧')).not.toBeInTheDocument();
+    });
+    // 既定は「1 点ずつ」のまま (買い目を先に見せる)
+    expect(screen.getByRole('tab', { name: '1 点ずつ' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
   });
 
   it('買い方の説明は 1 箇所にまとめ、既定では畳んでおく', async () => {

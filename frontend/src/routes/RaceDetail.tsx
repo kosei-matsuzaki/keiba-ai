@@ -292,6 +292,42 @@ export function RaceDetail() {
 
   const hasEntries = race.entries.length > 0;
 
+  // **タブが立つのは買い目を描けるときだけ。** RecommendationsCard は取得中・
+  // 失敗・0 件では EmptyState を出すので、そのときに出走馬一覧を渡すと消える。
+  const recHasTabs =
+    aiRequested &&
+    !recQuery.isPending &&
+    !recQuery.isError &&
+    (recQuery.data?.candidates.length ?? 0) > 0;
+
+  // 出走馬一覧の中身。タブにも単独カードにも同じものを出す。
+  const entryTable = !aiRequested ? (
+    // AI 予想 未実行: 実績データのみ (予想列は空欄)。
+    <>
+      <p className="mb-3 text-sm text-muted-foreground">
+        「予想を見る」で確率と買い目を出します。
+      </p>
+      <EntryPredictionTable entries={race.entries} predictions={null} raceDate={race.date} />
+    </>
+  ) : predQuery.isPending ? (
+    <TableSkeleton rows={race.entries.length || 8} />
+  ) : predQuery.isError ? (
+    <>
+      <p className="mb-3 text-sm text-muted-foreground">
+        {isServiceUnavailableError(predQuery.error)
+          ? 'active モデルが見つかりません。確率の列は非表示です。'
+          : '予想データを取得できません。確率の列は非表示です。'}
+      </p>
+      <EntryPredictionTable entries={race.entries} predictions={null} raceDate={race.date} />
+    </>
+  ) : (
+    <EntryPredictionTable
+      entries={race.entries}
+      predictions={predictions}
+      raceDate={race.date}
+    />
+  );
+
   const isScrapingShutuba = runShutubaMutation.isPending || runShutubaMutation.isPolling;
   const isPredicting = aiRequested && (predQuery.isFetching || recQuery.isFetching);
   // 出馬表の取得 → 予想 の一連を 1 ボタンで通す。いまどの段階かを 1 本で見せる。
@@ -438,6 +474,7 @@ export function RaceDetail() {
       {/* 推奨買目も表より上に置く */}
       {hasEntries && aiRequested && (
         <RecommendationsCard
+          entriesTab={hasEntries ? entryTable : undefined}
           raceId={race_id}
           data={recQuery.data}
           isPending={recQuery.isPending}
@@ -450,51 +487,14 @@ export function RaceDetail() {
         />
       )}
 
-      {/* Unified entry + prediction table */}
-      {hasEntries && (
+      {/* 買い目が取れないときは、出走馬一覧を単独で出す。タブは
+          RecommendationsCard が買い目を描けるときだけ立つため。 */}
+      {hasEntries && !recHasTabs && (
         <Card className="border-t border-border pt-6">
           <CardHeader>
             <CardTitle className="text-label-ja">出走馬一覧</CardTitle>
           </CardHeader>
-          <CardContent>
-            {!aiRequested ? (
-              // AI 予想 未実行: 実績データのみ表示 (予想列は空欄)。
-              // 上部の「AI 予想を実行」ボタンでスコア + 推奨を取得する。
-              <>
-                <p className="mb-3 text-sm text-muted-foreground">
-                  「予想を見る」で確率と買い目を出します。
-                </p>
-                <EntryPredictionTable
-                  entries={race.entries}
-                  predictions={null}
-                  raceDate={race.date}
-                />
-              </>
-            ) : predQuery.isPending ? (
-              <TableSkeleton rows={race.entries.length || 8} />
-            ) : predQuery.isError ? (
-              <>
-                <p className="mb-3 text-sm text-muted-foreground">
-                  {isServiceUnavailableError(predQuery.error)
-                    ? 'active モデルが見つかりません。予想スコア列は非表示です。'
-                    : '予想データを取得できません。予想スコア列は非表示です。'}
-                </p>
-                <EntryPredictionTable
-                  entries={race.entries}
-                  predictions={null}
-                  raceDate={race.date}
-                />
-              </>
-            ) : (
-              <>
-                <EntryPredictionTable
-                  entries={race.entries}
-                  predictions={predictions}
-                  raceDate={race.date}
-                />
-              </>
-            )}
-          </CardContent>
+          <CardContent>{entryTable}</CardContent>
         </Card>
       )}
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, ReactNode } from 'react';
 import { Wallet } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -204,6 +204,13 @@ interface RecommendationsCardProps {
   onOverridesChange?: (next: RecommendationOverrides) => void;
   /** 全券種の確定払戻。あれば「答え合わせ」タブを出す。 */
   payouts?: PayoutEntry[];
+  /**
+   * 出走馬一覧。渡すと 1 つ目のタブになる。
+   *
+   * **タブが出るのは買い目が取れているときだけ** なので、取れないときは
+   * 呼び出し側が出走馬一覧を単独で描くこと (ここに渡すと消えてしまう)。
+   */
+  entriesTab?: ReactNode;
 }
 
 export function RecommendationsCard({
@@ -216,6 +223,7 @@ export function RecommendationsCard({
   overrides,
   onOverridesChange,
   payouts = [],
+  entriesTab,
 }: RecommendationsCardProps) {
   // 1 点あたりの金額。賭け金は必ずこの倍数なので、点数は stake / unit で戻せる。
   const unit = data?.stake_unit || 100;
@@ -258,9 +266,18 @@ export function RecommendationsCard({
               <TabsList>
                 <TabsTrigger value="detail">1 点ずつ</TabsTrigger>
                 <TabsTrigger value="purchase">購入用</TabsTrigger>
+                {/* 出走馬は参照するデータなので買い目の後ろ。既定は「1 点ずつ」の
+                    まま — 買い目を先に見せる方針は変えない */}
+                {entriesTab != null && <TabsTrigger value="entries">出走馬</TabsTrigger>}
                 {/* 結果が出ているレースだけ。買い目と同じ場所で振り返れるようにする */}
                 {payouts.length > 0 && <TabsTrigger value="review">答え合わせ</TabsTrigger>}
               </TabsList>
+
+              {entriesTab != null && (
+                <TabsContent value="entries" className="pt-3">
+                  {entriesTab}
+                </TabsContent>
+              )}
 
               <TabsContent value="review" className="pt-3">
                 <ResultReviewTab candidates={data.candidates} payouts={payouts} />
