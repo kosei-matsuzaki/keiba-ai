@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MouseEvent } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
@@ -56,6 +56,16 @@ function _diffDays(start: string, end: string): number | null {
 const MAX_WINDOW_DAYS = 366;
 
 // ── Group breakdown table ─────────────────────────────────────────────────────
+
+/** 実行条件の 1 項目。項目名を上、値を下に置いて拾い読みできるようにする。 */
+function RunCondition({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="font-mono text-sm tabular-nums">{children}</dd>
+    </div>
+  );
+}
 
 interface GroupTableProps {
   /** 1 列目の見出し。タブごとに何で切った表かが変わるので必ず渡す。 */
@@ -558,25 +568,48 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
           {/* ── 2. 結果のまとめ ────────────────────────────────
               収支は 0 スタート。元手が無いので「増えたか減ったか」だけを出す。 */}
           <Card className="flex flex-col gap-3 border-t border-border pt-6">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h3 className="text-label-ja">結果</h3>
-              {/* **どの条件で走ったかを結果の見出しに畳む。** 設定を変えれば同じ
-                  ボタンでも別条件で走るので、結果と離すと後から比べられない。 */}
-              <p className="text-xs text-subtle-foreground">
-                {result.window.start ?? '—'} 〜 {result.window.end ?? '—'} ・{' '}
-                {result.n_settled_races.toLocaleString()} レース
-                {result.conditions && (
-                  <>
-                    {' ・ '}1 レース {(result.conditions.race_budget ?? 0).toLocaleString()} 円まで
-                    {' ・ '}
-                    {result.conditions.enabled_bet_types.join(' / ') || '—'}
-                    {result.conditions.probability_model
-                      ? ` ・ 確率モデル ${result.conditions.probability_model}`
-                      : ' ・ 確率モデル未使用'}
-                  </>
-                )}
-              </p>
-            </div>
+            <h3 className="text-label-ja">結果</h3>
+
+            {/* **どの条件で走ったかを結果と一緒に置く。** 設定を変えれば同じボタンでも
+                別条件で走るので、離すと後から比べられない。
+                以前は「・」で 5 項目を 1 行に繋いでいて、どこからどこまでが 1 つの
+                値なのか読み取れなかった。**項目名と値の対**にする。 */}
+            <dl className="flex flex-wrap gap-x-8 gap-y-2">
+              <RunCondition label="期間">
+                {result.window.start ?? '—'} 〜 {result.window.end ?? '—'}
+              </RunCondition>
+              <RunCondition label="レース数">
+                {result.n_settled_races.toLocaleString()}
+              </RunCondition>
+              {result.conditions && (
+                <>
+                  <RunCondition label="1 レースの上限">
+                    {(result.conditions.race_budget ?? 0).toLocaleString()} 円
+                  </RunCondition>
+                  <RunCondition label="確率モデル">
+                    {result.conditions.probability_model ?? (
+                      <span className="text-subtle-foreground">未使用</span>
+                    )}
+                  </RunCondition>
+                </>
+              )}
+            </dl>
+
+            {result.conditions && result.conditions.enabled_bet_types.length > 0 && (
+              // 券種は 7 つ並ぶので、区切り文字ではなく粒に分ける
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-xs text-muted-foreground">券種</span>
+                {result.conditions.enabled_bet_types.map((bt) => (
+                  <span
+                    key={bt}
+                    className="rounded-sm border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
+                  >
+                    {bt}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* **カードにするのは収支だけ。** これがこの画面の答えで、
                 残りは読み解くための補助 (全部囲うと答えが埋もれる)。 */}
             <div className="flex flex-wrap items-start gap-4">

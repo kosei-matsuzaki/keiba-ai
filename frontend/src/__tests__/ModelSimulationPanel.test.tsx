@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -150,6 +150,33 @@ describe('ModelSimulationPanel の結果', () => {
     expect(screen.queryByText('純利益')).not.toBeInTheDocument();
     // 合計は見出し行に出る
     expect(await screen.findByText(/2,345/)).toBeInTheDocument();
+  });
+
+  it('実行条件は項目名と値の対で出す（「・」で繋がない）', async () => {
+    vi.mocked(getSimulationRun).mockResolvedValue({
+      ...RESULT,
+      conditions: {
+        probability_model: '20260827T140017-nn',
+        place_min_confidence: 0.6,
+        enabled_bet_types: ['単勝', '複勝', '馬連'],
+        stake_unit_by_bet_type: {},
+        race_budget: 5000,
+        max_points_per_bet_type: 0,
+        combo_min_hit_prob: {},
+      },
+    } as never);
+    await loadRun();
+    // 「期間」は入力フォームにもあるので、結果カードの中に限定して探す
+    const card = within((await screen.findByText('結果')).parentElement as HTMLElement);
+    // 項目名が読める。以前は 5 項目を「・」で 1 行に繋いでいて区切りが分からなかった
+    for (const label of ['期間', 'レース数', '1 レースの上限', '確率モデル', '券種']) {
+      expect(card.getByText(label)).toBeInTheDocument();
+    }
+    // 券種は粒に分ける (区切り文字で連結しない)
+    for (const bt of ['単勝', '複勝', '馬連']) {
+      expect(card.getByText(bt)).toBeInTheDocument();
+    }
+    expect(card.queryByText(/単勝 . 複勝/)).not.toBeInTheDocument();
   });
 
   it('内訳は投資の多い順に並び、収支と切り口の見出しを出す', async () => {
