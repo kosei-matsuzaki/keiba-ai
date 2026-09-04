@@ -211,10 +211,10 @@ export function PurchaseTable({ candidates, runners, raceId, renderBuy }: Purcha
                                   </span>
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
-                                  {formatPercent(c.prob)}
+                                  {formatPercent(c.confidence)}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
-                                  {c.confidence == null ? '—' : formatPercent(c.confidence)}
+                                  {c.probability_model_confidence == null ? '—' : formatPercent(c.probability_model_confidence)}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
                                   {c.est_odds === null ? '—' : formatRatio(c.est_odds)}

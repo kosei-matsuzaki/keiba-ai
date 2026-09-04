@@ -950,3 +950,56 @@ def test_recommendations_pass_combo_floor_from_settings(
 
     assert resp.status_code == 200
     assert captured["min_hit_prob_by_bet_type"] == {"馬連": 0.09}
+
+
+def test_response_field_names_match_the_screen(
+    app_with_temp_db: FastAPI,
+    tmp_path: Path,
+) -> None:
+    """応答のフィールド名を画面の言葉に合わせておく。
+
+    2026-09-05 まで **名前が入れ違っていた**: 画面「確信度」の列が `prob`、
+    画面「確率モデル」の列が `confidence` で、コードだけ読むと必ず取り違える。
+    戻したら気づけるようにしておく。
+
+    - `confidence`                   → 画面「確信度」(買う順序を決める値)
+    - `probability_model_confidence` → 画面「確率モデル」
+    """
+    race_id = "REC_RACE_NAMES"
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    engine = make_engine(db_path())
+    with session_scope(engine) as session:
+        _seed_race_and_entries(session, race_id, n_horses=4)
+        _seed_active_model(session, str(tmp_path / "fake_model_names"))
+
+    result = RecommendationResult(
+        race_id=race_id,
+        race_budget=5_000,
+        candidates=[
+            BetCandidate(
+                bet_type="単勝", combo="1", pattern="box", prob=0.4,
+                est_odds=10.0, ev=4.0, stake=500, post_positions=(1,),
+            ),
+        ],
+    )
+    with (
+        patch("api.routers.recommendations.load_model_full", return_value=MagicMock()),
+        patch("api.routers.recommendations.predict_race",
+              return_value=_fake_predictions_df(race_id, n=4)),
+        patch("api.routers.recommendations.predict_race_with_combinations",
+              return_value=_fake_combinations()),
+        patch("api.routers.recommendations.recommend_for_race", return_value=result),
+        TestClient(app_with_temp_db) as client,
+    ):
+        resp = client.get(f"/api/recommendations/{race_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    c = data["candidates"][0]
+    assert "prob" not in c, "旧名が残っている (画面「確信度」は confidence)"
+    assert c["confidence"] == 0.4
+    assert "probability_model_confidence" in c
+    assert "place_confidence" not in data
+    assert "place_probability_model_confidence" in data

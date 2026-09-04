@@ -43,15 +43,19 @@ class RecommendationCandidate(BaseModel):
     bet_type: str
     combo: str
     pattern: str
-    prob: float
-    #: **確信度 = 確率モデルから見た「この買い目が当たる確率」。**
-    #:
+    #: 画面「確信度」。**その買い目が当たる確率**で、買う順序を決める値。
     #: 券種をまたいで同じ意味にしてある: 単勝なら 1 着になる確率、複勝なら
-    #: 3 着以内に入る確率、連系なら組合せの的中確率。`prob` は単複だと active
-    #: (買う馬を決めるモデル) の確率で、確率としての精度は保証されない
-    #: (本命の win_prob と勝敗の相関は 0.073)。判断に使うのはこちら。
+    #: 3 着以内に入る確率、連系なら組合せの的中確率。
+    #:
+    #: 単複は active (買う馬を決めるモデル) の確率なので、**確率としての精度は
+    #: 保証されない** (本命の win_prob と勝敗の相関は 0.073)。連系は
+    #: `merge_combination_sources` が確率モデル由来の値を入れている。
+    confidence: float
+    #: 画面「確率モデル」。上と**同じ量を確率専用モデルが答えたもの**。
+    #: 複勝を買うかと厚みはこちらで決める。連系はもともと確率モデルが出して
+    #: いるので `confidence` と同じ値になり、画面は「同じ」と表示する。
     #: 確率モデル未設定なら None。
-    confidence: float | None = None
+    probability_model_confidence: float | None = None
     est_odds: float | None
     est_odds_source: Literal["confirmed", "scraped", "implied", "unknown"] = "unknown"
     ev: float | None
@@ -67,9 +71,9 @@ class RecommendationsResponse(BaseModel):
     stake_unit: int = STAKE_UNIT
     candidates: list[RecommendationCandidate]
     odds_source: Literal["live", "past", "unknown"] = "unknown"
-    #: 確率モデルが AI の本命に与えた単勝確率。確率モデル未設定なら None。
-    place_confidence: float | None = None
-    #: 複勝を買う確信度のしきい値 (place_confidence がこれ未満なら複勝は見送る)。
+    #: 確率モデルが AI の本命に与えた 3 着内率。確率モデル未設定なら None。
+    place_probability_model_confidence: float | None = None
+    #: 複勝を買う下限。上がこれ未満なら複勝は見送る。
     place_confidence_threshold: float | None = None
 
 
@@ -291,11 +295,12 @@ def get_recommendations(
         min_hit_prob_by_bet_type=eff_combo_floors,
     )
 
-    def _confidence_for(c) -> float | None:  # noqa: ANN001
-        """券種横断の確信度。
+    def _probability_model_confidence_for(c) -> float | None:  # noqa: ANN001
+        """画面「確率モデル」の列。確信度と同じ量を確率専用モデルが答えたもの。
 
-        連系の `prob` はもともと確率モデル由来 (`merge_combination_sources`) なので
-        そのまま使える。単複は active の確率なので、確率モデルに引き直した値を返す。
+        連系の確信度はもともと確率モデル由来 (`merge_combination_sources`) なので
+        そのまま返す (画面は同値を「同じ」と表示する)。単複は active の確率なので、
+        確率モデルに引き直した値を返す。
         """
         if c.bet_type == "単勝":
             return win_confidence
@@ -308,8 +313,8 @@ def get_recommendations(
             bet_type=c.bet_type,
             combo=c.combo,
             pattern=c.pattern,
-            prob=c.prob,
-            confidence=_confidence_for(c),
+            confidence=c.prob,
+            probability_model_confidence=_probability_model_confidence_for(c),
             est_odds=c.est_odds,
             est_odds_source=c.est_odds_source,
             ev=c.ev,
@@ -325,6 +330,6 @@ def get_recommendations(
         stake_unit=STAKE_UNIT,
         candidates=candidates,
         odds_source=odds_source,
-        place_confidence=confidence,
+        place_probability_model_confidence=confidence,
         place_confidence_threshold=conf_threshold,
     )

@@ -6,13 +6,13 @@ function cand(
   betType: string,
   posts: number[],
   stake = 100,
-  prob = 0.1
+  confidence = 0.1
 ): RecommendationCandidate {
   return {
     bet_type: betType,
     combo: posts.join('-'),
     pattern: 'box',
-    prob,
+    confidence,
     est_odds: 10,
     est_odds_source: 'implied',
     ev: 1.0,

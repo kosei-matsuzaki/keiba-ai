@@ -226,9 +226,9 @@ export function buildPurchaseGroups(candidates: RecommendationCandidate[]): Purc
 
   const groups: PurchaseGroup[] = [];
   for (const [betType, list] of byType) {
-    const sorted = [...list].sort((a, b) => b.prob - a.prob);
+    const sorted = [...list].sort((a, b) => b.confidence - a.confidence);
     partition(betType, sorted).forEach((part, i) => {
-      const items = [...part.candidates].sort((a, b) => b.prob - a.prob);
+      const items = [...part.candidates].sort((a, b) => b.confidence - a.confidence);
       groups.push({
         key: `${betType}#${i}`,
         betType,

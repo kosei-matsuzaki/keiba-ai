@@ -185,7 +185,7 @@ function sortCandidates(candidates: RecommendationCandidate[]): RecommendationCa
     const pa = BET_TYPE_PRIORITY[a.bet_type] ?? 2;
     const pb = BET_TYPE_PRIORITY[b.bet_type] ?? 2;
     if (pa !== pb) return pa - pb;
-    return b.prob - a.prob;
+    return b.confidence - a.confidence;
   });
 }
 
@@ -336,7 +336,7 @@ export function RecommendationsCard({
                       <TableCell>
                         <ComboMarks combo={c.combo} runners={runners} />
                       </TableCell>
-                      <TableCell className="text-right">{formatPercent(c.prob)}</TableCell>
+                      <TableCell className="text-right">{formatPercent(c.confidence)}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {isComboBetType(c.bet_type) ? (
                           // 連系の確信度は確率モデルが直接出したもの。左の列と同じ値
@@ -346,10 +346,10 @@ export function RecommendationsCard({
                           >
                             同じ
                           </span>
-                        ) : c.confidence == null ? (
+                        ) : c.probability_model_confidence == null ? (
                           <span className="text-subtle-foreground">—</span>
                         ) : (
-                          formatPercent(c.confidence)
+                          formatPercent(c.probability_model_confidence)
                         )}
                       </TableCell>
                       <TableCell className="text-right">

@@ -45,14 +45,21 @@ log = get_logger(__name__)
 # だったため、連系では同じ値が 2 列に並んでいた。
 #
 #   画面「確信度」     = その買い目が当たる確率。買う順序を決める値
-#                       → API では RecommendationCandidate.prob
-#   画面「確率モデル」  = 同じ量を確率専用モデルが答えたもの
 #                       → API では RecommendationCandidate.confidence
+#   画面「確率モデル」  = 同じ量を確率専用モデルが答えたもの
+#                       → API では RecommendationCandidate.probability_model_confidence
 #
-# **コード側のフィールド名は画面の言葉とずれている。** 連系では両者が同一
-# (merge_combination_sources が連系の候補を確率モデルから採るため) で、画面は
-# そこを「同じ」と表示する。設定の `place_min_hit_prob` / `combo_min_hit_prob` は
-# どちらも画面上「確信度の下限」。
+# 2026-09-05 に **API のフィールド名を画面の言葉に揃えた**。それまでは
+# 画面「確信度」= `prob` / 画面「確率モデル」= `confidence` と**名前が入れ違って
+# いて**、コードだけ読むと必ず取り違える状態だった。
+#
+# 連系では両者が同一 (merge_combination_sources が連系の候補を確率モデルから
+# 採るため) で、画面はそこを「同じ」と表示する。設定の `place_min_hit_prob` /
+# `combo_min_hit_prob` はどちらも画面上「確信度の下限」。
+#
+# **`ai/` 内部の `BetCandidate.prob` / `CombinationPrediction.prob` は変えていない。**
+# あれはドメインの値で、画面の 2 列という都合とは別物。名前を揃えるのは API の
+# 応答 (`api/routers/recommendations.py`) までにする。
 
 #: 券種 → 確率モデルのどの確率を「確信度」とするか。
 #:

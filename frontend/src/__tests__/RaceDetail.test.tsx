@@ -114,7 +114,7 @@ const mockRecommendations = {
       bet_type: '単勝',
       combo: '1',
       pattern: 'box',
-      prob: 0.4,
+      confidence: 0.4,
       est_odds: 10.0,
       ev: 4.0,
       stake: 500,

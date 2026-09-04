@@ -325,12 +325,16 @@ export interface RecommendationCandidate {
   bet_type: string;
   combo: string;
   pattern: string;
-  prob: number;
   /**
-   * 確信度 = 確率モデルから見た「この買い目が当たる確率」。券種をまたいで同じ意味
-   * (単勝=1着 / 複勝=3着以内 / 連系=組合せ的中)。確率モデル未設定なら null。
+   * 画面「確信度」。その買い目が当たる確率で、買う順序を決める値。券種をまたいで
+   * 同じ意味 (単勝=1着 / 複勝=3着以内 / 連系=組合せ的中)。単複は active の確率。
    */
-  confidence?: number | null;
+  confidence: number;
+  /**
+   * 画面「確率モデル」。上と同じ量を確率専用モデルが答えたもの。複勝を買うかと
+   * 厚みはこちらで決める。連系は confidence と同値。確率モデル未設定なら null。
+   */
+  probability_model_confidence?: number | null;
   /** 推定込みのオッズ。確定オッズが取れなければ単勝由来の推定値。 */
   est_odds: number | null;
   /**
@@ -339,7 +343,7 @@ export interface RecommendationCandidate {
    * 新サーバは必ず "confirmed" / "implied" / "unknown" のいずれかを返す。
    */
   est_odds_source?: EstOddsSource;
-  /** 期待値 = prob × est_odds。est_odds が null の場合は null。 */
+  /** 期待値 = confidence × est_odds。est_odds が null の場合は null。 */
   ev: number | null;
   stake: number;
   post_positions: number[];
@@ -358,9 +362,9 @@ export interface RecommendationsResponse {
    * 'unknown' = オッズ取得待ち or 該当データなし
    */
   odds_source: 'live' | 'past' | 'unknown';
-  /** 確率モデルが AI の本命に与えた単勝確率。確率モデル未設定なら null */
-  place_confidence?: number | null;
-  /** 複勝を買う確信度の下限 */
+  /** 確率モデルが AI の本命に与えた 3 着内率。確率モデル未設定なら null */
+  place_probability_model_confidence?: number | null;
+  /** 複勝を買う下限。上がこれ未満なら複勝は見送る */
   place_confidence_threshold?: number | null;
 }
 

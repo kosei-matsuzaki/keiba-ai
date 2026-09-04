@@ -494,10 +494,16 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 |---|---|---|---|
 | GET | `/api/recommendations/{race_id}` | 200 / 404 / 503 | 予算内に収まる買い目一覧 |
 
-レスポンスには `place_confidence` / `place_confidence_threshold` が入る（確率モデル未設定なら null）。
-複勝を見送ったレースでは、UI がこの値を使って理由を表示する。
+候補 1 件は **画面の言葉でフィールド名を持つ**（2026-09-05 に揃えた。それまでは名前が入れ違っていた）。
 
-主なクエリ: `top_k`（券種ごとの候補上限）/ `race_budget` / `stake_unit` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
+| フィールド | 画面の列 | 中身 |
+|---|---|---|
+| `confidence` | 確信度 | その買い目が当たる確率。買う順序を決める値。単勝=1着 / 複勝=3着以内 / 連系=組合せ的中。単複は active、連系は確率モデル由来 |
+| `probability_model_confidence` | 確率モデル | 同じ量を確率専用モデルが答えたもの。複勝を買うかと厚みはこれで決める。連系は `confidence` と同値なので画面は「同じ」と出す。未設定なら null |
+
+レスポンス直下には `place_probability_model_confidence`（確率モデルが AI の本命に与えた 3 着内率）と `place_confidence_threshold`（複勝を買う下限）も入る。確率モデル未設定なら null。**いまの UI はこの 2 つを描画していない。**
+
+主なクエリ: `top_k`（券種ごとの候補上限）/ `race_budget` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
 **連系を組む上位頭数は固定**（`TOP_N_HORSES` = 3）。頭数を広げても的中確率の下限を超えない候補が増えるだけで買い目は変わらないため、選択肢にしていない。
 
 買い方は券種で異なる（`ai/betting/strategy.py`、根拠は `docs/ai-model.md`）:
