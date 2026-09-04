@@ -81,49 +81,53 @@ export function BettingRuleDetails() {
           </p>
         )}
 
-        <p className="leading-relaxed text-subtle-foreground">
-          <strong className="font-medium">確信度＝その買い目が当たる確率。</strong>
-          単勝なら 1 着になる確率、複勝なら 3 着以内に入る確率、連系ならその組合せで
-          決まる確率です。券種が違っても意味は同じなので、横に並べて比べられます。
-          点数の式は <span className="font-mono">5 ×（確信度 ÷ 基準）²</span> を
-          1〜15 点に丸めたもの（基準は単勝 25% / 複勝 50%）。連系だけは 1 組合せ 1 点で、
-          <strong className="font-medium">何点買うかは下限を超えた買い目の数</strong>が
-          決めます（レースごとに変わり、1 点も買わないレースが 4 分の 1 ほどあります）。
-        </p>
+        {/* 用語と作り方。**文章にしない** — 読み飛ばせる行の集まりにする */}
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-subtle-foreground">
+          <dt className="text-foreground">確信度</dt>
+          <dd>
+            その買い目が当たる確率。単勝＝1着 / 複勝＝3着以内 / 連系＝その組合せ。
+            券種が違っても意味は同じ
+          </dd>
 
-        <p className="leading-relaxed text-subtle-foreground">
-          <strong className="font-medium">確信度は 2 つのモデルが出します。</strong>
-          買い目を選ぶのは「買い目モデル」、確信度を答えるのは「確率モデル」です。
-          表の <span className="font-mono">確信度</span> 列は買う順序を決める値、
-          <span className="font-mono">確率モデル</span> 列は同じ量を確率専用モデルが
-          答えたもの。<strong className="font-medium">連系は最初から確率モデルが
-          出している</strong>ので、そこは「同じ」と表示します。単複だけ 2 つ並ぶのは、
-          買い目モデルが回収率で学習していて確率が正確でないためです（本命の確率と
-          勝敗の相関は 0.07、確率モデルは 0.24）。
-        </p>
+          <dt className="text-foreground">点数</dt>
+          <dd>
+            <span className="font-mono">5 ×（確信度 ÷ 基準）²</span> を 1〜15 点に。
+            基準は単勝 25% / 複勝 50%。連系は 1 組合せ 1 点で、
+            <strong className="font-medium">点数＝下限を超えた買い目の数</strong>
+          </dd>
 
-        <p className="leading-relaxed text-subtle-foreground">
-          <strong className="font-medium">確信度の作り方。</strong>
-          モデルが出した馬ごとのスコアを較正（温度スケーリング）してから、
-          1 着〜3 着の並びを 1 万回サンプリングします。単勝はそのうち 1 着だった割合、
-          複勝は 3 着以内に入った割合、連系はその組合せが出た割合です。
-          出走馬表の <span className="font-mono">1着確率</span> と
-          <span className="font-mono">3着内率</span> は、単勝・複勝の確信度と同じ数字です。
-        </p>
+          <dt className="text-foreground">作り方</dt>
+          <dd>
+            スコア → 温度較正 → 1〜3着の並びを 1 万回サンプリング → 出た割合。
+            出走馬表の 1着確率 / 3着内率 は単勝 / 複勝の確信度と同じ数字
+          </dd>
 
-        <p className="leading-relaxed text-subtle-foreground">
-          <strong className="font-medium">期待値（EV）は使っていません。</strong>
-          較正済みの確率で EV を条件にすると大穴に寄り、実測で単勝回収率が
-          0.93 → 0.70 に落ちるためです。表の EV 列は参考値です。
-        </p>
+          <dt className="text-foreground">2 つのモデル</dt>
+          <dd>
+            馬を選ぶのは買い目モデル（回収率で学習。確率は不正確で、本命の確率と
+            勝敗の相関 0.07）。確信度を答えるのは確率モデル（同 0.24）。
+            <strong className="font-medium">連系は最初から確率モデル</strong>なので
+            「確率モデル」列は「同じ」になる
+          </dd>
 
-        <p className="leading-relaxed text-subtle-foreground">
-          <strong className="font-medium">予算は上限で、使い切りません。</strong>
-          買う条件を満たす買い目が少なければ、予算が余ったまま終わります（連系を
-          1 点も買わないレースは 4 分の 1 ほどあります）。前進検証 9 fold の実測は
-          単勝 0.93 / 複勝 0.89（確信度で絞ると 0.92）/ 連系 0.87 で、
-          <strong className="font-medium">いずれも 1.0 未満</strong>です。
-        </p>
+          <dt className="text-foreground">EV</dt>
+          <dd>
+            使わない。較正済みの確率で EV を条件にすると大穴に寄り、単勝回収率が
+            0.93 → 0.70 に落ちる。表の EV は参考値
+          </dd>
+
+          <dt className="text-foreground">予算</dt>
+          <dd>
+            上限であって使い切らない。条件を満たす買い目が少なければ余る
+            （連系を 1 点も買わないレースが 4 分の 1 ほど）
+          </dd>
+
+          <dt className="text-foreground">実測</dt>
+          <dd>
+            単勝 0.91 / 複勝 0.92（2024-10〜2026-08・6,244 レース）。
+            <strong className="font-medium">どちらも 1.0 未満</strong>
+          </dd>
+        </dl>
       </div>
     </details>
   );
