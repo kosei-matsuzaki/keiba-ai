@@ -9,9 +9,14 @@
 
 PL 確率も特徴量に入れる。モデルは PL からの「ずれ」だけを学べばよい。
 
-**NN は 2024-04 までで学習済みなので、それ以降は全部 out-of-sample。** 組合せ
-モデルの学習に前半、評価に後半を使う。NN の推論が 1 レース約 1.6 秒かかるので
-標本を絞る。
+**組合せモデルが使える期間は NN の未見期間だけ。** NN が学習に使った期間の出力は
+過学習した値なので、それに対する補正を学んでも転移しない。よって 2024-10 以降の
+22 ヶ月しか使えず、**確率モデル 31,000 レース対 組合せモデル 6,000 レース**という
+開きは構造上避けられない。
+
+そのうえで **拡大窓の交差適合**にする。22 ヶ月を時間順に K 分割し、fold k は
+1..k-1 で学習して k を予測する。全期間を評価に使えるうえ、**学習量を増やしながら
+測れる**ので「データ不足なのか、そもそも効かないのか」が分かる。
 
 三連単は 1 レース 2,184 行になるので外す (三連複 364 行までにする)。
 
@@ -37,7 +42,7 @@ from core.logging import configure_logging, get_logger
 from core.paths import db_path, odds_db_path
 from core.settings_store import SettingsStore, resolve_model_path
 from db.session import make_engine, session_scope
-from features.builder import FEATURE_COLUMNS, build_training_frame
+from features.builder import build_training_frame
 
 log = get_logger(__name__)
 _EPS = 1e-12
@@ -121,10 +126,9 @@ def _norm(df: pd.DataFrame, col: str, total: float) -> np.ndarray:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--fit-start", default="2024-10-28")
-    ap.add_argument("--fit-end", default="2025-10-31")
-    ap.add_argument("--fit-races", type=int, default=1500)
-    ap.add_argument("--test-races", type=int, default=1200)
+    ap.add_argument("--start", default="2024-10-28", help="NN の未見期間の始まり")
+    ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--races", type=int, default=6000)
     args = ap.parse_args()
 
     configure_logging()
@@ -139,98 +143,106 @@ def main() -> int:
     with session_scope(engine) as session:
         frame = build_training_frame(session)
         frame = frame[frame["finish_position"].notna() & frame["post_position"].notna()]
-        frame = frame[frame["odds_win"].notna() & (frame["n_runners"] >= 8)].reset_index(drop=True)
+        frame = frame[frame["odds_win"].notna() & (frame["n_runners"] >= 8)]
         d = pd.to_datetime(frame["date"])
-        fit_all = frame[(d >= pd.Timestamp(args.fit_start)) & (d <= pd.Timestamp(args.fit_end))]
-        test_all = frame[d > pd.Timestamp(args.fit_end)]
-
-        def _sample(part: pd.DataFrame, n: int) -> pd.DataFrame:
-            ids = list(dict.fromkeys(part["race_id"]))
-            step = max(1, len(ids) // n)
-            return part[part["race_id"].isin(set(ids[::step][:n]))].reset_index(drop=True)
+        part = frame[d >= pd.Timestamp(args.start)].reset_index(drop=True)
+        ids = list(dict.fromkeys(part["race_id"]))[: args.races]
+        part = part[part["race_id"].isin(set(ids))].reset_index(drop=True)
 
         bundle = load_model_full(prob_path)
-        log.info("確率モデル: %s", prob_path)
-        cols = [c for c in FEATURE_COLUMNS if c in frame.columns]  # noqa: F841 (frame 由来)
+        log.info("確率モデル: %s / 対象 %d レース", prob_path, len(ids))
 
-        def build(part: pd.DataFrame, tag: str) -> pd.DataFrame:
-            rng = np.random.default_rng(0)
-            out = []
-            groups = part.groupby("race_id", sort=False).indices
-            for k, (race_id, idx) in enumerate(groups.items(), start=1):
-                g = part.iloc[idx]
-                try:
-                    preds = _predict_race_nn(bundle, g, session=session)
-                except Exception:  # noqa: BLE001
-                    continue
-                by_horse = dict(zip(preds["horse_id"], preds["score"], strict=True))
-                scores = np.array([by_horse[h] for h in g["horse_id"]])
-                rows = _race_rows(g.reset_index(drop=True), scores, rng)
-                rows["race_id"] = race_id
-                out.append(rows)
-                if k % 200 == 0:
-                    log.info("  [%s] %d/%d レース", tag, k, len(groups))
-            return pd.concat(out, ignore_index=True)
-
-        fit = build(_sample(fit_all, args.fit_races), "学習")
-        test = build(_sample(test_all, args.test_races), "評価")
+        rng = np.random.default_rng(0)
+        chunks = []
+        groups = part.groupby("race_id", sort=False).indices
+        for k, (race_id, idx) in enumerate(groups.items(), start=1):
+            g = part.iloc[idx]
+            try:
+                preds = _predict_race_nn(bundle, g, session=session)
+            except Exception:  # noqa: BLE001
+                continue
+            by_horse = dict(zip(preds["horse_id"], preds["score"], strict=True))
+            scores = np.array([by_horse[h] for h in g["horse_id"]])
+            rows = _race_rows(g.reset_index(drop=True), scores, rng)
+            rows["race_id"] = race_id
+            chunks.append(rows)
+            if k % 500 == 0:
+                log.info("  %d/%d レース", k, len(groups))
+        data = pd.concat(chunks, ignore_index=True)
 
     engine.dispose()
-    log.info("学習 %d 行 / 評価 %d 行", len(fit), len(test))
 
-    book = _market(list(dict.fromkeys(test["race_id"])))
+    # 時間順に K 分割。**fold k は 1..k-1 で学習して k を予測する** (拡大窓)。
+    order = list(dict.fromkeys(data["race_id"]))
+    bounds = np.linspace(0, len(order), args.folds + 1).astype(int)
+    fold_of = {}
+    for f in range(args.folds):
+        for r in order[bounds[f] : bounds[f + 1]]:
+            fold_of[r] = f
+    data["fold"] = data["race_id"].map(fold_of)
 
-    print(f"\n当たり組合せの NLL（小さいほど良い）— 評価 "
-          f"{test['race_id'].nunique():,} レース\n")
-    print(f"{'券種':8s} {'直接学習':>10} {'現行 PL':>10} {'市場':>10} {'直接 − PL':>11}")
+    book = _market(order)
+    mkt = np.array([book.get(r, {}).get(bt, {}).get(c, np.nan)
+                    for r, bt, c in zip(data["race_id"], data["bet_type"], data["combo"],
+                                        strict=True)])
+    data["mkt_odds"] = mkt
+
+    print(f"\n当たり組合せの NLL（小さいほど良い）— 拡大窓 {args.folds} 分割 / "
+          f"{len(order):,} レース\n")
+    print(f"{'券種':8s} {'学習レース':>9} {'直接学習':>10} {'現行 PL':>10} {'市場':>10} "
+          f"{'直接 − PL':>11}")
     for bet_type, n_hits in _BET_TYPES.items():
-        tr = fit[fit["bet_type"] == bet_type]
-        te = test[test["bet_type"] == bet_type].reset_index(drop=True)
-        if te.empty:
-            continue
-        cut = tr["race_id"].drop_duplicates()
-        v_ids = set(cut.iloc[int(len(cut) * 0.8):])
-        booster = lgb.train(
-            {
-                "objective": "binary", "metric": "binary_logloss", "learning_rate": 0.05,
-                "num_leaves": 63, "min_data_in_leaf": 500, "feature_fraction": 0.8,
-                "bagging_fraction": 0.8, "bagging_freq": 1, "verbosity": -1, "seed": 42,
-            },
-            lgb.Dataset(tr[~tr["race_id"].isin(v_ids)][_FEATS],
-                        label=tr[~tr["race_id"].isin(v_ids)]["hit"]),
-            num_boost_round=1500,
-            valid_sets=[lgb.Dataset(tr[tr["race_id"].isin(v_ids)][_FEATS],
-                                    label=tr[tr["race_id"].isin(v_ids)]["hit"])],
-            callbacks=[lgb.early_stopping(100, verbose=False)],
-        )
-        te = te.assign(direct=booster.predict(te[_FEATS], num_iteration=booster.best_iteration))
-        p_direct = _norm(te, "direct", float(n_hits))
-        p_pl = _norm(te, "pl", float(n_hits))
-        mkt = np.array([book.get(r, {}).get(bet_type, {}).get(c, np.nan)
-                        for r, c in zip(te["race_id"], te["combo"], strict=True)])
-        ok = np.isfinite(mkt)
-        p_mkt = np.full(len(te), np.nan)
-        if ok.any():
-            sub = te[ok].copy()
-            sub["inv"] = 1.0 / mkt[ok]
-            p_mkt[ok] = _norm(sub, "inv", float(n_hits))
+        sub = data[data["bet_type"] == bet_type]
+        for f in range(1, args.folds):
+            tr = sub[sub["fold"] < f]
+            te = sub[sub["fold"] == f].reset_index(drop=True)
+            if te.empty or tr.empty:
+                continue
+            # early stopping 用に、学習期間の **後ろ 20% のレース** を分ける。
+            #
+            # 以前は「学習の最後の 1 fold」を使っていたが、最初に評価する fold では
+            # 学習が 1 fold しかなく、**検証セットが学習データそのもの**になっていた。
+            # in-sample で早期停止を判定するので過学習し放題で、その行だけ NLL が
+            # +0.5〜+1.5 と壊れていた。レース単位で切れば fold 数に依らず分離できる。
+            tr_races = list(dict.fromkeys(tr["race_id"]))
+            v_races = set(tr_races[int(len(tr_races) * 0.8):])
+            v = tr["race_id"].isin(v_races)
+            if not v.any() or not (~v).any():
+                continue  # 分けられないほど小さい学習期間は測らない
+            booster = lgb.train(
+                {
+                    "objective": "binary", "metric": "binary_logloss", "learning_rate": 0.05,
+                    "num_leaves": 63, "min_data_in_leaf": 500, "feature_fraction": 0.8,
+                    "bagging_fraction": 0.8, "bagging_freq": 1, "verbosity": -1, "seed": 42,
+                },
+                lgb.Dataset(tr[~v][_FEATS], label=tr[~v]["hit"]),
+                num_boost_round=1500,
+                valid_sets=[lgb.Dataset(tr[v][_FEATS], label=tr[v]["hit"])],
+                callbacks=[lgb.early_stopping(100, verbose=False)],
+            )
+            te = te.assign(
+                direct=booster.predict(te[_FEATS], num_iteration=booster.best_iteration)
+            )
+            p_direct = _norm(te, "direct", float(n_hits))
+            p_pl = _norm(te, "pl", float(n_hits))
+            ok = np.isfinite(te["mkt_odds"].to_numpy())
+            p_mkt = np.full(len(te), np.nan)
+            if ok.any():
+                s2 = te[ok].copy()
+                s2["inv"] = 1.0 / s2["mkt_odds"]
+                p_mkt[ok] = _norm(s2, "inv", float(n_hits))
+            sel = te["hit"].to_numpy().astype(bool) & ok
 
-        y = te["hit"].to_numpy().astype(bool)
-        sel = y & ok
+            def nll(p: np.ndarray, sel: np.ndarray = sel) -> float:
+                return float(np.mean(-np.log(np.clip(p[sel], _EPS, None))))
 
-        def nll(p: np.ndarray, sel: np.ndarray = sel) -> float:
-            # sel を既定引数で束縛する。ループ変数を閉包で掴むと券種がずれる。
-            return float(np.mean(-np.log(np.clip(p[sel], _EPS, None))))
+            label = bet_type if f == 1 else ""
+            print(f"{label:8s} {tr['race_id'].nunique():>9,} {nll(p_direct):>10.4f} "
+                  f"{nll(p_pl):>10.4f} {nll(p_mkt):>10.4f} "
+                  f"{nll(p_direct) - nll(p_pl):>+11.4f}")
 
-        print(f"{bet_type:8s} {nll(p_direct):>10.4f} {nll(p_pl):>10.4f} {nll(p_mkt):>10.4f} "
-              f"{nll(p_direct) - nll(p_pl):>+11.4f}")
-        gain = booster.feature_importance("gain")
-        top = sorted(zip(_FEATS, gain, strict=True), key=lambda x: -x[1])[:3]
-        log.info("  %s: %s", bet_type, ", ".join(f"{k}({v / gain.sum():.0%})" for k, v in top))
-
-    print("\n直接 − PL が負なら、本番の PL 経由をやめる価値がある。"
-          "\n市場より小さくなって初めて、その券種にエッジがある。"
-          "\n入力は本番の確率モデル (NN) なので、この差はそのまま本番の改善幅。")
+    print("\n学習レースを増やしても差が縮まらないなら、データ不足ではない。"
+          "\n縮み続けているなら、22 ヶ月という上限が効いている。")
     return 0
 
 
