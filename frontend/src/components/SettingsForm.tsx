@@ -102,10 +102,13 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
   const visible = (key: SettingsSection): boolean =>
     activeSection === undefined || activeSection === key;
 
+  // max-w-3xl は行長の上限。付けないと 1440px の画面でラベルが左端・入力が
+  // 右端に張り付き、1 項目を読むのに目が 1000px 以上動く。
   return (
-    <form onSubmit={handleSubmit(submit)} className="flex flex-col gap-6" noValidate>
-      <div className="flex flex-col gap-6">
+    <form onSubmit={handleSubmit(submit)} className="flex max-w-3xl flex-col gap-6" noValidate>
+      <div className="flex flex-col gap-10">
         <Section
+          title="取り込み方"
           hidden={!visible('scraper')}
         >
               <FieldRow
@@ -126,6 +129,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 >
                   <Input
                     id="rate_min_seconds"
+                    className="w-24 font-mono tabular-nums"
                     type="number"
                     step="0.1"
                     {...register('rate_min_seconds')}
@@ -139,6 +143,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 >
                   <Input
                     id="rate_max_seconds"
+                    className="w-24 font-mono tabular-nums"
                     type="number"
                     step="0.1"
                     {...register('rate_max_seconds')}
@@ -152,6 +157,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 >
                   <Input
                     id="night_min_seconds"
+                    className="w-24 font-mono tabular-nums"
                     type="number"
                     step="0.1"
                     {...register('night_min_seconds')}
@@ -161,6 +167,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
         </Section>
 
         <Section
+          title="買い方"
           hidden={!visible('betting')}
         >
               <div className="flex flex-col gap-4">
@@ -172,6 +179,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 >
                   <Input
                     id="place_min_hit_prob"
+                    className="w-24 font-mono tabular-nums"
                     type="number"
                     step="0.05"
                     {...register('place_min_hit_prob')}
@@ -185,6 +193,7 @@ export function SettingsForm({ defaults, onSubmit, isPending, activeSection }: S
                 >
                   <Input
                     id="win_min_odds"
+                    className="w-24 font-mono tabular-nums"
                     type="number"
                     step="0.01"
                     {...register('win_min_odds')}
@@ -278,6 +287,8 @@ function countDirtyFields(dirty: object): number {
 // 重複を避けてフラットに並べる。description のみ muted で 1 行表示。
 
 interface SectionProps {
+  /** グループの見出し。タブを外して 2 グループを縦に並べるので、境目はこれが持つ */
+  title?: string;
   /** 補足説明 (1 行 muted)。省略可能。 */
   description?: string;
   children: ReactNode;
@@ -285,9 +296,12 @@ interface SectionProps {
   hidden?: boolean;
 }
 
-function Section({ description, children, hidden = false }: SectionProps) {
+function Section({ title, description, children, hidden = false }: SectionProps) {
   return (
     <div className={cn('flex flex-col gap-4', hidden && 'hidden')}>
+      {/* 11px の text-label-ja だと 2 グループの境目として弱く、
+          タブを外した意味が出ない。見出しは本文と同じ 14px + 太さで示す。 */}
+      {title && <h2 className="text-sm font-medium">{title}</h2>}
       {description && (
         <p className="text-xs text-subtle-foreground">{description}</p>
       )}
@@ -313,12 +327,12 @@ interface FieldRowProps {
  */
 function FieldRow({ label, id, help, error, children }: FieldRowProps) {
   return (
-    <div className="grid gap-1.5 border-b border-border py-3 sm:grid-cols-[minmax(0,1fr)_20rem] sm:gap-8">
+    <div className="grid gap-2 border-b border-border py-3 sm:grid-cols-[minmax(0,1fr)_14rem] sm:gap-8">
       <div>
         {/* **説明は畳まず、短く書く。** 設定値は「何を意味する数字か」が
             分からないと入力できないので、ホバーに隠すと使えない。
             長い理由や実測値は docs に置き、ここは 1 行に収める。 */}
-        <Label htmlFor={id} className="text-[13px] font-medium">
+        <Label htmlFor={id} className="text-xs font-medium">
           {label}
         </Label>
         {help && <p className="mt-0.5 text-xs text-subtle-foreground">{help}</p>}

@@ -14,6 +14,10 @@
 | レース結果 | `https://db.netkeiba.com/race/<race_id>/` | 着順・タイム・払戻金・上がり3F・通過順・馬名・騎手名・調教師名 |
 | 馬詳細 | `https://db.netkeiba.com/horse/<horse_id>/` | name / sex / birth_date（新規 horse のみ取得） |
 | 馬血統 | `https://db.netkeiba.com/horse/ped/<horse_id>/` | sire（父馬名）/ dam（母馬名）（新規 horse のみ取得） |
+| 確定オッズ API | `https://race.netkeiba.com/api/api_get_jra_odds.html?pid=api_get_jra_odds&race_id=<race_id>&type=<1|3|4|5|6|7|8>` | 全券種の確定オッズ（JSON）。`type=1` が単勝+複勝、3 枠連 / 4 馬連 / 5 ワイド / 6 馬単 / 7 三連複 / 8 三連単 |
+
+確定オッズだけは `db.netkeiba.com` ではなく `race.netkeiba.com` の JSON API を叩く。**取り込みは別ジョブ**（`jobs/ingest_odds`）で、書き先も `keiba.db` ではなく `odds.db`。
+レート制御・robots・停止フラグは他と同じ `NetkeibaClient` を通る。回し方は [operations.md](operations.md) の「確定オッズの取り込み」。
 
 騎手・調教師の詳細ページは現状未実装。名前は race_result HTML から取得し COALESCE upsert している。
 
@@ -214,7 +218,7 @@ uv run python -m jobs.ingest_range \
 1. **個人研究限定**: 取得データ・学習済みモデルを第三者へ提供・公開しない
 2. **商用利用禁止**: 本ツールを利用した収益活動は行わない
 3. **レート制御徹底**: [レート制御ポリシー](#レート制御ポリシー) に定める間隔を必ず守る
-4. **即時停止スイッチ**: 環境変数 `KEIBA_SCRAPER_STOP=1` を設定するとスクレイピングループが次の待機後に停止する（`scraper/stop_flag.py` モジュールが実装）。`POST /api/scraper/stop` でも即時停止可能。スクレイピングの手動実行も `POST /api/scraper/run`（バックグラウンド・202 即時返却）で行える
+4. **即時停止スイッチ（3 経路）**: ①Race 画面の取込パネル（`DayIngestPanel`）の停止ボタン、②`POST /api/scraper/stop`、③環境変数 `KEIBA_SCRAPER_STOP=1`。いずれもスクレイピングループが次の待機後に停止する（`scraper/stop_flag.py` の `is_stopped()` がループのたびに見る）。スクレイピングの手動実行も `POST /api/scraper/run`（バックグラウンド・202 即時返却）で行える
 5. **robots.txt 遵守**: [robots.txt 遵守ポリシー](#robotstxt-遵守ポリシー) を守る
 6. **規約変更時の対応**: netkeiba の利用規約変更を検知した場合は即時停止し、対応を検討する（[operations.md 規約上の注意点](operations.md) 参照）
 

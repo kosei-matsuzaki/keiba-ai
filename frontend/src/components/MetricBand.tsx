@@ -113,19 +113,19 @@ export function MetricItem({
         // 「勝っているか負けているか」は一目で分かるべき情報。
         <dd
           className={cn(
-            'font-mono text-[26px] leading-none tabular-nums',
+            'text-kpi',
             METRIC_VALUE_CLASS[tone]
           )}
         >
           {formatValue(value, format)}
         </dd>
       ) : (
-        <dd className="font-mono text-xl text-subtle-foreground/50">未算出</dd>
+        <dd className="font-mono text-lg text-subtle-foreground/50">未算出</dd>
       )}
       {description && (
         <p
           className={cn(
-            'text-[11px] leading-snug',
+            'text-2xs leading-snug',
             isMeasured(value) ? _TONE_CLASS[tone] : 'text-subtle-foreground'
           )}
         >

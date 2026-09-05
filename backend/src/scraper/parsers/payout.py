@@ -224,30 +224,9 @@ def parse_payouts(html: str) -> list[PayoutRow]:
             popularity_td = txt_r_tds[1] if len(txt_r_tds) >= 2 else None
             popularities = _split_br(popularity_td) if popularity_td else []
 
-            if bet_type in ("単勝", "複勝"):
-                # 複勝は combo が <br/> 区切りで複数行（馬番ごとに 1 PayoutRow）
-                if len(combos_raw) != len(amounts):
-                    logger.warning(
-                        "Mismatch combos vs amounts for %s: %d vs %d",
-                        bet_type, len(combos_raw), len(amounts),
-                    )
-                    continue
-                for idx, (combo_str, amount_str) in enumerate(
-                    zip(combos_raw, amounts, strict=True)
-                ):
-                    amount = _to_int(amount_str)
-                    if amount is None:
-                        continue
-                    # popularities 列の長さが異なる場合は popularity=None で続行
-                    pop = _to_int(popularities[idx]) if idx < len(popularities) else None
-                    rows.append(PayoutRow(
-                        bet_type=bet_type,
-                        combo=combo_str,
-                        amount=amount,
-                        popularity=pop,
-                    ))
-            elif bet_type in ("ワイド",):
-                # ワイド: 複数コンボが <br/> 区切りで並ぶ
+            if bet_type in ("単勝", "複勝", "ワイド"):
+                # この 3 つは 1 セルに <br/> 区切りで複数行入る (複勝は馬番ごと、
+                # ワイドは組合せごと) ので、1 券種から N PayoutRow を作る。
                 if len(combos_raw) != len(amounts):
                     logger.warning(
                         "Mismatch combos vs amounts for %s: %d vs %d",

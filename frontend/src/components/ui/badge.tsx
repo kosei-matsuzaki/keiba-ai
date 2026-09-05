@@ -11,6 +11,8 @@ import { cn } from '@/lib/cn';
  *   outline … 分類の表示 (クラス・券種)。色を持たない
  *
  * 意味 (tone) は solid / soft にだけ効く。outline は常に無彩色。
+ * tone="default" は --primary を引くので【測った値】を指すバッジになる
+ * (OOS・実測・95% 区間)。学習時の値には付けない — docs/design.md「色の 3 層」。
  * 以前は default / secondary / destructive / outline / success / warning / info
  * ＋ soft-* 6 種で 13 通りあり、どれを使うかが場当たりになっていた。
  *
@@ -18,7 +20,7 @@ import { cn } from '@/lib/cn';
  * 完全な丸」というリズムを作る)。
  */
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2.5 py-0.5 font-mono text-[10px] tracking-[0.14em] transition-colors',
+  'inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-2xs tracking-[0.14em] transition-colors',
   {
     variants: {
       variant: {

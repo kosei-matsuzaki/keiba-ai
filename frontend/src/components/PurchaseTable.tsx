@@ -201,7 +201,7 @@ export function PurchaseTable({ candidates, runners, raceId, renderBuy }: Purcha
                                     {c.post_positions.map((p, j) => (
                                       <span key={j} className="inline-flex items-center gap-0.5">
                                         {j > 0 && (
-                                          <span className="text-[11px] text-subtle-foreground">
+                                          <span className="text-2xs text-subtle-foreground">
                                             -
                                           </span>
                                         )}

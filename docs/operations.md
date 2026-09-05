@@ -14,13 +14,12 @@
 3. Settings 画面で User-Agent と取り込みレート（秒）を設定する
 4. Race 画面のカレンダーで日を選び、取込パネルから初回データ取り込みを実行する
 5. Dashboard で初回学習を実行し、生成されたモデルを active に切り替える
-6. Upcoming Races 画面でレース一覧を確認し、Race Detail 画面で馬ごとの予想を確認する
+6. Race 画面でレース一覧を確認し、Race Detail 画面で馬ごとの予想を確認する
 
----
-
-## 起動と終了
-
-`scripts/dev.sh` は FastAPI (uvicorn :8765) と React 管理画面 (Vite :5173) を並列起動し、`trap 'kill 0' EXIT` で Ctrl-C 押下時に全子プロセスを停止します。詳細な依存同期・マイグレーションフローは後述の「開発」セクションを参照してください。
+前提は [uv](https://docs.astral.sh/uv/) / Node.js 20+ / pnpm。**スクレイピング済みデータと
+学習済みモデルはリポジトリに含まれない**ため、初回起動は空の状態から始まります
+（4 でデータを取得します）。**`dev.sh` が何をするか・個別起動・別ポートは
+「開発サーバ起動」**（下記）が正本です。
 
 ---
 
@@ -56,6 +55,40 @@ uv run python -m jobs.ingest_range \
 ```
 
 取り込み結果は `data/keiba.db`（SQLite）に保存されます。HTML キャッシュは `data/raw/<yyyy>/<mm>/` に配置されます。中断後は同じコマンドを再実行するだけでレジュームできます（`scrape_log` に `status='ok'` が記録されている日は自動スキップ）。
+
+### 確定オッズの取り込み（別ジョブ）
+
+**`keiba-ingest` / `ingest_range` では実オッズは入りません。** これらが埋めるのは
+`keiba.db`（着順・払戻）で、券種ごとの全組合せのオッズは別ファイル `odds.db` に、
+別ジョブ `ingest_odds` で入れます。**odds.db が空のままだと、連系の買い目も
+backtest の実オッズ評価も動きません。**
+
+```bash
+# keiba.db にあるレース全部（新しい順）
+uv run python -m jobs.ingest_odds
+
+# 期間を切る（両端を含む）
+uv run python -m jobs.ingest_odds --start 2024-01-01 --end 2024-12-31
+
+# 動作確認（先頭 N レースだけ）
+uv run python -m jobs.ingest_odds --limit 100
+
+# 古い順に回す
+uv run python -m jobs.ingest_odds --oldest-first
+```
+
+| 項目 | 中身 |
+|---|---|
+| 叩き先 | `race.netkeiba.com/api/api_get_jra_odds.html`（JSON API） |
+| リクエスト数 | **1 レース 7 回**（type 1/3/4/5/6/7/8）。2015 年以降で約 26 万回 |
+| 所要 | レート制御は取り込みと同じ `AsyncRateLimiter`。**数日がかり**を見込む |
+| レジューム粒度 | **券種単位**。`race_odds` に確定行があればその券種は完了として飛ばす |
+| 止め方 | `Ctrl-C` / `KEIBA_SCRAPER_STOP=1` / UI の停止スイッチ。どれでも安全に再開できる |
+| keiba.db への影響 | **読むだけ**（レース一覧の SELECT のみ）。書かないので壊せない |
+
+オッズが 1 件も返らないレース（中止・非 JRA）には `__none__` の印を残すので、
+次回以降 7 種類を試し直しません。発走前のライブ行（`is_confirmed=0`）は
+完了扱いにせず、確定値で上書きします。
 
 ### 即時停止
 
@@ -98,10 +131,14 @@ UI の Dashboard / Race 画面では JobProgressCard が API ジョブ（`POST /
 
 ### モデル学習
 
+**損失・監視指標・引数の一覧は [ai-model.md](ai-model.md)「学習 CLI」が正本**です。
+ここで決めるのは**窓だけ**（`--train-end` が分割の基準日、そこから
+`--test-months` → `--valid-months` と遡って学習終了日が決まる）。
+
 ```bash
 cd backend
 
-# 二段階学習（推奨）: PL 事前学習 → multi で fine-tune（単複 ROI + 連系校正）
+# 二段階学習（推奨）: PL 事前学習 → multi で fine-tune
 uv run python -m ai.training.train_nn --loss plackett_luce --monitor valid_ndcg3 \
     --train-end 2025-12-31 --valid-months 12 --test-months 6
 uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
@@ -128,7 +165,7 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
 >
 > **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は学習ループが測った valid / test の指標で、レース集合も指標の定義もアプリの画面と揃っていない。`--persist` を回すと backtest が**アプリと同じ賭けルール**（単勝・複勝ともモデルの本命 1 点）で測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、**同じレース集合の** `ndcg*` を上書き保存し、Dashboard が「利用者が実際に得る数字」を表示するようになる。
 >
-> 数字は変わる。単勝回収率は学習時 `test_tansho_roi` 0.930 に対し backtest 0.931 とほぼ一致する（どちらも本命 1 点）が、複勝的中率は 0.503 → 0.885 と大きく動く。これは改善ではなく**定義が違う**ためで、前者は「予想 1 位が 3 着以内」、後者は「上位 3 頭のうち 1 頭以上が 3 着以内」。**学習直後に必ず `--persist` 付きで評価すること。**
+> 数字は変わる（以下は **test 19ヶ月の窓で測った例**で、いまの実測ではない。最新の値は [ai-model.md](ai-model.md) の「OOS 実測」）。単勝回収率は学習時 `test_tansho_roi` 0.930 に対し backtest 0.931 とほぼ一致する（どちらも本命 1 点）が、複勝的中率は 0.503 → 0.885 と大きく動く。これは改善ではなく**定義が違う**ためで、前者は「予想 1 位が 3 着以内」、後者は「上位 3 頭のうち 1 頭以上が 3 着以内」。**学習直後に必ず `--persist` 付きで評価すること。**
 
 評価指標は API からも確認できます。
 
@@ -147,14 +184,14 @@ Dashboard 画面は同じ値を KPI 帯とモデル比較表に出します（�
 curl -X POST http://127.0.0.1:8765/api/models/{id}/activate
 ```
 
-UI の Models 画面でも Activate ボタンから操作できます。
+UI の Dashboard のモデル一覧でも Activate ボタンから操作できます。
 
 ### モデル世代管理
 
 学習済みモデルは以下の構造で `data/models/` に保存されます（`.gitignore` 対象）。
 
 ```text
-backend/data/models/
+data/models/          # リポジトリ直下（backend/ の下ではない。core/paths.py の data_dir()）
 ├── 20260501T120000-nn/
 │   ├── model.pt         # PyTorch state_dict
 │   ├── meta.json        # params / train_range / valid_range / metrics / feature_columns / loss_type
@@ -171,38 +208,15 @@ backend/data/models/
 - 古いモデルは自動削除されません。手動で削除するまで保持されます
 - ディスク容量の目安: 1 モデルあたり数 MB 程度（NN のパラメータ数による）
 
-モデル一覧・詳細は `GET /api/models[/{id}]`、UI の Models 画面でも確認できます。
+モデル一覧・詳細は `GET /api/models[/{id}]`、UI の Dashboard のモデル一覧でも確認できます。
 
 ### 設定の永続化
 
 `PUT /api/settings` で変更した設定値は `data/settings.json` に自動保存されます。サーバ再起動後も設定は引き継がれます。
+**キー・既定値・廃止キーの扱い（settings.json を消したときの挙動、旧 Kelly 設定の読み替え、
+確率モデルの割り当て先）の正本は [spec.md](spec.md) の「設定」節です。** ここに写すと、
+既定値を変えたときに片方だけ古くなります。
 
-設定スキーマ（`data/settings.json` のキー）:
-
-| キー | 説明 | デフォルト |
-|---|---|---|
-| `user_agent` | スクレイパーの User-Agent 文字列 | 個人研究目的の文字列 |
-| `rate_min_seconds` | レート制御の最小待機秒数 | 3.0 |
-| `rate_max_seconds` | レート制御の最大待機秒数 | 6.0 |
-| `night_min_seconds` | 夜間の最小待機秒数 | 5.0 |
-| `win_min_odds` | 単勝で買うオッズ下限 | 1.1 |
-| `probability_model_path` | 確率モデルのディレクトリ（`data/` からの相対も可）。null で無効 | null |
-| `place_min_hit_prob` | 複勝を買う 3 着内率の下限 | 0.60 |
-| `combo_min_hit_prob` | 連系を買う的中確率の下限（券種ごと）。**連系の点数はこれだけで決まる** | 馬連 0.075 / ワイド 0.26 / 馬単 0.025 / 三連複 0.024 / 三連単 0.019 |
-| `race_budget` | 1 レースに使う上限（円） | 5000 |
-| `scraper_stopped` | スクレイパー停止フラグ | false |
-
-- **EV 閾値は全券種で廃止**しました（`place_ev_threshold` 2026-08-24 / `win_ev_threshold`
-  2026-08-28）。買い目は「オッズが取れるものを、券種の優先度 → 的中確率の順に、
-  予算の限り」選びます（`docs/ai-model.md`）
-- `probability_model_path` は **Models 画面**から割り当てます（Settings には項目がありません）。
-  設定すると複勝の確信度フィルタと連系の確率がそのモデル由来になります
-- 枠連は AI が買い目を生成しないため選択肢に出しません。保存済み設定に残っていても
-  `core/bet_types.py` の `supported_bet_types()` が読み込み時に落とします
-- 旧 Kelly 設定（`bankroll` / `kelly_fraction` / `max_stake_per_race_pct`）は
-  読み込み時に `race_budget` へ読み替えて破棄します
-
-`data/settings.json` は `.gitignore` 対象です。手動で削除するとデフォルト値にリセットされます。API は `GET /api/settings` / `PUT /api/settings`、UI は Settings 画面で操作できます。
 
 ### バックアップ方針
 
@@ -262,19 +276,11 @@ uv run python -m jobs.ingest_range \
 ### 本番モデル学習
 
 十分なデータが蓄積された後（目安: 1〜2 年以上の実データ）に本番パラメータで学習します。
+**コマンドは上の「モデル学習」と同じ**です（二段階学習 → `--persist` 付きバックテスト）。
+本番で変えるのは `--train-end` / `--valid-months` / `--test-months` の窓だけです。
 
-```bash
-cd backend
-
-# PL 事前学習 → multi fine-tune
-uv run python -m ai.training.train_nn --loss plackett_luce --monitor valid_ndcg3 \
-    --train-end 2025-12-31 --valid-months 12 --test-months 6
-uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
-    --init-from data/models/<事前学習ts>-nn \
-    --train-end 2025-12-31 --valid-months 12 --test-months 6
-```
-
-`multi` は log_growth（単勝 betting return）と combo_nll（連系 校正）の重み付き和で、単勝〜三連単までを 1 モデルで賄います。評価指標を確認し、既存の active モデルより改善していれば active に切り替えます。
+`multi` は log_growth（単勝の資金成長率）と combo_nll（連系の校正）の重み付き和で、
+単勝から三連単まで 1 つのモデルで扱えます。
 
 ### 月次再学習
 
@@ -307,7 +313,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 # バックエンド
 cd backend
 uv sync
-uv run alembic upgrade head  # 現在の最新: 0014_bet_record_conditions
+uv run alembic upgrade head  # 現在の最新: 0015_simulation_profit
 
 # フロントエンド（別ターミナル）
 cd frontend
@@ -321,7 +327,7 @@ pnpm install
 ```bash
 cd backend
 uv run alembic current   # 適用済みリビジョンを確認
-uv run alembic upgrade head  # 未適用のリビジョン（最新: 0014）を差分適用
+uv run alembic upgrade head  # 未適用のリビジョン（最新: 0015）を差分適用
 ```
 
 ### 開発サーバ起動
@@ -334,7 +340,14 @@ bash scripts/dev.sh
 # Ctrl-C で全プロセス停止
 ```
 
-`scripts/dev.sh` は実行のたびに `uv sync` / `alembic upgrade head` / `pnpm install` を行うため、PR 取り込み直後でもこれ一本で動く。
+`scripts/dev.sh` が毎回やること（PR 取り込み直後でもこれ一本で動くようにするため）:
+
+| 手順 | 挙動 |
+|---|---|
+| `uv sync --extra nn` | **失敗しても警告を出して続行**する（既存の `.venv` のまま起動する） |
+| `alembic upgrade head` | 毎回実行。失敗したらそこで止まる |
+| `pnpm install` | **`pnpm-lock.yaml` が `node_modules/.modules.yaml` より新しいときだけ。** 毎回走らせると Windows でファイルロック起因の `EACCES` を踏むため |
+| uvicorn + Vite | 並列起動し、`trap 'kill 0' EXIT` で Ctrl-C 時に全子プロセスを停止 |
 
 個別起動が必要な場合:
 
@@ -408,7 +421,7 @@ FastAPI が `HTTPException` の `detail` フィールドに文字列を返して
 
 ### 推論リクエストで 503
 
-**症状**: `GET /api/predictions/{race_id}` が 503 を返す。RaceDetail 画面に「学習済みモデルが見つかりません。Models 画面でモデルをトレーニングしてください。」と表示される
+**症状**: `GET /api/predictions/{race_id}` が 503 を返す。レスポンスの detail は `No active model. Train and activate a model first.`
 
 active モデルが存在しません。`GET /api/models` でモデル一覧を確認し、`POST /api/models/{id}/activate` で active モデルを設定してください。モデルがなければ `uv run python -m ai.training.train_nn` で学習します。
 
@@ -473,6 +486,18 @@ uv run alembic upgrade head
 | netkeiba のサイト構造変更 | `scrape_log` でエラーの URL を確認し、HTML セレクタを修正する |
 | 429 Too Many Requests が連続する | 自動で 60 秒ペナルティ待機が入る。それでも続く場合は手動停止して数時間〜半日置いてから再開する |
 | robots.txt の Disallow 変更 | robots.txt を確認し、対象 URL が Disallow されていないか確認する |
+
+### CLI の `--help` が UnicodeEncodeError で落ちる
+
+**症状**: `uv run python -m ai.evaluation.backtest --help` が
+`UnicodeEncodeError: 'cp932' codec can't encode character '—'` で異常終了する。
+
+help 文字列に含まれる `—`（em dash）を Windows の cp932 コンソールが出力できないだけで、
+**引数が壊れているわけではない**。`PYTHONIOENCODING=utf-8` を付ければ通る。
+
+```bash
+PYTHONIOENCODING=utf-8 uv run python -m ai.evaluation.backtest --help
+```
 
 ### Dialog が閉じない / Settings バリデーション残留
 

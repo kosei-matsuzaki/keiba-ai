@@ -11,8 +11,8 @@ interface UmabanProps {
 }
 
 const SIZE_CLASS = {
-  sm: 'h-5 w-5 text-[11px]',
-  md: 'h-6 w-6 text-[12px]',
+  sm: 'h-5 w-5 text-2xs',
+  md: 'h-6 w-6 text-xs',
 } as const;
 
 /**
@@ -23,7 +23,7 @@ const SIZE_CLASS = {
  */
 export function Umaban({ n, runners, size = 'md', className }: UmabanProps) {
   const base = cn(
-    'inline-flex shrink-0 items-center justify-center rounded-[2px] font-mono font-bold tabular-nums',
+    'inline-flex shrink-0 items-center justify-center rounded-sm font-mono font-bold tabular-nums',
     SIZE_CLASS[size],
     className
   );

@@ -2,23 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Design tokens — 「ナイター開催のオッズ端末」。
-   研究ノートではなく場立ちの端末。暗がりに数字と枠色が光っている画面。
+/* ──────────────────────────────────────────────────────────────────────────────
+   Design tokens — 「実測」(2026-09-05)。規定の正本は docs/design.md
+   「フロントエンド スタイル設計」。ここはその値だけを持つ。
 
-   方針 (docs/design-review.md 第3版 Part A):
-     1. 地は暖色寄りのほぼ黒 (青黒 → 炭)。同じ暗さでも温度が変わると別物に見える
-     2. アクセントは琥珀 — オッズ・金額・レース番号・選択中
-     3. 色は情報そのもの — 枠色 / 損益 / 推奨。「色は 1 つだけ」は取らない
-        (お金と確率を扱う道具では、色を削ると判断材料まで消える)
+   色は 3 層。層をまたいだ使い方をしない:
+     データ   枠色 8 色 (lib/waku.ts) と曜日 (土=--info / 日=--destructive)
+     値の向き --success / --destructive。面積が小さくても常に色を持たせる
+     chrome  --primary (実測) と --warning (警告) の 2 つだけ。**ここを増やさない**
 
-   残す作法: 角丸 2px / 数値は等幅 + tabular-nums /
-             余白と型を数段に絞る / 表は詰め、読み物は行間を広く
+   地の色相を 205° (わずかに寒色寄りの黒鉛) にしてあるのは、枠色の赤・橙を
+   暖めないため。暖色の地に置くと枠 3 (赤) と 枠 7 (橙) の差が縮む。
 
-   箱の使いどころ (2026-09-02): 領域は罫線と余白で区切る。**表とグラフは囲わない**
-   — それ自体でまとまって見えるので、囲うと枠が二重になる。囲うのは
-   (a) 注意喚起のような面で出したいもの、(b) **その画面の答えになる指標**だけ。
-   指標カードは 1 画面 1〜3 個まで (全部囲うとどれも目立たなくなる)。
+   旧トークンの琥珀を --primary から外したのは、馬が並ぶ画面には枠色チップが
+   常に 8 色出ており、chrome にブランド色を足すと chrome がデータと彩度を
+   奪い合うから。外したことで琥珀は --warning に戻り、本当の警告に使える。
 
    dark が主・light が従。shadcn 標準の class-based 切替に従う
    (html.dark は ThemeProvider が制御)。
@@ -26,56 +24,52 @@
 
 @layer base {
   :root {
-    /* Surfaces (deepest → brightest) */
-    /* dark を主・light を従。light も暖色へ寄せる (#f7f4ef = 紙の白) */
-    --background:    36 20% 96%;    /* newspaper white */
-    --card:          40 33% 99%;
-    --card-elevated: 36 18% 92%;
-    --popover:       40 33% 99%;
-    --popover-foreground: 30 15% 12%;
+    /* Surfaces — light は従。クリーム地 (旧 #f7f4ef) は捨て、寒色寄りの紙にする */
+    --background:    205 16% 96%;   /* #F3F5F6 */
+    --card:            0  0% 100%;  /* #FFFFFF */
+    --card-elevated: 205 14% 92%;   /* #E8EBED */
+    --popover:         0  0% 100%;
+    --popover-foreground: 205 20% 12%;
 
     /* Foreground / text */
-    --foreground:        30 15% 12%; /* 暖色寄りの墨 */
-    --card-foreground:   30 15% 12%;
-    --muted-foreground:  32 8% 40%;
-    --subtle-foreground: 32 7% 55%;
+    --foreground:        205 20% 12%;  /* #182025 */
+    --card-foreground:   205 20% 12%;
+    --muted-foreground:  205 10% 40%;  /* #5C6870 */
+    --subtle-foreground: 205  9% 54%;  /* #7F8B94 */
 
-    /* Borders / inputs */
-    --border:         36 14% 86%;
-    --border-strong:  34 12% 72%;
-    --input:          36 14% 86%;
-    --ring:           35 88% 42%;
+    /* Borders / inputs — border は「区切り」、strong は「囲い」と表ヘッダ下の太罫 */
+    --border:         205 14% 87%;  /* #D9DFE2 */
+    --border-strong:  205 12% 72%;  /* #AFB9C0 */
+    --input:          205 14% 87%;
+    --ring:           188 62% 34%;
 
-    /* Primary accent — 琥珀。light は地が明るいので彩度と明度を落とす */
-    --primary:           35 88% 42%;
-    --primary-foreground: 40 60% 98%;
+    /* chrome のアクセント = 【測れているか】。金額でもオッズでもない */
+    --primary:           188 62% 34%;  /* #217E8C */
+    --primary-foreground: 188 40% 98%;
 
-    --secondary:           36 18% 92%;
-    --secondary-foreground: 30 15% 12%;
+    --secondary:           205 14% 92%;
+    --secondary-foreground: 205 20% 12%;
 
-    --muted:           36 18% 92%;
-    --accent:          36 18% 92%;
-    --accent-foreground: 30 15% 12%;
+    --muted:           205 14% 92%;
+    --accent:          205 14% 92%;
+    --accent-foreground: 205 20% 12%;
 
-    /* Status semantic colors (light surface 用に saturation 強め) */
-    --destructive:            4 72% 45%;
-    --destructive-foreground: 0 0% 100%;
-    --success:              152 58% 30%;
-    --success-foreground:     0 0% 100%;
-    --warning:               42 90% 38%;
-    --warning-foreground:     0 0% 100%;
-    --info:                 204 70% 40%;
-    --info-foreground:        0 0% 100%;
+    /* 値の向き。light は面が明るいので彩度を強め・明度を下げる */
+    --success:              158 58% 29%;  /* #1F7555 */
+    --success-foreground:     0  0% 100%;
+    --destructive:            6 68% 45%;  /* #C13425 */
+    --destructive-foreground: 0  0% 100%;
+    --warning:               38 88% 36%;  /* #AD710B */
+    --warning-foreground:     0  0% 100%;
 
-    /* Chart series — 単系列は --primary を使う。5 色すべて違う色相のパレットは
-       「カテゴリが 5 種類ある」意味を持ってしまうので、複数系列が要る箇所用に
-       3 色までに絞る。 */
-    --chart-1:  35 88% 42%; /* amber */
-    --chart-2: 152 58% 30%; /* green */
-    --chart-3:   4 72% 45%; /* red   */
+    /* 土曜日だけ。暦の慣習で青 (日曜は --destructive)。
+       色相を 218° に置いて --primary の 188° から 30° 離してある —
+       近いと「実測」と「土曜」が同じ色に見える。 */
+    --info:                 218 64% 42%;  /* #2759B0 */
+    --info-foreground:        0  0% 100%;
 
-    /* 角丸をほぼ捨てる (6px → 2px)。丸みは「やわらかい・親しみやすい」記号で、
-       計測レポートの方向とは逆。ピル (バッジ) だけ rounded-full で例外にする。 */
+    /* 角丸 2 段。丸みは「やわらかい」記号で、測る道具の方向とは逆なので
+       ほぼ捨てる。ピル (バッジ) だけ rounded-full で例外にする。 */
     --radius: 0.125rem;
 
     /* Typography */
@@ -90,49 +84,41 @@
   }
 
   .dark {
-    /* 地: 青黒 → 炭 (暖色寄りのほぼ黒)。同じ暗さでも温度が変わると別物に見える */
-    --background:    30 10%  4%;   /* #0b0a09 */
-    --card:          36 14%  7%;   /* #14120f */
-    --card-elevated: 34 13% 10%;   /* #1e1b17 */
-    --popover:       36 14%  7%;
-    --popover-foreground: 37 32% 92%;
+    /* 地: 寒色寄りの黒鉛。旧トークンの暖色寄りの炭から移した */
+    --background:    205 18%  9%;   /* #13181B */
+    --card:          205 16% 12%;   /* #1A1F23 */
+    --card-elevated: 205 14% 16%;   /* #232A2F */
+    --popover:       205 16% 12%;
+    --popover-foreground: 205 12% 92%;
 
-    --foreground:        37 32% 92%;   /* #f1ece4 わずかに暖かい白 */
-    --card-foreground:   37 32% 92%;
-    --muted-foreground:  34  7% 63%;   /* #a8a29a */
-    --subtle-foreground: 34  6% 42%;   /* #736d65 */
+    --foreground:        205 12% 92%;  /* #E8EBED */
+    --card-foreground:   205 12% 92%;
+    --muted-foreground:  205  9% 64%;  /* #9BA5AB */
+    --subtle-foreground: 205  8% 44%;  /* #677279 */
 
-    /* 罫線は 2 段。border は「区切り」、strong は「囲い」と表ヘッダ下の太罫 */
-    --border:        30 10% 15%;   /* #2b2723 */
-    --border-strong: 30  9% 25%;   /* #46403a */
-    --input:         30 10% 15%;
-    --ring:          38 92% 55%;
+    --border:        205 12% 20%;   /* #2D3439 */
+    --border-strong: 205 10% 32%;   /* #49535A */
+    --input:         205 12% 20%;
+    --ring:          188 58% 55%;
 
-    /* アクセント: 琥珀。オッズ・金額・レース番号・選択中 */
-    --primary:            38 92% 55%;   /* #f5a623 */
-    --primary-foreground: 30 40%  8%;
+    --primary:            188 58% 55%;  /* #4ABDCF */
+    --primary-foreground: 195 60%  8%;
 
-    --secondary:           34 13% 10%;
-    --secondary-foreground: 37 32% 92%;
+    --secondary:           205 14% 16%;
+    --secondary-foreground: 205 12% 92%;
 
-    --muted:           34 13% 10%;
-    --accent:          34 13% 10%;
-    --accent-foreground: 37 32% 92%;
+    --muted:           205 14% 16%;
+    --accent:          205 14% 16%;
+    --accent-foreground: 205 12% 92%;
 
-    /* 損益は一級市民。面積は小さくても常に色を持たせる */
-    --success:               152 58% 52%;  /* プラス収支・的中・買い */
-    --success-foreground:    152 60%  7%;
-    --destructive:             4 72% 60%;  /* マイナス収支・失敗 */
-    --destructive-foreground:  4 60%  8%;
-    --warning:                42 90% 58%;  /* 本当の警告のみ (琥珀と近いので多用しない) */
-    --warning-foreground:     42 90%  8%;
-    --info:                  204 70% 60%;  /* 補足・リンク */
-    --info-foreground:       204 60%  8%;
-
-    /* グラフ: 資金推移は損益色、指標は琥珀 */
-    --chart-1:  38 92% 55%;
-    --chart-2: 152 58% 52%;
-    --chart-3:   4 72% 60%;
+    --success:               158 52% 50%;  /* #3DC291 */
+    --success-foreground:    158 60%  7%;
+    --destructive:             6 68% 60%;  /* #DE6254 */
+    --destructive-foreground:  6 60%  8%;
+    --warning:                38 85% 58%;  /* #EFAC39 */
+    --warning-foreground:     38 90%  8%;
+    --info:                  218 62% 62%;  /* #628EDA */
+    --info-foreground:       218 60%  8%;
   }
 }
 
@@ -189,7 +175,7 @@
      プロポーショナル数字だと「ただの大きい文字」になる。 */
   .text-kpi {
     font-family: var(--font-mono);
-    font-size: 1.875rem;
+    font-size: 1.625rem;
     line-height: 1.1;
     letter-spacing: -0.02em;
     font-weight: 700;
@@ -228,6 +214,28 @@
   .text-unit {
     font-size: 0.85em;
     color: hsl(var(--muted-foreground));
+  }
+
+  /* 情報のまとまりを「面」で示す。罫線を 1 本も引かない。
+     上下を罫線で挟む形 (border-y) や、節ごとの border-t は、縦に積むと
+     引きで見たときに線が縞になって内容より先に目に付く。面なら 0 本で
+     同じまとまりが作れる。
+     使うのは**ラベルと値の塊**だけ — 表とグラフには当てない
+     (それ自体でまとまって見えるので、面に載せると囲いが二重になる)。
+     詳細は docs/design.md「箱の使いどころ」。 */
+  .block-surface {
+    background-color: hsl(var(--card));
+    border-radius: var(--radius);
+    /* 見出し + 複数行を載せる面。12px だと中身が縁に張り付いて
+       「面に置いた」ではなく「背景が変わった」に見える。 */
+    padding: 1.5rem;
+  }
+
+  /* 1 行だけの帯 (取込状況など)。上と同じ 24px を取ると帯が厚くなりすぎる。 */
+  .block-surface-compact {
+    background-color: hsl(var(--card));
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
   }
 
   /* 数値セル用の標準形。等幅 + tabular-nums + 右揃えの 3 点セット。 */

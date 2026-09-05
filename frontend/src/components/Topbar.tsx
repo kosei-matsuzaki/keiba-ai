@@ -43,9 +43,9 @@ export function Topbar() {
       className="sticky top-0 z-30 flex h-16 items-center gap-8 border-b border-border bg-background/80 px-8 backdrop-blur-md"
     >
       {/* Logo */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
         <BrandMark className="h-[18px] w-[18px] text-primary" />
-        <span className="font-mono text-[13px] tracking-[0.2em] text-foreground">
+        <span className="font-mono text-xs tracking-[0.2em] text-foreground">
           KEIBA <span className="text-primary">AI</span>
         </span>
       </div>
@@ -60,7 +60,7 @@ export function Topbar() {
             className={({ isActive }) => {
               const active = activeMatch ? activeMatch(pathname) : isActive;
               return cn(
-                'font-mono text-[12px] tracking-[0.12em] transition-colors',
+                'font-mono text-xs tracking-[0.12em] transition-colors',
                 active ? 'text-primary' : 'text-subtle-foreground hover:text-foreground'
               );
             }}

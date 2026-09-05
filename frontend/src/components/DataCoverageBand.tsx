@@ -20,7 +20,7 @@ export function DataCoverageBand() {
   const pendingResults = data.race_count - data.result_count;
 
   return (
-    <dl className="flex flex-wrap items-baseline gap-x-8 gap-y-2 border-y border-border py-3">
+    <dl className="block-surface-compact flex flex-wrap items-baseline gap-x-8 gap-y-2">
       <Item label="取込期間">
         <span className="font-mono tabular-nums">
           {formatDate(data.first_date)}

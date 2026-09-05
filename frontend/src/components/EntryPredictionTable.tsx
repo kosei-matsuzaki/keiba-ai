@@ -188,13 +188,13 @@ export function EntryPredictionTable({
           <TableHead colSpan={2} />
           <TableHead
             colSpan={4}
-            className={`text-center text-[11px] font-medium text-primary ${AI_SURFACE}`}
+            className={`text-center text-2xs font-medium text-primary ${AI_SURFACE}`}
           >
             AI の根拠
           </TableHead>
           <TableHead
             colSpan={factsColSpan}
-            className="text-center text-[11px] font-medium text-muted-foreground"
+            className="text-center text-2xs font-medium text-muted-foreground"
           >
             実績データ
           </TableHead>
@@ -268,7 +268,7 @@ export function EntryPredictionTable({
                 <Umaban n={entry.post_position} runners={runners} />
               </TableCell>
               <TableCell className="sticky left-12 z-10 bg-inherit">
-                <span className="inline-flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1">
                   <ChevronRight
                     className={`h-3 w-3 shrink-0 text-subtle-foreground transition-transform ${
                       open ? 'rotate-90' : ''

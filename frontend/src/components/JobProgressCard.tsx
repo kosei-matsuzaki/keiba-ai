@@ -60,7 +60,7 @@ export function JobProgressCard({ jobId, onDismiss, title = 'ジョブ進捗' }:
   return (
     <Card className="border-t border-border pt-6">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-3 text-base">
+        <CardTitle className="flex items-center gap-3">
           {title}
           {job && statusBadge(job.status)}
           {isTerminal && onDismiss && (

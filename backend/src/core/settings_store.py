@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from core.bet_types import DEFAULT_COMBO_MIN_HIT_PROB
 from core.paths import data_dir
@@ -121,3 +124,41 @@ class SettingsStore:
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+
+@dataclass(frozen=True)
+class BettingSettings:
+    """買い方を決める設定を、解決済みの形で持つ。
+
+    place_min_confidence の設定キーは `place_min_hit_prob`。旧 `place_min_confidence`
+    (1 着確率) とは目盛りが違うので、名前をそのまま引き写さないこと。
+    """
+
+    probability_model_path: Path | None
+    place_min_confidence: float
+    combo_min_hit_prob: dict[str, float]
+    win_min_odds: float
+
+
+def resolve_betting_settings(settings: Mapping[str, Any]) -> BettingSettings:
+    """settings dict を「買い方のパラメータ」に翻訳する。I/O はしない。
+
+    RACE 画面・シミュレーション (同期/ジョブ)・モデル評価・backtest CLI の 4 経路
+    が同じ買い方を再現する必要がある。以前は各経路がこの数行を書き写していて、
+    既定値が 5 箇所に散っていた。**手で揃え続けることが要件になっている**状態で、
+    実際にシミュレーションだけ win_min_odds を渡し忘れ、Settings を変えても
+    追従しないまま走っていた。
+    """
+    floors = settings.get("combo_min_hit_prob")
+    return BettingSettings(
+        probability_model_path=resolve_model_path(settings.get("probability_model_path")),
+        place_min_confidence=float(
+            settings.get("place_min_hit_prob", _DEFAULTS["place_min_hit_prob"])
+        ),
+        combo_min_hit_prob=(
+            {k: float(v) for k, v in floors.items()}
+            if isinstance(floors, dict)
+            else dict(DEFAULT_COMBO_MIN_HIT_PROB)
+        ),
+        win_min_odds=float(settings.get("win_min_odds", _DEFAULTS["win_min_odds"])),
+    )

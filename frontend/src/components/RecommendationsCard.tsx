@@ -94,7 +94,7 @@ function ComboMarks({ combo, runners }: { combo: string; runners: number }) {
         /^[0-9]+$/.test(part) ? (
           <Umaban key={i} n={Number(part)} runners={runners} size="sm" />
         ) : (
-          <span key={i} className="px-0.5 font-mono text-[11px] text-subtle-foreground">
+          <span key={i} className="px-0.5 font-mono text-2xs text-subtle-foreground">
             {part.trim() === '' ? '\u00a0' : part}
           </span>
         )
@@ -228,7 +228,9 @@ export function RecommendationsCard({
   // 1 点あたりの金額。賭け金は必ずこの倍数なので、点数は stake / unit で戻せる。
   const unit = data?.stake_unit || 100;
   return (
-    <Card className="border-t border-border pt-6">
+    // 罫線を持たない。RaceDetail ではこの節がレース概要の面の直後に来るので、
+    // 線を引くと面の下端と罫線が二重になる。区切りは余白と見出しが持つ。
+    <Card className="pt-6">
       <CardHeader>
         <CardTitle className="text-label-ja">推奨買目</CardTitle>
       </CardHeader>

@@ -17,6 +17,27 @@ interface RaceCalendarProps {
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
+/** 重賞だけ色を持たせる。平場は無彩色 (色は情報なので安売りしない)。 */
+function gradeClass(raceClass: string | null): string {
+  if (!raceClass) return 'text-subtle-foreground';
+  if (raceClass.includes('G1')) return 'text-primary';
+  if (raceClass.includes('G2') || raceClass.includes('G3')) return 'text-foreground';
+  return 'text-subtle-foreground';
+}
+
+/**
+ * 「第169回天皇賞(春)」→「天皇賞(春)」。
+ *
+ * カレンダーで見たいのは「その日に何があるか」で、開催回数は要らない。
+ * 付けたままだと幅の半分を「第169回」が占め、肝心の名前から先に省略される。
+ */
+function stripEdition(name: string): string {
+  return name.replace(/^第\s*\d+\s*回/, '');
+}
+
+/** 曜日ヘッダと日セルで共有する列幅。日・土だけ広い (JRA は基本 土日開催)。 */
+const DOW_GRID = 'grid grid-cols-[1.9fr_1fr_1fr_1fr_1fr_1fr_1.9fr]';
+
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -40,14 +61,6 @@ function parseMonth(value: string | undefined): { y: number; m: number } {
     return { y: now.getFullYear(), m: now.getMonth() + 1 };
   }
   return { y, m };
-}
-
-/** 重賞だけ色を持たせる。平場は無彩色 (色は情報なので安売りしない)。 */
-function gradeClass(raceClass: string | null): string {
-  if (!raceClass) return 'text-subtle-foreground';
-  if (raceClass.includes('G1')) return 'text-primary';
-  if (raceClass.includes('G2') || raceClass.includes('G3')) return 'text-foreground';
-  return 'text-subtle-foreground';
 }
 
 /**
@@ -125,12 +138,15 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
       </div>
 
       {/* 曜日ヘッダ */}
-      <div className="grid grid-cols-7 border-b border-border-strong">
+      {/* JRA は基本 土日開催。平日に同じ幅を割く理由がないので、
+          日・土だけ約 2 倍取って重賞名を入る幅にする。列幅はヘッダと
+          セルで同じ定義を使う (ずれると曜日と日付が噛み合わなくなる)。 */}
+      <div className={cn(DOW_GRID, 'border-b border-border-strong')}>
         {DOW.map((d, i) => (
           <div
             key={d}
             className={cn(
-              'pb-1.5 text-center font-mono text-xs',
+              'pb-1 text-center font-mono text-xs',
               i === 0 && 'text-destructive',
               i === 6 && 'text-info',
               i !== 0 && i !== 6 && 'text-subtle-foreground'
@@ -144,7 +160,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
       {isPending ? (
         <Skeleton className="mt-2 h-64 w-full" />
       ) : (
-        <div className="grid grid-cols-7">
+        <div className={DOW_GRID}>
           {cells.map((day, i) => {
             if (day === null) return <div key={`pad-${i}`} className="border-b border-border" />;
             const dateIso = iso(month.y, month.m, day);
@@ -170,11 +186,19 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                 aria-pressed={selected}
                 title={
                   hasData
-                    ? `${info.courses.join('・')} / ${info.race_count}R（結果 ${info.result_count}R）`
+                    ? [
+                        `${info.courses.join('・')} / ${info.race_count}R（結果 ${info.result_count}R）`,
+                        info.highlight_name,
+                      ]
+                        .filter(Boolean)
+                        .join('\n')
                     : undefined
                 }
                 className={cn(
-                  'flex h-14 flex-col items-start gap-0 border-b border-r border-border px-2 py-1 text-left transition-colors sm:h-16',
+                  // min-w-0 が要る: grid item は既定で min-width:auto なので、
+                  // これが無いと重賞名が truncate されずセルごと横に膨らみ、
+                  // 隣の列 (狭い画面では右のパネル) を押し出す。
+                  'flex h-14 min-w-0 flex-col items-start gap-0.5 border-b border-r border-border px-3 py-1.5 text-left transition-colors',
                   '[&:nth-child(7n)]:border-r-0',
                   'cursor-pointer hover:bg-card-elevated',
                   // 未取得の日も選べる (選ぶと右側に取込ボタンが出る)
@@ -183,9 +207,9 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                   'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary'
                 )}
               >
-                {/* 日付と R 数は横に並べる。縦に積むとセルの高さが要るわりに
-                    読み取れる情報は増えない (重賞名の行だけ縦を使う)。 */}
-                <span className="flex w-full items-baseline justify-between gap-1">
+                {/* 両端揃えにしない。セルが広い日 (3 場グリッドに載せると 200px 前後)
+                    だと「7 ……… 36R」と離れ、1 つの情報に見えなくなる。 */}
+                <span className="flex items-baseline gap-2">
                   <span
                     className={cn(
                       'font-mono text-sm tabular-nums',
@@ -200,7 +224,7 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                   {hasData && (
                     <span
                       className={cn(
-                        'font-mono text-[11px] tabular-nums',
+                        'font-mono text-2xs tabular-nums',
                         // 出馬表だけ = 結果がまだ、を琥珀で示す
                         resultsPending ? 'text-primary' : 'text-muted-foreground'
                       )}
@@ -209,19 +233,19 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                     </span>
                   )}
                 </span>
-                {hasData && (
-                  <>
-                    {info.highlight_name && (
-                      <span
-                        className={cn(
-                          'w-full truncate text-[11px] leading-tight',
-                          gradeClass(info.highlight_class)
-                        )}
-                      >
-                        {info.highlight_name}
-                      </span>
+                {/* 重賞名。土日の列を約 2 倍取ってあるので入る。
+                    「第169回」は落とす (stripEdition) — 開催回数は
+                    カレンダーで見たい情報ではなく、付けたままだと幅の半分を
+                    食って肝心の名前から先に省略される。 */}
+                {hasData && info.highlight_name && (
+                  <span
+                    className={cn(
+                      'w-full truncate text-2xs leading-tight',
+                      gradeClass(info.highlight_class)
                     )}
-                  </>
+                  >
+                    {stripEdition(info.highlight_name)}
+                  </span>
                 )}
               </button>
             );
@@ -229,21 +253,6 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
         </div>
       )}
 
-      {/* 凡例 — セルの色が何を意味するかを明示する */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-subtle-foreground">
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 border border-border-strong bg-card" />
-          結果あり
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 border border-primary/60 bg-primary/20" />
-          出馬表のみ
-        </span>
-        <span className="flex items-center gap-1 opacity-50">
-          <span className="inline-block h-2 w-2 border border-border" />
-          未取得
-        </span>
-      </div>
     </div>
   );
 }

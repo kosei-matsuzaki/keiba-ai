@@ -40,7 +40,7 @@
 | リンター | ESLint v9 flat config |
 | パッケージ管理 | pnpm 9.x |
 
-> **shadcn/ui 配置方針**: `shadcn` CLI は CI 安定性のため走らせず、button / card / table / tabs / badge / skeleton を `src/components/ui/` に手書き配置する。`components.json` は Tailwind 設定（baseColor: slate、cssVariables: true）の記録のみに使用する。`badge.tsx` には shadcn 標準バリアント（default / secondary / destructive / outline）に加えて **success / warning / info** の 3 バリアントを追加しており、`globals.css` の CSS 変数（`--success` / `--warning` / `--info` およびそれぞれの `-foreground`）と `tailwind.config.ts` の `theme.extend.colors` を通じて light / dark 双方に対応する。ハードコードされた Tailwind カラークラスの代わりにこれらバリアントを使用すること。
+> **shadcn/ui 配置方針**: `shadcn` CLI は CI 安定性のため走らせず、button / card / table / tabs / badge / skeleton を `src/components/ui/` に手書き配置する。`components.json` は Tailwind 設定（baseColor: slate、cssVariables: true）の記録のみに使用する。`badge.tsx` は形 `variant` × 意味 `tone` の 2 軸で組む（[design.md](design.md)「Badge の組み方」）。色はハードコードした Tailwind クラスではなくこの 2 軸で指定する。
 
 > **Web フォント**: `index.html` に Google Fonts preconnect + **Inter**（400/500/600/700）・**JetBrains Mono**（400/500）を `display=swap` で読み込む。`globals.css` の `--font-sans` / `--font-mono` CSS 変数の先頭に各フォントを設定し、フォールバックはシステムスタックを維持する。`body` に `font-feature-settings: 'cv11', 'ss01', 'tnum'` を適用し、Inter の代替字形と等幅数字（テーブル内数値の桁揃え）を有効化する。
 
@@ -84,8 +84,10 @@
 │   │   │   ├── betting/    # odds / strategy
 │   │   │   ├── simulation/ # engine / persistence
 │   │   │   └── evaluation/ # backtest
+│   │   ├── services/      # 買い目の決済と集計（bet_settlement / bet_analytics）
 │   │   └── jobs/          # 取り込み・運用 CLI（ingest / ingest_range / ingest_odds / backup_db 等）
-│   └── tests/                 # pytest テスト群
+│   ├── tests/                 # pytest テスト群
+│   └── scripts/               # 実験・診断スクリプト 36 本（1 検証 1 ファイル。共通化しない）
 │
 ├── frontend/                  # React + Vite + TypeScript
 │   ├── package.json
@@ -100,73 +102,30 @@
 │   ├── src/
 │   │   ├── main.tsx           # React + QueryClient + Router マウント
 │   │   ├── App.tsx            # Outlet レイアウト（Topbar 含む）
-│   │   ├── router.tsx         # createBrowserRouter（7 画面 + 旧 URL の Navigate リダイレクト 3 本）
+│   │   ├── router.tsx         # createBrowserRouter（6 画面 + 旧 URL の Navigate リダイレクト 4 本）
 │   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
-│   │   ├── routes/            # ページコンポーネント
+│   │   ├── routes/            # ページコンポーネント（1 画面 1 ファイル）
 │   │   │   ├── Dashboard.tsx        # モデルの 1 画面（KPI + 一覧 + 学習 + 役割の割り当て）
 │   │   │   ├── Races.tsx            # RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
-│   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目 (答え合わせはそのタブ)
+│   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目（答え合わせはそのタブ）
 │   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
 │   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
 │   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
-│   │   ├── components/        # 共通コンポーネント
-│   │   │   ├── Topbar.tsx           # 上部ナビ（全画面共通）。等幅英字のみ
+│   │   ├── components/        # 共通コンポーネント。以下は「知らないと探せない」ものだけ
+│   │   │   ├── Topbar.tsx           # 上部ナビ（全画面共通）。**サイドバーは無い**
 │   │   │   ├── BrandMark.tsx        # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従
 │   │   │   ├── PageHeader.tsx       # ページ見出し共通コンポーネント
-│   │   │   ├── MetricBand.tsx       # KPI 帯（罫線区切り。旧 MetricCard を置換）
-│   │   │   ├── RaceCalendar.tsx     # 月カレンダー。日ごとの取込状況を色で示す
-│   │   │   ├── DayIngestPanel.tsx   # 選択日の取込操作（過去=結果 / 当日=両方 / 未来=出馬表）
-│   │   │   ├── DataCoverageBand.tsx # データ取込のカバレッジ表示
-│   │   │   ├── Umaban.tsx           # 馬番チップ（枠色）
-│   │   │   ├── RecommendationsCard.tsx / RecommendationParamsBar.tsx  # 推奨買目と、その条件（1 レースの上限 / 券種）
+│   │   │   ├── MetricCard.tsx       # その画面の答えになる指標（囲う。1 画面 1〜3 個）
+│   │   │   ├── MetricBand.tsx       # 並べるだけの指標（囲わない。罫線区切り）
+│   │   │   ├── ModelSimulationPanel.tsx # 期間と 1 レース予算を指定してバックテストを回す
+│   │   │   ├── ProfitChart.tsx      # 0 起点の累計損益（資産残高ではない）
 │   │   │   ├── PurchaseTable.tsx    # 買い目を流し / ボックス / フォーメーションに畳んだ購入用の表
-│   │   │   ├── ModelSimulationPanel.tsx # 期間・予算・戦略を選んでバックテストを回す
-│   │   │   ├── ProfitChart.tsx    # シミュレーションの資産推移
-│   │   │   ├── AddBetDialog.tsx     # 購入記録の手動登録
-│   │   │   ├── EmptyState.tsx / JobProgressCard.tsx
-│   │   │   ├── OperatingModels.tsx  # 運用中の 2 モデルと、それぞれの数字（回収率 / log-loss）
-│   │   │   ├── ModelTable.tsx
-│   │   │   ├── SettingsForm.tsx     # 設定フォーム（Section / FieldRow ヘルパ）
-│   │   │   ├── TrainModelDialog.tsx
-│   │   │   ├── DeleteModelDialog.tsx / EditModelNameDialog.tsx / DateYMDPicker.tsx
-│   │   │   └── ui/                  # shadcn 手書きコンポーネント
-│   │   │       ├── button.tsx / card.tsx / table.tsx
-│   │   │       ├── tabs.tsx / badge.tsx / skeleton.tsx
-│   │   │       ├── dialog.tsx / form.tsx / input.tsx
-│   │   │       ├── label.tsx / select.tsx
-│   │   │       ├── toast.tsx / toaster.tsx  # sonner ラッパ
-│   │   ├── hooks/             # カスタムフック（TanStack Query ラッパ）
-│   │   │   ├── useRacesCalendar.ts / useRacesByDate.ts / useRaceDetail.ts / useThisWeekendRaces.ts
-│   │   │   ├── usePredictions.ts    # 予想は重いのでボタン主導（enabled で gate）
-│   │   │   ├── useRecommendations.ts
-│   │   │   ├── useMetricsSummary.ts / useMetricsTimeseries.ts
-│   │   │   ├── useModels.ts / useActivateModel.ts / useTrainModel.ts / useUpdateModel.ts / useDeleteModel.ts
-│   │   │   ├── useBetList.ts / useBetSummary.ts / useBetBreakdown.ts / useBetTimeseries.ts
-│   │   │   ├── useCreateBet.ts / useCreateBetsBulk.ts / useDeleteBets.ts
-│   │   │   ├── useScraperStatus.ts / useScraperRun.ts / useScraperStop.ts / useScraperRecentActivity.ts
-│   │   │   ├── useRunShutuba.ts / useRunResults.ts
-│   │   │   ├── useJobStatus.ts      # jobId を 2 秒 polling、terminal status で停止
-│   │   │   ├── useSettings.ts / useTheme.ts
-│   │   ├── store/             # Zustand ストア
-│   │   │   └── app.ts         # useAppStore / useScraperStore（trackedJobId を含む）
-│   │   ├── lib/               # API クライアント・ユーティリティ
-│   │   │   ├── api.ts         # ky ベース API クライアント。error helpers（getStatus / isNotFoundError / formatErrorMessage 等）を含む
-│   │   │   ├── api-base.ts    # getApiBaseUrl()
-│   │   │   ├── formatters.ts  # display formatter 集約（null/NaN/Infinity を「—」に統一）
-│   │   │   ├── betTypes.ts    # 選択できる馬券種（枠連は AI が買い目を生成しないので含めない）
-│   │   │   ├── betCombos.ts / labels.ts / waku.ts  # 買い目の組立 / 表示ラベル / 枠番と枠色
-│   │   │   ├── query-client.ts
-│   │   │   └── cn.ts          # clsx + tailwind-merge ユーティリティ
-│   │   └── types/
-│   │       └── api.ts         # API レスポンス型定義
-│   └── src/__tests__/         # Vitest + @testing-library/react
-│       ├── App.test.tsx / Dashboard.test.tsx / Races.test.tsx / RaceDetail.test.tsx
-│       ├── Ledger.test.tsx / Models.test.tsx / Settings.test.tsx
-│       ├── DayIngestPanel.test.tsx / RecommendationsCard.test.tsx
-│       ├── betCombos.test.ts / waku.test.ts
-│       ├── lib_api_errors.test.ts  # error helpers 単体テスト（9 ケース）
-│       ├── lib_formatters.test.ts  # formatters.ts の全関数ユニットテスト
-│       └── setup.ts
+│   │   │   └── ui/                  # shadcn 手書き配置（CLI 不使用）
+│   │   ├── hooks/             # TanStack Query ラッパ。1 エンドポイント 1 フック
+│   │   ├── store/             # Zustand（useAppStore / useScraperStore）
+│   │   ├── lib/               # API クライアント（api.ts / ky）・formatters・買い目の組立・toast
+│   │   └── types/api.ts       # API レスポンス型定義
+│   └── src/__tests__/         # Vitest + @testing-library/react（画面ごと + lib のユニット）
 │
 ├── data/                      # ローカルデータ（.gitignore 対象）
 │   ├── raw/                   # HTML キャッシュ（<yyyy>/<mm>/<race_id>.html）
@@ -175,14 +134,14 @@
 │   └── models/                # 学習済みモデル（<YYYYMMDDTHHMMSS>-nn/{model.pt, meta.json, ...}）
 │
 └── scripts/                   # 運用スクリプト
-    └── dev.sh                 # uv sync + alembic + pnpm install + uvicorn + Vite を一発起動
+    └── dev.sh                 # uv sync + alembic + (必要なら) pnpm install + uvicorn + Vite を一発起動
 ```
 
 ---
 
 ## DB スキーマ
 
-SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 14 ファイル（`0001`〜`0014`）が定義されている。
+SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convention で実装し、DB 初期化は `alembic upgrade head` で行う。マイグレーションファイルは `migrations/versions/` に格納されており、現在 15 ファイル（`0001`〜`0015`）が定義されている。
 
 | ファイル | revision | 内容 |
 |---|---|---|
@@ -200,6 +159,7 @@ SQLite を使用する。ORM は SQLAlchemy 2.x DeclarativeBase + naming_convent
 | `0012_add_horses_sire_dam_index.py` | 0012 | horses の `sire` / `dam` にインデックス追加（血統特徴量の集計高速化） |
 | `0013_simulation_run_conditions.py` | 0013 | simulation_runs に `conditions_json` を追加（実行条件を残し、設定を変えて回し直しても後から見分けられるようにする） |
 | `0014_bet_record_conditions.py` | 0014 | bet_records に `conditions_json` を追加（購入記録に、その買い目を決めた条件を残す） |
+| `0015_simulation_profit.py` | 0015 | simulation_runs を「資産」から「1 レース予算と累計損益」に置き換え（`budget`→`race_budget` / `final_bankroll`→`final_profit` ほか、`strategy` 削除） |
 
 ### ID 型の方針
 
@@ -307,7 +267,9 @@ CREATE TABLE payouts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     race_id     TEXT NOT NULL REFERENCES races(race_id),
     bet_type    TEXT NOT NULL,          -- '単勝' | '複勝' | '馬連' 等
-    combo       TEXT NOT NULL,          -- 対象馬番組み合わせ（例: "3" / "3-7"）
+    combo       TEXT NOT NULL,          -- 馬番組み合わせ。netkeiba 由来なので**区切りの前後に空白が入る**
+                                        --（"3" / "1 - 10" / "7 → 1"）。買い目側（bet_records.combo）は
+                                        -- 空白なしなので、突き合わせは必ず core.bet_types.normalize_combo を通す
     amount      INTEGER NOT NULL,       -- 払戻金 (円)
     popularity  INTEGER                 -- 払戻人気
 );
@@ -427,14 +389,14 @@ CREATE TABLE model_runs (
 | POST | `/api/models/{model_id}/evaluate` | 202 | **実運用の賭けルールで測り直し**、`metrics_json` に書き戻すジョブを起動。学習時の指標とは別物で、`log_loss` は学習側に存在しないためこれでしか埋まらない。確率モデルと確信度しきい値は settings から解決する（CLI と条件を揃えないと画面の数字が実運用とずれる） |
 | POST | `/api/models/{id}/activate` | 200 / 404 | 指定モデルを active に設定 |
 | PATCH | `/api/models/{id}` | 200 / 404 | 表示名の変更 |
-| DELETE | `/api/models/{id}` | 200 / 404 | モデル削除（active は削除不可） |
-| POST | `/api/models/compact` | 200 | 不要なモデル成果物を削除して容量を回収 |
+| DELETE | `/api/models/{id}` | 204 / 404 / 409 | モデル削除。**active と、確率モデルとして使用中のものは 409**（設定が存在しないパスを指したまま推論が黙って旧挙動に戻るのを防ぐ） |
+| POST | `/api/models/compact` | 204 | 不要なモデル成果物を削除して容量を回収 |
 
 非同期ジョブ（`POST /api/models/train`）は `asyncio.create_task` でバックグラウンド起動し、以下を即時返却する。
 
 ```json
 // POST /api/models/train レスポンス例（202 Accepted）
-{ "job_id": "train-20260428-120000", "status": "accepted" }
+{ "job_id": "train-20260428-120000", "status": "accepted", "started_at": "2026-04-28T12:00:00Z" }
 ```
 
 ジョブの進捗状態は JobRegistry がインメモリで管理する。プロセス再起動でジョブ状態は消失する。
@@ -503,14 +465,19 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 
 レスポンス直下には `place_probability_model_confidence`（確率モデルが AI の本命に与えた 3 着内率）と `place_confidence_threshold`（複勝を買う下限）も入る。確率モデル未設定なら null。**いまの UI はこの 2 つを描画していない。**
 
-主なクエリ: `top_k`（券種ごとの候補上限）/ `race_budget` / `bet_types`（カンマ区切り）。未指定は Settings の値を使う。
+主なクエリ: `top_k`（券種ごとの候補上限）/ `race_budget` / `bet_types`（カンマ区切り）。Settings から埋まるのは `race_budget` だけで、`bet_types` の未指定は全券種、`top_k` は定数 `DEFAULT_TOP_K_COMBINATIONS`（50）。この定数は**シミュレーションと共有する** — 違うと連系の候補プールが別物になり、同じ買い方を再現できない。
 **連系を組む上位頭数は固定**（`TOP_N_HORSES` = 3）。頭数を広げても的中確率の下限を超えない候補が増えるだけで買い目は変わらないため、選択肢にしていない。
 
 買い方は券種で異なる（`ai/betting/strategy.py`、根拠は `docs/ai-model.md`）:
 
-- **単勝**: モデル 1 位の 1 頭のみ。オッズ下限 `win_min_odds` だけ見る
-- **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば 3 着内率 `place_min_hit_prob` 未満は見送る。点数は確信度に比例 (1〜15 点)
-- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 3 頭から組み、的中確率が `combo_min_hit_prob`（券種ごと）以上の買い目だけを買う。点数の上限は`race_budget` から決まる（¥5,000 で 2 点）
+- **単勝**: モデル 1 位の 1 頭のみ。買うかはオッズ下限 `win_min_odds` だけで決まる
+- **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば 3 着内率 `place_min_hit_prob` 未満は見送る
+- **単複の点数**: `base 5 × (確信度 / 基準)^2` を 1〜15 点（**比例ではなく 2 乗**。基準は
+  単勝 0.25 / 複勝 0.50）。単勝にも同じ式が効くが、回収率が動くのは複勝だけ
+  （根拠は [ai-model.md](ai-model.md)「推奨ベットルール」）
+- **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 3 頭から組み、的中確率が `combo_min_hit_prob`（券種ごと）以上の買い目だけを確率の高い順に買う。**券種ごとの点数上限は持たない**（2026-09-01 に廃止。点数はレースごとに変わる。根拠は [ai-model.md](ai-model.md)）
+
+買い方の設定（確率モデル・`place_min_hit_prob`・`combo_min_hit_prob`・`win_min_odds`）は `core/settings_store.py` の `resolve_betting_settings` が唯一の入口。推奨買目・シミュレーション・モデル評価・backtest CLI が同じ買い方を再現するためで、新しい経路を足すときも settings を直接読まずにここを通す。
 
 **EV（期待値）はどの券種でも買う/買わないの判定に使わない。**
 
@@ -543,10 +510,11 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
 | GET | `/api/bets` | 200 | 購入記録一覧 |
-| POST | `/api/bets` | 200 | 1 件登録 |
-| POST | `/api/bets/bulk` | 200 | 推奨買目からまとめて登録 |
+| POST | `/api/bets` | 201 | 1 件登録 |
+| POST | `/api/bets/bulk` | 201 | 推奨買目からまとめて登録 |
 | POST | `/api/bets/bulk_delete` | 200 | まとめて削除 |
-| GET / PUT / DELETE | `/api/bets/{bet_id}` | 200 / 404 | 1 件の取得・更新・削除 |
+| GET / PUT | `/api/bets/{bet_id}` | 200 / 404 / 409 | 1 件の取得・更新（更新は notes のみ。**確定済みは 409**）|
+| DELETE | `/api/bets/{bet_id}` | 204 / 404 | 1 件削除 |
 | GET | `/api/bets/summary` | 200 | 投資額・払戻・回収率・的中率 |
 | GET | `/api/bets/breakdown` | 200 | 券種別の内訳 |
 | GET | `/api/bets/timeseries` | 200 | 損益推移（グラフ用）|
@@ -577,13 +545,14 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 
 - 枠連は AI が買い目を生成しないので選択肢に出さない（`core/bet_types.py` の
   `supported_bet_types()` が保存済み設定からも落とす）
-- **EV 閾値は全券種で廃止**（`win_ev_threshold` / `place_ev_threshold` とも存在しない）。
-  買い目は「オッズが取れるものを、券種の優先度 → 的中確率の順に、予算の限り」選ぶ
-- `probability_model_path` の割り当ては **Models 画面**から行う（Settings には無い）。
+- **EV 閾値は全券種で廃止**（`place_ev_threshold` 2026-08-24 / `win_ev_threshold` 2026-08-28 に削除）。
+  買い目の選び方と、やめた理由は [ai-model.md](ai-model.md) が持つ
+- `probability_model_path` の割り当ては **Dashboard のモデル一覧**から行う（Settings には無い）。
   設定すると複勝の確信度フィルタと連系の確率がそのモデル由来になる
 - 保存済み JSON に廃止済みキーが残っていても、読み込み時に落とす（`SettingsStore.load`）
+- `data/settings.json` は `.gitignore` 対象。手で削除すると全キーが既定値に戻る
 - 旧 Kelly 設定（`bankroll` / `kelly_fraction` / `max_stake_per_race_pct`）は読み込み時に
-  `race_budget` へ読み替えて破棄する（`_migrate_legacy`）
+  `race_budget` へ読み替えて破棄する（`_migrate_legacy`）。**移行のために手で消す必要はない**
 
 ---
 
@@ -603,7 +572,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 |---|---|---|---|
 | `KEIBA_API_PORT` | `8765` | バックエンド | FastAPI バインドポート。任意のポートを手動指定してよい |
 | `KEIBA_CORS_EXTRA` | （なし） | バックエンド | 追加 CORS 許可オリジン（カンマ区切り） |
-| `KEIBA_DATA_DIR` | `backend/data/` | バックエンド | DB・モデル・settings.json の保存ルートディレクトリ |
+| `KEIBA_DATA_DIR` | `<repo root>/data/` | バックエンド | DB・モデル・settings.json の保存ルート。既定は `core/paths.py` の `_repo_root()`（`.git` を持つ階層）基準で、**cwd では決まらない** |
 | `KEIBA_KEEP_MISC_CACHE` | `0` | バックエンド（ingest_range） | `1` に設定すると `ingest_range` が各日完了後の `data/raw/misc/` 自動削除をスキップする。デバッグ用 opt-out フラグ |
 | `KEIBA_INCLUDE_NAR` | `0` | バックエンド（ingest） | `1` に設定すると地方競馬（NAR）のレース ID も ingest 対象に含める。デフォルトは中央（JRA）のみ |
 | `KEIBA_ODDS_DB` | `<data>/odds.db` | バックエンド | オッズ DB のパス上書き |
@@ -616,6 +585,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 | `KEIBA_DEBUG_SIM_MISSES` | `0` | バックエンド（シミュレーション） | `1` で外れ買い目の内訳をログ出力 |
 | `KEIBA_EXCLUDE_ODDS_FEATURES` | `0` | バックエンド（学習・推論） | `1` でオッズ系特徴量を除外（オッズ未確定時の検証用）|
 | `KEIBA_MISSING_INDICATORS` / `KEIBA_LOG_FEATURES` / `KEIBA_SPEED_FIGURE` / `KEIBA_PACE_FEATURES` / `KEIBA_RELATIVE_FORM` | `0` | バックエンド（学習・推論） | 実験用の特徴量ノブ。**すべて default-off**（A/B で本番 ROI 改善せず。`docs/ai-model.md`「実験ノブ」）。有効化するときは学習と推論で必ず揃え、`KEIBA_DISABLE_FRAME_CACHE=1` も渡す |
+| `KEIBA_LOG_FEATURE_COLS` | （組み込みの候補列） | バックエンド（学習） | `KEIBA_LOG_FEATURES` が対象にする列をカンマ区切りで上書きする（`ai/model/preprocess.py`）|
 | `VITE_KEIBA_API_BASE_URL` | `http://127.0.0.1:8765` | フロントエンド | `src/lib/api-base.ts` の `getApiBaseUrl()` が返すベース URL を上書き |
 
 ---
@@ -624,17 +594,9 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 
 ### ローカル開発
 
-ブラウザ確認用 dev サーバ（uvicorn + Vite）を一発起動:
-
-```bash
-bash scripts/dev.sh
-# → http://localhost:5173 (Vite) / http://127.0.0.1:8765 (FastAPI)
-# Ctrl-C で全プロセス停止
-```
-
-`scripts/dev.sh` は実行のたびに `uv sync` / `alembic upgrade head` / `pnpm install` を行うため、PR 取り込み直後でも追加コマンド不要でこれ一本で動く。
-
-個別起動・初回セットアップ・テストの実行は [operations.md](operations.md)「開発者向けセットアップ」。
+ブラウザ確認用の dev サーバ（uvicorn :8765 + Vite :5173）は `bash scripts/dev.sh` で一発起動する。
+**手順・個別起動・初回セットアップ・テストの実行は [operations.md](operations.md) が正本**
+（コマンドをここに写すと、片方だけ古くなる）。
 
 ---
 

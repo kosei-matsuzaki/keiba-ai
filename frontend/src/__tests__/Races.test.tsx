@@ -214,16 +214,15 @@ describe('Races', () => {
     // 取り込む、と動線が長かった。知らせの下がそのまま取込操作になる場所に置く。
     vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
     renderRaces();
-    expect(
-      await screen.findByText('今週末のレースがまだ取り込まれていません')
-    ).toBeInTheDocument();
+    // 「今週末 / 未取得 / <日付> を開く」。取込状態の語 (未取得) は
+    // すぐ上の「この日のデータ」と揃えてある。
+    expect(await screen.findByText('今週末')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /を開く$/ })).toBeInTheDocument();
   });
 
   it('今週末が取り込めていれば何も出さない', async () => {
     renderRaces();
     await screen.findByText(/開催/);
-    expect(
-      screen.queryByText('今週末のレースがまだ取り込まれていません')
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText('今週末')).not.toBeInTheDocument();
   });
 });

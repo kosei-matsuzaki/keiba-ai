@@ -91,7 +91,7 @@ export function RecommendationParamsBar({ value, onChange }: RecommendationParam
 
         {/* 買う馬券 */}
         <span className="text-label-ja self-center">買う馬券</span>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           {ALL_BET_TYPES.map((betType) => {
             const on = selected.includes(betType);
             return (

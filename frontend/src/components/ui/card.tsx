@@ -35,7 +35,7 @@ Card.displayName = 'Card';
 const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
     // p-6 は箱ありきの余白だった。区切りは罫線に任せ、上下はセクション間で作る。
-    <div ref={ref} className={cn('flex flex-col space-y-1.5 pb-4', className)} {...props} />
+    <div ref={ref} className={cn('flex flex-col space-y-2 pb-4', className)} {...props} />
   )
 );
 CardHeader.displayName = 'CardHeader';
@@ -44,7 +44,7 @@ const CardTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HT
   ({ className, ...props }, ref) => (
     <h3
       ref={ref}
-      className={cn('text-base font-semibold leading-tight tracking-tight', className)}
+      className={cn('text-lg font-semibold leading-tight tracking-tight', className)}
       {...props}
     />
   )

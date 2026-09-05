@@ -92,6 +92,17 @@ class TestConditionsAreRecorded:
         assert "max_points_per_bet_type" not in c
         assert c["combo_min_hit_prob"] == {"馬連": 0.05}
 
+    def test_records_win_min_odds_and_top_k(self, stub_engine):
+        """RACE 画面と揃えた 2 つも残す。
+
+        どちらも「同じ設定で回し直したのか」の判別に要る。渡し忘れると既定で
+        走るが、結果からは見分けられなかった (win_min_odds が実際にそうなって
+        いて、Settings を変えてもシミュレーションだけ追従していなかった)。
+        """
+        r = _run(stub_engine, win_min_odds=2.5, top_k_combinations=20)
+        assert r.conditions["win_min_odds"] == 2.5
+        assert r.conditions["top_k_combinations"] == 20
+
     def test_conditions_survive_as_dict(self, stub_engine):
         """API / 永続化は as_dict 経由なので、そこに載ることを固定する。"""
         r = _run(stub_engine)

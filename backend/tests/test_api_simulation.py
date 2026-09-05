@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+
 from fastapi.testclient import TestClient
+
+from api.routers import simulation as simulation_router
 
 
 def test_simulation_rejects_window_too_long(api_client: TestClient):
@@ -152,3 +156,23 @@ def test_simulation_start_unknown_model_id_404(api_client: TestClient):
     )
     assert response.status_code == 404
     assert "model id=99999" in response.json()["detail"]
+
+
+def test_both_routes_pass_the_settings_derived_bet_params():
+    """同期・ジョブの両方が settings 由来の買い方を engine に渡すこと。
+
+    2 つの経路は 93% 同じ形をしていて、片方だけ引数が落ちても誰も気づかない。
+    実際に win_min_odds が両方で落ちていて、Settings で単勝オッズ下限を変えても
+    シミュレーションだけ engine 側の既定 1.1 で走っていた (着順精度は変わらない
+    ので、テストからも結果からも見えなかった)。
+    """
+    for fn in (simulation_router.run_simulation, simulation_router.start_simulation_job):
+        src = inspect.getsource(fn)
+        assert "resolve_betting_settings" in src, fn.__name__
+        for kwarg in (
+            "win_min_odds=bet_settings.win_min_odds",
+            "probability_model_path=bet_settings.probability_model_path",
+            "place_min_confidence=bet_settings.place_min_confidence",
+            "min_hit_prob_by_bet_type=bet_settings.combo_min_hit_prob",
+        ):
+            assert kwarg in src, f"{fn.__name__}: {kwarg}"

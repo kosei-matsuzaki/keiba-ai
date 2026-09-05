@@ -107,7 +107,12 @@ function BreakdownTable({ rows }: { rows: BetBreakdownRow[] }) {
   );
 
   if (sorted.length === 0) {
-    return <EmptyState message="データがありません" />;
+    return (
+      <EmptyState
+        message="まだ確定した購入がありません"
+        description="購入を記録して結果が確定すると、券種ごとの回収率がここに出ます。"
+      />
+    );
   }
 
   return (
@@ -220,7 +225,7 @@ function ProfitCell({ group }: { group: BetGroup }) {
       {group.profitSum >= 0 ? '+' : ''}
       {formatYen(group.profitSum)}
       {group.pendingCount > 0 && (
-        <span className="ml-1 text-[10px] text-muted-foreground">未確定{group.pendingCount}</span>
+        <span className="ml-1 text-2xs text-muted-foreground">未確定{group.pendingCount}</span>
       )}
     </span>
   );
@@ -259,7 +264,13 @@ function DetailTable({ params }: { params: BetFilterParams }) {
 
   if (isPending) return <Skeleton className="h-48 w-full" />;
   if (isError) return <EmptyState message="明細取得に失敗しました" />;
-  if (items.length === 0) return <EmptyState message="購入記録がありません" />;
+  if (items.length === 0)
+    return (
+      <EmptyState
+        message="購入記録がありません"
+        description="「購入を記録」から、またはレース画面の推奨買目からまとめて記録できます。"
+      />
+    );
 
   return (
     <div className="space-y-3">
@@ -318,7 +329,7 @@ function DetailTable({ params }: { params: BetFilterParams }) {
                   >
                     {g.notes ?? ''}
                   </TableCell>
-                  <TableCell className="text-[11px] text-muted-foreground">
+                  <TableCell className="text-2xs text-muted-foreground">
                     {g.source === 'recommendation' ? 'AI推奨' : '手動'}
                   </TableCell>
                   <TableCell className="text-right">
@@ -410,7 +421,7 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
   if (!data || data.points.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-        データがありません
+        購入を記録すると、ここに累計損益が出ます
       </div>
     );
   }
@@ -587,11 +598,9 @@ export function Ledger() {
 
       {/* KPI cards */}
       {summaryQuery.isPending ? (
-        <div className="grid grid-cols-2 border-y border-border lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="px-5 py-5">
-              <Skeleton className="h-16 w-full rounded-sm" />
-            </div>
+            <Skeleton key={i} className="h-16 w-full rounded-sm" />
           ))}
         </div>
       ) : summaryQuery.isError ? (

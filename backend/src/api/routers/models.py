@@ -18,7 +18,11 @@ from ai.training.train_nn import train_nn
 from api.deps import get_job_registry, get_or_404, get_session, get_settings_store
 from api.jobs import JobRegistry
 from api.schemas import JobAccepted, ModelMeta, TrainRequest, UpdateModelRequest
-from core.settings_store import SettingsStore, is_probability_model, resolve_model_path
+from core.settings_store import (
+    SettingsStore,
+    is_probability_model,
+    resolve_betting_settings,
+)
 from db.models.model_run import ModelRun
 
 router = APIRouter()
@@ -178,9 +182,9 @@ async def evaluate_model(
     run = get_or_404(session, ModelRun, model_id, label="Model")
     model_path = Path(run.model_path)
 
-    settings = store.load()
-    prob_model_path = resolve_model_path(settings.get("probability_model_path"))
-    place_min_conf = float(settings.get("place_min_hit_prob", 0.60))
+    bet_settings = resolve_betting_settings(store.load())
+    prob_model_path = bet_settings.probability_model_path
+    place_min_conf = bet_settings.place_min_confidence
 
     async def _coro() -> None:
         await asyncio.to_thread(
@@ -191,6 +195,7 @@ async def evaluate_model(
             persist=True,
             probability_model_path=prob_model_path,
             place_min_confidence=place_min_conf,
+            win_min_odds=bet_settings.win_min_odds,
         )
 
     info = registry.start("evaluate", _coro)

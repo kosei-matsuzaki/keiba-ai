@@ -21,7 +21,7 @@ export function HelpDot({ text, label, className }: {
       aria-label={`${label} の説明`}
       className={cn(
         'cursor-help select-none rounded-full border border-border px-1',
-        'font-mono text-[10px] leading-tight text-subtle-foreground',
+        'font-mono text-2xs leading-tight text-subtle-foreground',
         'hover:border-border-strong hover:text-muted-foreground',
         className
       )}

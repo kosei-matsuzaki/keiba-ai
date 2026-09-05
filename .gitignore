@@ -41,7 +41,14 @@ data-snapshot/
 *_ped.html
 
 # ── Local agent state (Claude Code) ───────────────────────────────────────────
-.claude/
+# 規約・役・コマンドは追跡する。クローンが 2 つあり、コードは push→pull でしか揃わない。
+# 丸ごと除外すると、役もコマンドも他所へ渡らない。
+.claude/*
+!.claude/policy.yml
+!.claude/judgments.yml
+!.claude/agents/
+!.claude/commands/
+!.claude/skills/
 CLAUDE.local.md
 
 # ── OS / editor noise ─────────────────────────────────────────────────────────

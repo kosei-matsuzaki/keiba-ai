@@ -33,9 +33,9 @@ function RaceNumber({ raceId }: { raceId: string }) {
   const n = raceId.slice(-2).replace(/^0/, '');
   if (!n) return null;
   return (
-    <span className="font-mono text-2xl font-bold tabular-nums leading-none text-primary">
+    <span className="text-kpi text-primary">
       {n}
-      <span className="text-base">R</span>
+      <span className="text-sm">R</span>
     </span>
   );
 }
@@ -104,7 +104,7 @@ function RunProgress({ stage }: { stage: 'entries' | 'predict' }) {
             style={{ marginLeft: stage === 'entries' ? '0' : '33%' }}
           />
         </div>
-        <span className="font-mono text-[11px] tabular-nums text-primary">{label}</span>
+        <span className="font-mono text-2xs tabular-nums text-primary">{label}</span>
       </div>
     </div>
   );
@@ -410,7 +410,7 @@ export function RaceDetail() {
             </Button>
           </div>
           {/* 高さは常に確保する (空でも詰めない) */}
-          <div className="flex h-4 items-center gap-3 font-mono text-[10px] tabular-nums text-subtle-foreground">
+          <div className="flex h-4 items-center gap-3 font-mono text-2xs tabular-nums text-subtle-foreground">
             {oddsFetchedAt && <span>オッズ {formatClock(oddsFetchedAt)} 時点</span>}
             {lastRunAt && !busy && <span>予想 {formatClock(lastRunAt)}</span>}
           </div>
@@ -420,8 +420,8 @@ export function RaceDetail() {
       {/* 進捗は 1 本にまとめ、いまどの段階かを言葉で出す (B-1 ①) */}
       {busy && <RunProgress stage={stage} />}
 
-      {/* Race overview */}
-      <Card className="border-t border-border pt-6">
+      {/* Race overview — ラベルと値の塊なので面で囲う (罫線を足さない) */}
+      <Card className="block-surface">
         <CardHeader>
           <CardTitle className="text-label-ja">レース概要</CardTitle>
         </CardHeader>
@@ -451,7 +451,7 @@ export function RaceDetail() {
 
       {/* 出馬表が未取得のとき: ボタンで取り込む (自動取得しない) */}
       {!hasEntries && (
-        <Card className="border-t border-border pt-6">
+        <Card className="pt-6">
           <CardContent>
             <EmptyState
               message="出馬表がまだ取り込まれていません"
@@ -490,7 +490,7 @@ export function RaceDetail() {
       {/* 買い目が取れないときは、出走馬一覧を単独で出す。タブは
           RecommendationsCard が買い目を描けるときだけ立つため。 */}
       {hasEntries && !recHasTabs && (
-        <Card className="border-t border-border pt-6">
+        <Card className="pt-6">
           <CardHeader>
             <CardTitle className="text-label-ja">出走馬一覧</CardTitle>
           </CardHeader>

@@ -1,29 +1,21 @@
-import { useState } from 'react';
-
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings';
-import { SettingsForm, type SettingsSection } from '@/components/SettingsForm';
+import { SettingsForm } from '@/components/SettingsForm';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/lib/toast';
 import { formatErrorMessage } from '@/lib/api';
 import type { SettingsUpdate } from '@/types/api';
 
-type TabKey = SettingsSection;
-
-// 等幅で並べるので英字に揃える。
-// INGEST はレース画面 (Race > 過去のレース) の取込パネルへ、
-// OPS の緊急停止はスクレイパー状態カードへ移設したため、ここには置かない。
-const TABS: { value: TabKey; label: string }[] = [
-  { value: 'scraper', label: 'SCRAPER' },
-  { value: 'betting', label: 'BETTING' },
-];
+// タブ (SCRAPER / BETTING) は外した。合計 8 項目しかなく、隠す量ではない。
+// 分けていると「取り込み方」と「買い方」を両方直したいときに切り替えが要り、
+// 保存も 2 回になる。1 画面に 2 グループを縦に並べれば 1 回で済む。
+// INGEST はレース画面の取込パネルへ、OPS の緊急停止はスクレイパー状態カードへ
+// 移設済みなので、ここには無い。
 
 export function Settings() {
   const settingsQuery = useSettings();
   const updateMutation = useUpdateSettings();
-  const [activeTab, setActiveTab] = useState<TabKey>('scraper');
 
   function handleSubmit(values: SettingsUpdate) {
     updateMutation.mutate(values, {
@@ -47,18 +39,9 @@ export function Settings() {
         description="全レース共通の予想パラメータとスクレイパーの動作設定"
       />
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
-        <TabsList className="self-start">
-          {TABS.map((t) => (
-            <TabsTrigger key={t.value} value={t.value}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      {/* SettingsForm は activeSection で 1 セクションだけ表示する
-          (マウントは維持されるので、タブを切り替えても入力中の値は消えない)。 */}
+      {/* 見出しは他のタブと同じく全幅。中身だけ中央に寄せる —
+          行長を max-w-3xl に締めてあるので、左寄せだと右半分が空いたままになる。 */}
+      <div className="mx-auto w-full max-w-3xl">
       {settingsQuery.isPending ? (
         <Skeleton className="h-96 w-full rounded-sm" />
       ) : settingsQuery.isError ? (
@@ -71,9 +54,9 @@ export function Settings() {
           defaults={settingsQuery.data}
           onSubmit={handleSubmit}
           isPending={updateMutation.isPending}
-          activeSection={activeTab}
         />
       )}
+      </div>
     </div>
   );
 }

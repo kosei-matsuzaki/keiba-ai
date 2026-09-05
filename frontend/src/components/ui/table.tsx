@@ -5,7 +5,7 @@ const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableE
   ({ className, ...props }, ref) => (
     <div className="relative w-full overflow-auto">
       {/* 道具としての表は詰めるほど「プロの道具」に見える。13px / 行 32px。 */}
-      <table ref={ref} className={cn('w-full caption-bottom text-[13px]', className)} {...props} />
+      <table ref={ref} className={cn('w-full caption-bottom text-xs', className)} {...props} />
     </div>
   )
 );
@@ -68,7 +68,7 @@ const TableHead = React.forwardRef<
       // 小さく・薄く。欧文ヘッダは等幅 + 字間広めが署名になるが、和文に
       // uppercase / letter-spacing は無意味 (かつ間延びする) ので、
       // 和文を含むヘッダは呼び出し側で .text-label-ja 相当を当てる。
-      'h-8 px-3 text-left align-middle text-[11px] font-medium text-subtle-foreground [&:has([role=checkbox])]:pr-0',
+      'h-8 px-3 text-left align-middle text-2xs font-medium text-subtle-foreground [&:has([role=checkbox])]:pr-0',
       className
     )}
     {...props}
@@ -82,7 +82,7 @@ const TableCell = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <td
     ref={ref}
-    className={cn('px-3 py-1.5 align-middle [&:has([role=checkbox])]:pr-0', className)}
+    className={cn('px-3 py-1 align-middle [&:has([role=checkbox])]:pr-0', className)}
     {...props}
   />
 ));

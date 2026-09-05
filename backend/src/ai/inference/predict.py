@@ -40,6 +40,13 @@ if TYPE_CHECKING:
 
 _PLACE_PROB_METHOD = os.environ.get("KEIBA_PLACE_PROB_METHOD", "plackett_luce")
 
+#: 券種ごとに何通りまで候補に残すか (EV の高い順に打ち切る)。
+#:
+#: **RACE 画面とシミュレーションで同じ値を使う。** 三連単は最大 4,896 通りあり、
+#: ここが違うと `generate_box` / `generate_formation` に渡るプールが両者で別物に
+#: なって、シミュレーションが本番と違う買い目を測る。
+DEFAULT_TOP_K_COMBINATIONS = 50
+
 
 def _compute_place_prob(scores: np.ndarray, place_temperature: float = 1.0) -> np.ndarray:
     """Dispatch to the configured place-probability estimator.

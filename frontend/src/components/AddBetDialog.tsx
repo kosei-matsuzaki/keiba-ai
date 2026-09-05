@@ -102,7 +102,7 @@ function HorseChips({
 }) {
   const sel = new Set(selected);
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {horses
         .filter((h) => !exclude.includes(h.num))
         .map((h) => {
@@ -301,11 +301,11 @@ export function AddBetDialog() {
 
         <div className="grid gap-3">
           {/* 日付 + レース */}
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label>日付</Label>
             <DateYMDPicker value={date} onChange={setDate} ariaLabel="開催日" />
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label>レース</Label>
             <Select value={raceId} onValueChange={setRaceId} disabled={races.length === 0}>
               <SelectTrigger>
@@ -331,7 +331,7 @@ export function AddBetDialog() {
 
           {/* 券種 + 買い方 */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <Label>券種</Label>
               <Select value={betType} onValueChange={(v) => setBetType(v as BetType)}>
                 <SelectTrigger>
@@ -346,7 +346,7 @@ export function AddBetDialog() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <Label>買い方</Label>
               <div className="flex flex-wrap gap-1">
                 {allowedMethods.map((m) => (
@@ -379,7 +379,7 @@ export function AddBetDialog() {
               {method === 'single' && (
                 <div className="grid gap-2">
                   {Array.from({ length: k }).map((_, i) => (
-                    <div key={i} className="grid gap-1.5">
+                    <div key={i} className="grid gap-2">
                       <Label className="text-xs">{ordered ? `${i + 1}着` : `${i + 1}頭目`}</Label>
                       <HorseSelect
                         value={single[i] ?? null}
@@ -395,7 +395,7 @@ export function AddBetDialog() {
               )}
 
               {method === 'box' && (
-                <div className="grid gap-1.5">
+                <div className="grid gap-2">
                   <Label className="text-xs">馬を選択（{boxSet.length} 頭）</Label>
                   <HorseChips
                     horses={horses}
@@ -409,7 +409,7 @@ export function AddBetDialog() {
                 <div className="grid gap-3">
                   {/* 三連系は 1頭軸 / 2頭軸 を選べる */}
                   {k === 3 && (
-                    <div className="grid gap-1.5">
+                    <div className="grid gap-2">
                       <Label className="text-xs">軸の頭数</Label>
                       <div className="flex gap-1">
                         {[1, 2].map((n) => (
@@ -429,7 +429,7 @@ export function AddBetDialog() {
                   )}
 
                   {Array.from({ length: axisCount }).map((_, i) => (
-                    <div key={i} className="grid gap-1.5">
+                    <div key={i} className="grid gap-2">
                       <Label className="text-xs">{axisCount > 1 ? `軸${i + 1}` : '軸'}</Label>
                       <div className="flex gap-2">
                         <HorseSelect
@@ -473,7 +473,7 @@ export function AddBetDialog() {
                     </div>
                   ))}
 
-                  <div className="grid gap-1.5">
+                  <div className="grid gap-2">
                     <Label className="text-xs">相手（{opp.length} 頭）</Label>
                     <HorseChips
                       horses={horses}
@@ -491,7 +491,7 @@ export function AddBetDialog() {
               {method === 'formation' && (
                 <div className="grid gap-3">
                   {Array.from({ length: k }).map((_, i) => (
-                    <div key={i} className="grid gap-1.5">
+                    <div key={i} className="grid gap-2">
                       <Label className="text-xs">
                         {ordered ? `${i + 1}着` : `${i + 1}列目`}（{(cols[i] ?? []).length} 頭）
                       </Label>
@@ -509,7 +509,7 @@ export function AddBetDialog() {
 
           {/* 金額 + メモ */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <Label>1点あたり (円)</Label>
               <Input
                 type="number"
@@ -519,7 +519,7 @@ export function AddBetDialog() {
                 onChange={handleStakeChange}
               />
             </div>
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <Label>メモ (任意)</Label>
               <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="任意" />
             </div>

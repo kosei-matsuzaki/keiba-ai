@@ -10,8 +10,9 @@ Supported buy patterns:
   formation  — first/second/third legs specified independently
 
 賭け金の決め方 (定額):
-  期待値が基準を超える買い目を ev の高い順に並べ、1 点 stake_unit 円ずつ、
-  race_budget を上限に賭ける。予算は使い切らなくてよい。
+  `assign_flat_stakes` の docstring を見る。**EV 順には並べない** — その理由
+  (較正後は単勝の EV が連系の後ろに回り、予算が足りないと単複から切り捨てられる)
+  もそこにある。
 
   以前は資金比率の fractional Kelly で決めていたが、利用者が扱うのは
   「このレースに何円使うか」であって「資金の何%か」ではないため、
@@ -478,6 +479,12 @@ def recommend_for_race(
             continue
 
         # Select the pattern with the highest total_stake_proxy * mean_ev.
+        #
+        # **ここの EV は消し忘れではない。** 買う/買わないの判定から EV を外した
+        # のは、較正後の EV が券種をまたいで比較できないため (単勝 0.6 に対し
+        # 連系 5〜9)。ここは**同じ券種の中で** nagashi / box / formation を
+        # 選ぶだけなので、その比較は成り立つ。買うかどうかは下の
+        # `assign_flat_stakes` が的中確率の下限で決める。
         # Since stake is not yet assigned, use prob * est_odds (= ev) as a
         # proxy for quality and len(candidates) as coverage.
         # Candidates with ev=None count as 0 for scoring purposes.
@@ -495,7 +502,8 @@ def recommend_for_race(
         if best_pattern is not None:
             all_candidates.extend(pattern_candidates[best_pattern])
 
-    # Deduplicate by (bet_type, combo) — keep highest EV (None < any float)
+    # Deduplicate by (bet_type, combo) — keep highest EV (None < any float)。
+    # 同じ券種・同じ組合せどうしの比較なので、上と同じ理由で EV を使ってよい。
     seen: dict[tuple[str, str], BetCandidate] = {}
     for c in all_candidates:
         key = (c.bet_type, c.combo)

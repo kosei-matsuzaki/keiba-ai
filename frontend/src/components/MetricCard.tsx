@@ -51,14 +51,14 @@ export function MetricCard({
       </span>
       <span
         className={cn(
-          'font-mono text-[26px] leading-none tabular-nums',
+          'text-kpi',
           METRIC_VALUE_CLASS[tone]
         )}
       >
         {value}
       </span>
       {note && (
-        <span className="text-[11px] leading-snug text-subtle-foreground">{note}</span>
+        <span className="text-2xs leading-snug text-subtle-foreground">{note}</span>
       )}
     </div>
   );

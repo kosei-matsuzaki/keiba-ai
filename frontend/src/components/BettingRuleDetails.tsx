@@ -34,10 +34,10 @@ export function BettingRuleDetails() {
     <details className="group border-t border-border pt-3 text-xs">
       <summary className="cursor-pointer list-none text-label-ja text-muted-foreground transition-colors hover:text-foreground">
         買い方（券種ごとの条件と点数）
-        <span className="ml-2 font-mono text-[10px] text-subtle-foreground group-open:hidden">
+        <span className="ml-2 font-mono text-2xs text-subtle-foreground group-open:hidden">
           ＋
         </span>
-        <span className="ml-2 hidden font-mono text-[10px] text-subtle-foreground group-open:inline">
+        <span className="ml-2 hidden font-mono text-2xs text-subtle-foreground group-open:inline">
           −
         </span>
       </summary>

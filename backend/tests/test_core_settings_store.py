@@ -1,7 +1,8 @@
 """Tests for core/settings_store.py — 賭け金設定 (定額) と旧 Kelly 設定の移行。
 
-賭け金は「1 レースに使う上限 (race_budget)」と「1 点あたりの額 (stake_unit)」の
-2 つだけで決まる。資金比率の Kelly は廃止したが、既存の settings.json には
+設定に残る賭け金の項目は「1 レースに使う上限 (race_budget)」だけ。1 点の額は
+定数 (`ai.betting.strategy.STAKE_UNIT`)、点数は確信度が決めるので、どちらも
+設定ではない。資金比率の Kelly も廃止したが、既存の settings.json には
 bankroll / kelly_fraction / max_stake_per_race_pct が残っているので、
 読み込み時に金額感を引き継いで読み替える。
 """
@@ -15,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from api.schemas import SettingsUpdate
-from core.settings_store import _DEFAULTS, SettingsStore
+from core.settings_store import _DEFAULTS, SettingsStore, resolve_betting_settings
 
 
 class TestSettingsStoreDefaults:
@@ -165,3 +166,31 @@ class TestRetiredSettings:
         su = SettingsUpdate(race_budget=3_000)
         assert not hasattr(su, "stake_unit")
         assert not hasattr(su, "enabled_bet_types")
+
+
+class TestResolveBettingSettings:
+    """買い方のパラメータを 1 箇所で解決すること。
+
+    RACE 画面・シミュレーション・モデル評価・backtest CLI が同じ買い方を再現
+    する必要がある。以前は各経路が同じ数行を書き写していて、シミュレーション
+    だけ win_min_odds を渡し忘れ、Settings を変えても追従しなかった。
+    """
+
+    def test_defaults_come_from_the_settings_defaults(self) -> None:
+        """既定値をリテラルで書き写さない (旧 0.30 のまま腐った実績がある)。"""
+        resolved = resolve_betting_settings({})
+        assert resolved.place_min_confidence == _DEFAULTS["place_min_hit_prob"]
+        assert resolved.win_min_odds == _DEFAULTS["win_min_odds"]
+        assert resolved.combo_min_hit_prob == _DEFAULTS["combo_min_hit_prob"]
+        assert resolved.probability_model_path is None
+
+    def test_reads_the_current_key_name_not_the_retired_one(self) -> None:
+        """複勝の下限は place_min_hit_prob。旧 place_min_confidence は見ない。"""
+        resolved = resolve_betting_settings(
+            {"place_min_hit_prob": 0.72, "place_min_confidence": 0.30}
+        )
+        assert resolved.place_min_confidence == 0.72
+
+    def test_combo_floors_fall_back_when_the_value_is_not_a_dict(self) -> None:
+        resolved = resolve_betting_settings({"combo_min_hit_prob": None})
+        assert resolved.combo_min_hit_prob == _DEFAULTS["combo_min_hit_prob"]

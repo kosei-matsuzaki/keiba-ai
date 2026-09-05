@@ -151,7 +151,7 @@ export function ModelDetail() {
         <>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-              <CardTitle className="flex items-center gap-3 text-base">
+              <CardTitle className="flex items-center gap-3">
                 {title}
                 {/* 役割は 2 つある: Active = 買い目を決める / 確率 = 確からしさを出す。
                     兼務もありうるので併記する。 */}

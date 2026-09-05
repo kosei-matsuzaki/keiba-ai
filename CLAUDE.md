@@ -12,9 +12,9 @@ netkeiba スクレイピング + NN (Set Transformer ランキング) による�
 
 ### 起動
 ```bash
-bash scripts/dev.sh   # uv sync + alembic upgrade + pnpm install + uvicorn(:8765) + Vite(:5173)
+bash scripts/dev.sh   # uv sync + alembic upgrade + (必要なら) pnpm install + uvicorn(:8765) + Vite(:5173)
 ```
-PR 取り込み直後でもこれ一本で動くよう、毎回同期と migration を走らせる。Ctrl-C で `trap 'kill 0' EXIT` が全プロセス停止。
+PR 取り込み直後でもこれ一本で動く。`pnpm install` は **lockfile が `node_modules` より新しいときだけ** (毎回走らせると Windows でファイルロックを踏む)、`uv sync` は**失敗しても警告して続行**する。Ctrl-C で `trap 'kill 0' EXIT` が全プロセス停止。
 
 ### テスト・リント
 ```bash
@@ -31,70 +31,26 @@ cd frontend && pnpm build          # tsc -b && vite build
 ```
 
 ### CLI エントリ (backend/)
-```bash
-uv run python -m ai.training.train_nn --train-end 2025-04-30 --valid-months 6 --test-months 6  # NN 学習 (train-end は分割の基準日。学習終了は その日 - test - valid = 2024-04-30)
-uv run python -m ai.evaluation.backtest --model data/models/<ts>-nn --persist    # 評価 + metrics_json 書き戻し
-uv run keiba-ingest --date 2024-12-28                                       # 単日 ingest
-uv run python -m jobs.ingest_range --start ... --end ...           # 期間 ingest（中断後の resume 対応）
-uv run keiba-backup                                                # keiba.db + odds.db を data/backups/ に世代バックアップ
-uv run alembic upgrade head
-```
+取り込み・学習・評価・バックアップ・migration のコマンドは `docs/operations.md`。二段階学習と `--persist` を付ける理由もそこにある。
 
 ## アーキテクチャ要点
 
-### 依存方向 (厳守)
-```
-api → jobs → ai / features / scraper → db (SQLAlchemy models)
-core / settings は横断
-```
-`ai` は `scraper` を直接呼ばない (循環禁止)。`api/routers/*.py` はビジネスロジックを持たず、下層モジュールを呼ぶだけ。
+設計の説明は `docs/design.md`、モデルの中身は `docs/ai-model.md`、API と DB は `docs/spec.md`。ここには**知らないと壊すもの**だけ置く。
 
-`ai/` は依存 DAG の層に沿って機能サブパッケージ化されている: `core/` (types/labels/splits/temperature/probabilities = 最下層) → `model/` (registry/_artifacts_nn + NN 実装 net/loss/dataset/preprocess) → `training/` (train_nn) / `inference/` (predict) / `betting/` (odds/strategy) / `simulation/` (engine/persistence) / `evaluation/` (backtest)。NN 専用化で旧 `ai/nn/` は廃止。`features/` は公開オーケストレータ `builder.py` と per-domain 抽出器 `features/extractors/*` に分離。
+- **層をまたぐ向きは `api → jobs → ai / features / scraper → db`。** `ai` は `scraper` を直接呼ばない (循環禁止)、`api/routers/*.py` はロジックを持たない。機械が見張る形は `.claude/policy.yml` の `code.layers`
+- **推論は `predict_race` 系 (`ai/inference/predict.py`) を bundle 込みで呼び、`session=` を必ず渡す。** 履歴を DB から引くので、渡さないと zero に degrade する。着順精度はほぼ変わらないのに**単勝回収率が 0.912 → 0.823 に落ちる**ため、テストでは気づけない。セッションはループの外で開いたまま保持すること
+- **SHAP は廃止。**`predict_race_with_shap` は `top_features=[]` を返すだけの残置スタブ (ルーター互換のため消していない)
+- **`torch` / `lightning` は optional dep** (`pyproject.toml` の `[project.optional-dependencies].nn`)。未インストール環境では `load_model_full` / 予測系が `ModuleNotFoundError`。導入は `uv pip install -e ".[nn]"`。scraper/ingest だけなら不要
+- **モデルパスの解決は basename 比較** (`registry._resolve_model_path`)。WSL と Windows でパス表記が違っても同じモデルを指せるようにするため。active は `model_runs.is_active`
+- **ID 系 (`horse_id` / `jockey_id` / `trainer_id`) を `FEATURE_COLUMNS` に入れない。**暗記でリークする。`features/builder.py` の 46 列が単一の真実
+- **特徴量は race_date より厳密に過去の情報しか参照しない** (`_build_entry_row` 内の SQL 条件)。新しい特徴量を足すときも同じ制約を保つこと
+- **実験用の特徴量ノブを有効にするときは `KEIBA_DISABLE_FRAME_CACHE=1` を併せて渡す。**`_frame_cache_key` は特徴量フラグを含まないので、既存 cache を掴むと新しい列が無いまま学習が走り、**エラーにならずベースラインとして完走する** (2026-08-30 に実際に踏んだ)。ノブの一覧と A/B の結果は `docs/ai-model.md`「実験ノブ」
+- **`race_id` / `horse_id` / `jockey_id` / `trainer_id` は TEXT。**netkeiba の ID は年+回+場+日+R の構造化文字列で、算術の対象ではない
+- **ジョブはインメモリ** (`api/jobs.py` の `JobRegistry` が `asyncio.create_task` で管理)。**プロセス再起動で状態が消える。**永続化を増やすときは明示的に合意を取る
+- **新しいスクレイピングのループを書いたら `is_stopped()` を呼ぶ** (`scraper/stop_flag.py`)。呼ばないと UI / API / 環境変数 `KEIBA_SCRAPER_STOP=1` の 3 経路から止められなくなる。robots.txt は fail-closed (取得失敗 = 拒否)
+- **uvicorn は `127.0.0.1` のみにバインドし、認証は無い** (ローカル単体起動前提)。CORS 許可は Vite dev と環境変数 `KEIBA_CORS_EXTRA` の追加分だけ
+- **`shadcn` CLI は走らせない。**`src/components/ui/` に手書き配置する (`components.json` は設定の記録のみ)。**見た目の規定 (配色・字の尺度・余白・角丸・状態) は [docs/design.md](docs/design.md)「フロントエンド スタイル設計」が正本。**`tailwind.config.ts` は `fontSize` と `borderRadius` を *差し替え* ているので、規定に無いクラス (`text-base` / `rounded-lg` 等) は**エラーにならず無効になる**
 
-### 推論パスは bundle 経由 (NN 専用)
-- `registry.load_model_full(path)` が `ModelBundle` (`model_type="nn"`) を返す。`bundle.nn_model` が RaceTransformerModel、`nn_preprocessor` / `temperature_scaler` は optional
-- **アーキは単一 (target)**: ability エンコーダ = 集約特徴 + per-race 履歴 GRU (odds は含めない)、value = スコア head で標準化済み odds を concat (ability→value 分離)。`history_feat_dim`/`odds_feat_dim` は *次元* で、0 ならその入力なし (`odds_feat_dim=0` は `KEIBA_EXCLUDE_ODDS_FEATURES`)。旧 v1/v2 や gated フラグ (`use_history`/`use_odds_head`/`arch_version`) は全廃済み
-- 推論は **bundle-aware の `predict_race(bundle, frame)` / `predict_race_with_combinations(bundle, frame, ...)` / `predict_race_with_shap(bundle, frame, ...)`** を必ず使う (`ai/inference/predict.py`)
-- **`session=` を必ず渡す**。`history_feat_dim>0` のモデル (現行 active を含む) は推論時に過去走系列を DB から引くので、`session=None` だと履歴が zero に degrade する。着順精度はほぼ変わらないのに **単勝回収率が 0.912 → 0.823 に落ちる** (実測・test 19ヶ月 5,404レース)。呼び出し側は必ずセッションをループの外で開いたまま保持すること
-- combo 確率は NN スコア → 解析的 Plackett-Luce で導出する。外部 isotonic 校正 (`combo_calibrators` / win / place) は全廃済み。連系の校正は `combo_nll` / `multi` 損失で **NN 内部に学習**させる (下記「連系の校正を NN 内部へ」)。combo 確率は解析的 PL の出力をそのまま使う (外部後処理なし)
-- SHAP は廃止。`predict_race_with_shap` は `top_features=[]` を返す (ルーター互換のための残置スタブ)
-
-### NN は optional dep
-`torch` / `lightning` は `pyproject.toml` の `[project.optional-dependencies].nn`。未インストール環境では `load_model_full` / 予測系が `ModuleNotFoundError`。導入は `uv pip install -e ".[nn]"`。scraper/ingest だけなら torch 不要。
-
-### モデル保存レイアウト
-- NN: `data/models/<YYYYMMDDTHHMMSS>-nn/` に `model.pt` + `meta.json` (`model_type="nn"`) + optional `preprocessor.pkl` / `temperature_scaler.pkl` / `history_norm.pkl` / `speed_figure.pkl`
-- active は `model_runs.is_active` で管理。`registry._resolve_model_path` が **basename 比較** でパス表記差 (WSL/Windows) を吸収する
-
-### 特徴量とリーク防止
-- `features/builder.py` の `FEATURE_COLUMNS` (46 列) が単一の真実
-- ID 系 (`horse_id` / `jockey_id` / `trainer_id`) は **絶対に FEATURE_COLUMNS に入れない**
-- `build_training_frame` / `build_inference_frame` ともに **race_date より厳密に過去** の情報しか参照しない (`_build_entry_row` 内で SQL 条件)。新規特徴量を足すときも同じ制約を維持すること
-- `KEIBA_EXCLUDE_ODDS_FEATURES=1` で `ODDS_FEATURE_COLUMNS` を除外した特徴量リストになる (オッズ未確定時の検証用)
-- 実験用の特徴量ノブ (すべて **default-off・inert**、A/B で本番 ROI 改善せず=市場効率の壁。`KEIBA_RELATIVE_FORM` は 2026-08-30 に log-loss で否定: paired 5,390 レースで +0.0022 [−0.0016,+0.0062]): `KEIBA_MISSING_INDICATORS` (欠損flag) / `KEIBA_LOG_FEATURES` (log変換) / `KEIBA_SPEED_FIGURE` (par-time タイム指数, 履歴17次元 + `speed_figure.pkl` artifact) / `KEIBA_PACE_FEATURES` (ペース想定) / `KEIBA_RELATIVE_FORM` (上がり・走破時計のレース内偏差と順位パーセンタイル)。harness `scripts/model_side_ab.py`、詳細 `docs/ai-model.md`「実験ノブ」と `docs/archive/2026.md`。有効化する場合は学習と推論で同じフラグを揃えること (列構成が変わるため)。**併せて `KEIBA_DISABLE_FRAME_CACHE=1` を渡す**: `_frame_cache_key` は DB パス + 行数シグネチャ + 期間だけで作られ**特徴量フラグを含まない**ので、既存の cache を掴むと新しい列が無いまま学習が走る。`train_nn` は frame に無い列を黙って落とすため**エラーにならずベースラインとして完走する** (2026-08-30 に実際に踏んだ)
-
-### DB スキーマの方針
-- `race_id` / `horse_id` / `jockey_id` / `trainer_id` は **TEXT**。netkeiba ID は構造化文字列 (年+回+場+日+R) で算術対象ではない
-- Alembic は `migrations/versions/0001` ~ `0014` (最新: `0014_bet_record_conditions`)
-- FK CASCADE: `entries.race_id` / `payouts.race_id` は CASCADE、`horse_id` は RESTRICT、`jockey_id` / `trainer_id` は SET NULL
-
-### ジョブはインメモリ
-- `api/jobs.py` の `JobRegistry` が `asyncio.create_task` でバックグラウンド実行を管理
-- **プロセス再起動でジョブ状態は消える**。永続化を増やすときは明示的にユーザー合意を取る
-- `/api/scraper/run` と `/api/models/train` は 202 Accepted を即時返却
-
-### スクレイパー停止
-`scraper/stop_flag.py` が「環境変数 `KEIBA_SCRAPER_STOP=1` か、プロセス内フラグ」をループのたびに見る。UI / API / 環境変数の 3 経路で止められる。新しいループを書くときも `is_stopped()` を呼ぶこと。robots.txt は fail-closed (取得失敗 = 拒否、10 分後に再試行)。
-
-### バインドと CORS
-- uvicorn は `127.0.0.1` のみにバインド (外部不可)
-- CORS 許可は Vite dev (`localhost:5173` / `127.0.0.1:5173`) + 環境変数 `KEIBA_CORS_EXTRA` (カンマ区切り) 追加分のみ
-- 認証なし (ローカル単体起動前提)
-
-### フロントの規約
-- `shadcn` CLI は走らせず、`src/components/ui/` に手書き配置 (`components.json` は設定の記録のみ)
-- `badge.tsx` に `success` / `warning` / `info` バリアントを追加済み。色は CSS 変数 (`globals.css`) + `tailwind.config.ts` 経由。ハードコードの Tailwind カラークラスではなくバリアントを使う
-- API クライアントは `lib/api.ts` (ky)。エラー整形は `formatErrorMessage` / `formatErrorMessageSync`、HTTP status は `getStatus` / `isNotFoundError` 等のヘルパで判定
 
 ## 注意ポイント
 
@@ -106,10 +62,26 @@ core / settings は横断
 - **`payouts.combo` は表記が違う**。netkeiba 由来なので `1 - 10` / `7 → 1` と**区切りの前後に空白が入る**が、買い目 (`bet_records.combo` / 推奨) は空白なしの `1-10` / `7→1`。素の文字列比較では**連系が 1 件も一致しない**ので、突き合わせる側は必ず `core.bet_types.normalize_combo` を通す。`ai/betting/odds.py` は元から正規化していたが `services/bet_settlement.py` は素の `==` で、**記録した連系がすべて外れとして確定する**状態だった (2026-09-01 に修正。既存テストが空白なしの偽データを使っていて検出できていなかった)
 - **設定の応答は `_dict_to_response` を通る**。ここでキー名を間違えても pydantic は未知の引数を黙って捨てるので、**保存した値が GET/PUT の応答に出ず既定値が返る** (画面上は「保存したのに戻る」)。旧名 `place_min_confidence=` のままだった `place_min_hit_prob` と `max_points_per_bet_type` が実際にこれで死んでいた
 - **温度スケーラは NLL 較正** (`TemperatureScaler.fit_calibration`、勝ち馬の負の対数尤度最小化)。単勝 softmax と複勝 PL に**同じ T** を使うので確率が互いに矛盾しない。旧実装の payback グリッド探索は T をグリッド端に張り付かせ (`T_win=0.133` / `T_place=10.0`)、`win_prob` が 1 位に 0.999999 乗る = 画面に「単勝確率 100.0%」と出る壊れ方をしていた。**賭ける/賭けないは温度ではなく買い方のルールで表現する**
-- **EV (期待値) はどの券種でも買う/買わないの判定に使わない** (2026-08-28 に全廃)。買い目は「オッズが取れるものを、券種の優先度 (単勝→複勝→連系) → 的中確率の順に、予算の限り」選ぶ。単勝はオッズ下限 `win_min_odds` のみ。実測 (test 19ヶ月): 単勝 EV条件 0.698 / 本命買い **0.931**、複勝 EV条件 0.654 / 本命買い **0.887**、連系 EV条件 0.849 / 確率順 0.877 (ただし**前進検証 9 fold では差が検出できない**: 0.832 vs 0.839。連系で EV を戻さないのは回収率ではなく設計上の理由 — 根拠の無い閾値・壊れた入力確率・単複との一貫性)。特に複勝は **EV の順序が逆** (EV 0.0-0.9 帯が 0.832 で最良、2.0 以上が 0.573 で最悪) なので温度・冪などの単調変換では直らない。`min_ev` / `win_ev_threshold` / `place_ev_threshold` は設定に存在しない (backtest の `LEGACY_*_EV_THRESHOLD` は旧ルール `--win-bet-rule ev` 専用の分析用途)。backtest の既定は `--win-bet-rule top1 --place-bet-rule topk --place-top-k 1`。**連系の点数は的中確率の下限だけで決まる** (`combo_min_hit_prob`、馬連 0.075 / ワイド 0.26 / 馬単 0.025 / 三連複 0.024 / 三連単 0.019 = 券種内中央値の 1.25 倍)。線を超えた買い目を全部買うので**点数がレースごとに変わる**。**券種ごとの点数上限は持たない** (2026-09-01 に廃止。どの券種が効くかはレースで違うため)。**買う点数がレースごとに変わり**、27.5% のレースでは連系を 1 点も買わない。前進検証 9 fold (14,697 レース) で 固定 2 点 0.828 (7.42 点/レース) → **0.892 (3.90 点/レース)**、同じ点数の固定 1 点 0.834 と比べて +0.058、fold 最悪値も 0.648 → 0.783。下限の値には鈍感 (中央値の 0.5〜1.25 倍ならどこでも 0.87〜0.89) で、効くのは「下限を持つこと」。**上限を外した分の代償は −0.02** (上限 2 点 0.887 → 下限のみ 0.867、同 3〜4 点/レース)。下限をどこに置いても 0.84〜0.87 で頭打ちなので、1.25 倍を選んだのは回収率ではなく「同じ成績を最も少ない点数で得られる」から。backtest は `log_loss` / `market_log_loss` (本命の二値 NLL と市場 1/オッズ の同じ量) と評価窓 `eval_start`/`eval_end` も `metrics_json` に書く。**`--start` を省くと DB 全期間が窓になり、学習期間を含んだ in-sample の値が出る** (確率モデルが実際にそうなっていて、単勝 0.945 と表示されていたが正しくは 0.821)。いまは `eval_overlaps_train` を検出して `--persist` を弾く (`--allow-in-sample` で明示的にのみ通す)。**`--bootstrap-iters` は既定 2000** で 95% 区間を `metrics_json` に書く (画面にも出る)。2026-09-04 に測り直した active の実測 (2024-10-28〜2026-08-23・6,244 レース・本命 1 点): **単勝 0.907 [0.844-0.972] / 複勝 0.919 [0.892-0.947]**。log-loss は 0.570 対 市場 0.482 で**確率としては市場に負けている** (回収率では勝っている)。画面は `metrics_json` に `payback_win` があるかで「実測 / 学習時」を判別し、ラベルを変える (複勝的中率は出所で別の量になるため)
+- **EV (期待値) はどの券種でも買う/買わないの判定に使わない** (2026-08-28 に全廃)。買い目は「オッズが取れるものを、券種の優先度 (単勝→複勝→連系) → 的中確率の順に、予算の限り」選ぶ。単勝はオッズ下限 `win_min_odds` のみ。**連系の点数は的中確率の下限 `combo_min_hit_prob` だけで決まり、券種ごとの上限は持たない** (2026-09-01 に廃止) ので、点数はレースごとに変わる。`min_ev` / `win_ev_threshold` / `place_ev_threshold` は設定に存在しない。**戻す提案をする前に `docs/ai-model.md`「推奨ベットルール」を読む** — 券種ごとの実測と、回収率では正当化できないのに戻さない理由がそこにある
+- **backtest で `--start` を省くと DB 全期間が窓になり、学習期間を含んだ in-sample の値が出る** (確率モデルが実際にそうなっていて、単勝 0.945 と表示されていたが正しくは 0.821)。いまは `eval_overlaps_train` を検出して `--persist` を弾く (`--allow-in-sample` で明示的にのみ通す)。既定は `--win-bet-rule top1 --place-bet-rule topk --place-top-k 1`、`--bootstrap-iters` は 2000 で 95% 区間を `metrics_json` に書く
+- **回収率の数字を CLAUDE.md に写さない。**測り直すたびに動くので、片方だけ古くなる。窓 (期間・レース数) と 95% 区間つきの正本は `docs/ai-model.md`「OOS 実測」。画面は `metrics_json` に `payback_win` があるかで「実測 / 学習時」を判別し、ラベルを変える (複勝的中率は出所で別の量になるため)
 - **シミュレーションは RACE 画面と同じ仕組みで回す** (2026-09-01 に統一)。入力は **1 レースに使う上限 (`race_budget`) だけ**で、初期資産・賭け金の決め方 (定額/複利)・戦略プリセット (conservative/balanced/aggressive)・狙い方 (`top_n_horses`)・履歴の無いレースの除外 (`exclude_low_information`) は**すべて廃止**した (`STRATEGY_PRESETS` / `StakingMode` は存在しない)。賭け金は残高に依存しないので破産が起きず、評価が途中で止まらない。結果は資産残高ではなく **0 から始まる累計損益** (`final_profit` / `peak_profit` / `trough_profit` / `profit_timeseries`)。DB は migration 0015 で列名ごと置き換え、旧ルールで走った 8 件は削除した (列名だけ変えても数字の意味が変わらないため)
 - **狙い方 (上位何頭で買い目を組むか) は選択肢にしない**。買うかどうかは的中確率の下限が決めるので、頭数を広げても線を超えない候補が増えるだけで買い目は変わらない。`ai.betting.strategy.TOP_N_HORSES` (=3) 固定で、API のクエリからも UI からも外した
-- **運用モデルは 2 つ**。買い目を決めるのは `model_runs.is_active` の active、確からしさを答えるのは `settings.probability_model_path` の確率モデル (`--loss plackett_luce --pl-top-k 5` で学習)。**確率モデルに馬を選ばせない** — 的中率は上がるが人気馬に寄って回収率が落ちる (単勝 0.824 / 複勝 0.881)。用途は (a) 複勝を買うかの判定と厚み (`place_min_hit_prob`、既定 0.60 = 3着内率)、(b) 連系の確率。**確信度は券種横断で「その買い目が当たる確率」**に統一 (単勝=1着確率 / 複勝=3着内率 / 連系=組合せの的中確率)。賭け金を確信度で動かすのは複勝だけ — 単勝は的中率が 6%→37% と動くのに回収率が動かず (相関 −0.005)、連系も無相関。複勝の点数は `基準 × (確信度/0.50)^2` (1〜15 点、OOF 5 年すべてでプラス)。理由は active の確率が壊れているため (本命の win_prob と勝敗の相関 0.073 / 市場は 0.354。ROI 志向の損失は順序しか最適化しない)。実装は `ai/inference/confidence.py` と `merge_combination_sources` (単複の候補は必ず active 側を使う)。未設定でも動く (複勝は全レース購入・連系の確率は active 由来)
+- **運用モデルは 2 つ**。買い目を決めるのは `model_runs.is_active` の active、確からしさを答えるのは `settings.probability_model_path` の確率モデル (`--loss plackett_luce --pl-top-k 5` で学習)。**確率モデルに馬を選ばせない** — 的中率は上がるが人気馬に寄って回収率が落ちる (単勝 0.824 / 複勝 0.881)。用途は (a) 複勝を買うかの判定と厚み (`place_min_hit_prob`、既定 0.60 = 3着内率)、(b) 連系の確率。**確信度は券種横断で「その買い目が当たる確率」**に統一 (単勝=1着確率 / 複勝=3着内率 / 連系=組合せの的中確率)。**点数は単複とも確信度で動く**が (式は次項)、**回収率が上がるのは複勝だけ** — 単勝は的中率が 6%→37% と動くのに回収率が動かない (相関 −0.005)。連系も無相関。理由は active の確率が壊れているため (本命の win_prob と勝敗の相関 0.073 / 市場は 0.354。ROI 志向の損失は順序しか最適化しない)。実装は `ai/inference/confidence.py` と `merge_combination_sources` (単複の候補は必ず active 側を使う)。未設定でも動く (複勝は全レース購入・連系の確率は active 由来)
 - 確率モデルの割り当ては **Dashboard のモデル一覧**の行アクション (モデル画面は Dashboard に統合済み・旧 `/models` は redirect)。Settings には無い。使用中のモデルは削除できない (409)。シミュレーションの実行条件は `simulation_runs.conditions_json` に残るので、設定を変えて回し直しても後から見分けられる
-- **賭け金は「1 点 = 100 円 × 点数」だけ**。券種ごとの 1 点あたり金額 (旧 `stake_units`) とふだん買う券種 (旧 `enabled_bet_types`) は設定から廃止した (2026-09-01)。厚みは金額ではなく**点数**で表し、点数は確信度が決める: 単複は `points_for_confidence` (`base 5 × (確信度/基準)^2` を 1〜15 点、基準は単勝 0.25 / 複勝 0.50)、連系は 1 組合せ 1 点で**何点買うかは的中確率の下限**が決める。単勝を確信度で動かしても回収率はほぼ変わらない(OOF 14,829 レース: 定額 5 点 0.8438 → 確信度連動 0.8483、fold の幅は 0.767〜0.955 → 0.776〜0.913 と狭まる)。**賭け金は EV 順に並べない** — 単勝 → 複勝 → 連系の順で、同券種内は的中確率順。較正後は単勝の EV が 0.6 前後で連系 (EV 5〜9) より低く出るため、EV 順だと予算が足りないときに**回収率の推定が最も確かな単複が真っ先に切り捨てられる** (実測: 2,034 レースで単勝 3 点・複勝 1 点)。定額設定で測り直した実測では連系は 5 券種とも 0.80〜0.88 で単複 (0.931 / 0.885) に劣る(旧記述の「連系は測定不能」は破産する複利設定の産物で誤り)
+- **賭け金は「1 点 = 100 円 × 点数」だけ**。券種ごとの 1 点あたり金額 (旧 `stake_units`) とふだん買う券種 (旧 `enabled_bet_types`) は設定から廃止した (2026-09-01)。厚みは金額ではなく**点数**で表し、点数は確信度が決める: 単複は `points_for_confidence` (`base 5 × (確信度/基準)^2` を 1〜15 点、基準は単勝 0.25 / 複勝 0.50)、連系は 1 組合せ 1 点で**何点買うかは的中確率の下限**が決める。単勝を確信度で動かしても回収率はほぼ変わらない(OOF 14,829 レース: 定額 5 点 0.8438 → 確信度連動 0.8483、fold の幅は 0.767〜0.955 → 0.776〜0.913 と狭まる)。**賭け金は EV 順に並べない** — 単勝 → 複勝 → 連系の順で、同券種内は的中確率順。較正後は単勝の EV が 0.6 前後で連系 (EV 5〜9) より低く出るため、EV 順だと予算が足りないときに**回収率の推定が最も確かな単複が真っ先に切り捨てられる** (実測: 2,034 レースで単勝 3 点・複勝 1 点)。定額設定で測り直した実測では連系は 5 券種とも単複に劣る(旧記述の「連系は測定不能」は破産する複利設定の産物で誤り)
 - ROI系損失・監視・温度スケーラは **標準化前の生オッズ**を使う必要があるため `odds_win_raw`(単勝) と `place_ret_raw`(複勝) を非特徴列として dataset/collate に通す (連系の払戻は通していない) (`odds_win` は特徴量で標準化される)。win_prob は softmax(score / T_win)、place_prob は PL Monte Carlo。combo確率は素の PL Monte Carlo (外部 isotonic 校正は全廃済み。`combo_nll`/`multi` 学習で NN 内部に校正が入る)。新しい損失を足すときも `predict_race` の確率変換は共通なので学習側だけ拡張すれば足りる
+
+<!-- claude-keeper:generated -->
+## 体制
+
+規約は `.claude/policy.yml`。役に読ませるときは**会話の経緯を渡さない** (skill `flat-view`)。「いまは直さない」は `.claude/judgments.yml` に書く。コマンドは `/standup` (全役) / `/docs` / `/code` / `/critique` / `/design` / `/ship` / `/routine`。
+
+| 役 | いつ呼ぶか |
+|---|---|
+| `docs-auditor` | docs か実装を直したあと。docs と実装の食い違いを見る |
+| `duplication-auditor` | docs を切り出したあと。文書どうしの二重管理を見る (実装は開かない) |
+| `code-steward` | 実装が一区切りついたとき。伸びた・散った・溜まったを見る |
+| `critic` | 実験の結論を出したあと。**窓が短くて出た差ではないか**を疑う |
+| `reviewer` | コミットする前。差分を通しで読む |
+<!-- /claude-keeper:generated -->

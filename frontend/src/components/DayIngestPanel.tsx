@@ -158,10 +158,12 @@ export function DayIngestPanel({ date, raceCount, hasResults }: DayIngestPanelPr
   }
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-3 border-t border-border pt-4">
-      <div className="flex items-baseline justify-between gap-2">
+    <div className="flex w-full flex-col gap-3">
+      {/* 両端揃えにしない。列に置くと「この日のデータ ……… 36 R 取込済み」と
+          離れ、見出しと値が別のものに見える。 */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-label-ja">この日のデータ</span>
-        <span className="font-mono text-[10px] tabular-nums text-subtle-foreground">
+        <span className="font-mono text-2xs tabular-nums text-subtle-foreground">
           {raceCount > 0 ? `${raceCount} R 取込済み` : '未取得'}
         </span>
       </div>

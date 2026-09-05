@@ -6,36 +6,39 @@ import { cn } from '@/lib/cn';
 const buttonVariants = cva(
   // base: 角丸 2px・等幅・字間広め。影は使わない (ダークで効かず、箱をやめる方針とも矛盾する)
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm ' +
-    'font-mono text-[12px] tracking-[0.08em] ' +
+    'font-mono text-xs tracking-[0.08em] ' +
     'transition-[background-color,border-color,color] duration-150 ' +
     'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary ' +
     'disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        // Primary CTA: アクセント 1 色の面
-        default: 'bg-primary text-primary-foreground hover:bg-primary/90',
+        // Primary CTA: **無彩色の反転** (地と文字を入れ替える)。
+        // アクセント (--primary) は「測れているか」を指す色なので、CTA に使うと
+        // 意味が薄まり、面で出た瞬間に画面でいちばん強いものが「実行」になる
+        // (煽る見た目に寄る)。強さは色ではなくコントラストで出す。
+        default: 'bg-foreground text-background hover:bg-foreground/85',
         // Destructive: red solid
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         // Outline (副ボタン): 枠だけ。面を持たせない
         outline:
-          'border border-border-strong bg-transparent text-foreground hover:border-primary hover:text-primary',
+          'border border-border-strong bg-transparent text-foreground hover:border-foreground',
         // Secondary: card-elevated bg, used for less-prominent actions
         secondary:
           'bg-card-elevated text-foreground hover:bg-card-elevated/70',
         // Ghost: no bg, just hover tint
         ghost:
           'text-muted-foreground hover:bg-card-elevated hover:text-foreground',
-        // Soft primary: tinted bg + saturated fg (= dashboard pill 風 button)
+        // Soft: 淡い面 + 前景色。ここもアクセントを使わない
         soft:
-          'bg-primary/15 text-primary hover:bg-primary/25',
+          'bg-card-elevated text-foreground hover:bg-card-elevated/70',
         // Link: underline on hover
         link:
           'text-primary underline-offset-4 hover:underline h-auto p-0',
       },
       size: {
-        default: 'h-9 px-3.5 py-2',
-        sm: 'h-8 px-2.5 text-xs',
+        default: 'h-9 px-4 py-2',
+        sm: 'h-8 px-3 text-xs',
         lg: 'h-10 px-5',
         icon: 'h-9 w-9 p-0',
       },

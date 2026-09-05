@@ -159,9 +159,7 @@ describe('ModelSimulationPanel の結果', () => {
         probability_model: '20260827T140017-nn',
         place_min_confidence: 0.6,
         enabled_bet_types: ['単勝', '複勝', '馬連'],
-        stake_unit_by_bet_type: {},
         race_budget: 5000,
-        max_points_per_bet_type: 0,
         combo_min_hit_prob: {},
       },
     } as never);

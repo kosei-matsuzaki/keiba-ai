@@ -40,7 +40,7 @@ function _CustomTooltip({ active, payload, label }: TooltipProps) {
   const p = payload[0].payload;
   const daily = p.payout - p.invested;
   return (
-    <div className="rounded-sm border border-border bg-card px-3 py-2 font-mono text-[11px]">
+    <div className="rounded-sm border border-border bg-card px-3 py-2 font-mono text-2xs">
       <div className="font-medium">{label}</div>
       <div className="mt-1 space-y-0.5 text-muted-foreground">
         <div>

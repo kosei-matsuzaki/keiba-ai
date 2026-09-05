@@ -75,7 +75,11 @@ backend/src/
 │                 ├── betting/    odds / strategy（ベット選定・賭け金配分）
 │                 ├── simulation/ engine / persistence（バックテストシミュレーション）
 │                 └── evaluation/ backtest — NDCG@k・ヒット率・ROI 計算
-├── core/         設定（Settings）・ロギング・settings_store（JSON 永続化）
+├── services/     買い目の決済と集計。`bet_settlement` が payouts と買い目を突き合わせて
+│                 bet_records を確定し（連系は `core.bet_types.normalize_combo` を通す）、
+│                 `bet_analytics` が回収率・的中率を集計する（DB / HTTP 非依存の純関数）
+├── core/         設定（Settings）・ロギング・settings_store（JSON 永続化）・bet_types。
+│                 買い方の設定の解決は `settings_store.resolve_betting_settings` が単一の入口
 ├── api/          FastAPI ルーター群（schemas / deps / routers/*）
 │                 ビジネスロジックは持たず、上記モジュールを呼ぶだけ
 └── jobs/         取り込み・運用 CLI（ingest / ingest_range / ingest_odds / backup_db 等）。上記モジュールを呼ぶ
@@ -84,10 +88,13 @@ backend/src/
 ### 依存方向
 
 ```text
-api → jobs → ai / features / scraper → db (SQLAlchemy models)
+api / jobs → ai / features / services → db (SQLAlchemy models)
+scraper → db          （api / jobs からのみ呼ばれる）
+core は横断
 ```
 
-循環依存は禁止。`ai` は `scraper` を直接呼び出さない。
+循環依存は禁止。`ai` は `scraper` を直接呼び出さない。`ai` / `features` / `services` は
+同じ層（policy の `domain`）なので、この 3 つの間に順序は無い。
 
 フロント側も同じ向きを持つ。
 
@@ -95,8 +102,8 @@ api → jobs → ai / features / scraper → db (SQLAlchemy models)
 routes / App / router → components → lib / hooks / store / types
 ```
 
-`hooks` から `components` を呼ばない。両方向とも `.code-policy.yml` の `layers` に
-書き起こしてあり、`/code-keeper:check` が実際の import を数えて逸脱を出す。
+`hooks` から `components` を呼ばない。両方向とも `.claude/policy.yml` の `code.layers` に
+書き起こしてあり、`/claude-keeper:check` が実際の import を数えて逸脱を出す。
 sonner の `toast` を `components/ui/` に置いていた頃はここが 5 本逆流していた
 （中身は関数であってコンポーネントではないので `lib/toast.ts` へ移した）。
 
@@ -118,42 +125,6 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 
 ---
 
-## フロントエンド スタイル設計
-
-### デザイントークン（CSS 変数）
-
-`globals.css` で定義する CSS 変数のうち、shadcn/ui のベーストークン（`--background` / `--foreground` 等）に加えて以下のセマンティックトークンを管理する。
-
-| トークン | 用途 | light 値 | dark 値 |
-|---|---|---|---|
-| `--success` / `--success-foreground` | 成功・アクティブ状態（emerald 系） | `oklch(0.765 0.177 158)` | `oklch(0.765 0.177 158)` |
-| `--warning` / `--warning-foreground` | 警告・進行中状態（amber 系） | `oklch(0.769 0.188 70.08)` | `oklch(0.769 0.188 70.08)` |
-| `--info` / `--info-foreground` | 情報・補足状態（sky 系） | `oklch(0.685 0.169 237)` | `oklch(0.685 0.169 237)` |
-| `--font-sans` | UI 全体のサンセリフフォントスタック | system-ui ほか OS デフォルト | 同左 |
-| `--font-mono` | コード・ID 表示用等幅フォントスタック | ui-monospace ほか OS デフォルト | 同左 |
-
-`tailwind.config.ts` の `theme.extend.colors` に `success` / `warning` / `info`（CSS 変数経由）を登録し、クラス名（例: `bg-success text-success-foreground`）として利用できる。
-
-> フォント変数（`--font-sans` / `--font-mono`）は将来の web font 導入（PR-V-B 予定）に向けた差し替えポイントとして確保しており、現時点では OS デフォルトスタックを初期値とする。
-
-### Badge バリアント一覧
-
-`src/components/ui/badge.tsx` で定義する全バリアント:
-
-| バリアント | 対応トークン | 主な使用箇所 |
-|---|---|---|
-| default | `--primary` | 汎用ラベル |
-| secondary | `--secondary` | サブ情報 |
-| destructive | `--destructive` | エラー・停止状態 |
-| outline | border のみ | 軽量ラベル |
-| success | `--success` | active モデル・完了状態 |
-| warning | `--warning` | 実行中・保留状態 |
-| info | `--info` | 情報補足 |
-
-ハードコードされた Tailwind カラークラス（`bg-emerald-600 text-white` 等）は使用せず、対応バリアントの `<Badge>` に統一する。
-
----
-
 ## UI 画面構成
 
 ### 画面一覧と役割
@@ -165,7 +136,7 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 | 3 | Race Detail | `/races/:race_id` | レース概要 + 出走馬表（予想確率）+ 推奨買目（1 点ずつ / 購入用 / 答え合わせ の 3 タブ）| `GET /api/races/{race_id}`, `GET /api/predictions/{race_id}`, `GET /api/recommendations/{race_id}` |
 | 4 | Ledger | `/ledger` | 購入記録と収支（回収率・的中率・券種別内訳・損益推移） | `GET /api/bets*` |
 | 5 | Model Detail | `/models/:model_id` | モデル 1 件の詳細と、期間・予算を指定したバックテスト | `GET /api/models/{id}`, `POST /api/simulation/start`, `GET /api/simulation/runs/{run_id}` |
-| 6 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（SCRAPER / BETTING / BET TYPES タブ） | `GET /api/settings`, `PUT /api/settings` |
+| 6 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（SCRAPER / BETTING タブ） | `GET /api/settings`, `PUT /api/settings` |
 
 旧 `/upcoming` `/past` `/ingest` は Race 画面へ、旧 `/models` は Dashboard へ統合済みで、
 ブックマーク互換のため `router.tsx` が `Navigate` でリダイレクトするだけの経路として残している。
@@ -289,17 +260,18 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ┌─────────────────────────────────────────┐
 │  モデル概要（学習条件・評価指標）        │
 ├─────────────────────────────────────────┤
-│  ModelSimulationPanel — 6 つの塊に分ける │
+│  ModelSimulationPanel — 5 つの塊に分ける │
 │   1 条件   期間 / 1 レースに使う上限 / 買う馬券 を横 1 列
 │            使うモデル (この画面 + Settings の確率モデル)
 │            **RACE 画面と同じ仕組みで回す** — 入力も買い方も揃える
 │            (初期資産・賭け金の決め方・戦略・狙い方は廃止)
-│   2 結果   収支 / 最大益・最大損 / 必要だった資金
+│   2 結果   累計損益 / 必要だった資金 / 回収率。**実行条件はこの中**
+│            最大益・最大損は出さない (最大損は「必要だった資金」と
+│            符号違いの同じ数字で、山と谷は 3 のグラフが示す)
 │   3 損益推移  ProfitChart (0 起点)
 │   4 内訳   馬券種別 / レース格別 / コース別 をタブで切り替え
 │            (3 表を積むと縦に伸びるだけで見比べられない)
-│   5 この実行の条件  折り畳み
-│   6 過去の実行      入力と結果の間に挟まないよう最後に置く
+│   5 過去の実行      入力と結果の間に挟まないよう最後に置く
 │    実行は POST /simulation/start（非同期）
 └─────────────────────────────────────────┘
 ```
@@ -312,28 +284,26 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 ┌─────────────────────────────────────────┐
 │  PageHeader                             │
 ├─────────────────────────────────────────┤
-│  Tabs: SCRAPER / BETTING / BET TYPES    │
+│  Tabs: SCRAPER / BETTING                │
 │  SettingsForm（react-hook-form + zod。  │
 │    activeSection で 1 タブ分だけ表示し、│
 │    マウントは維持して入力値を保つ）     │
 │  ├─ SCRAPER                             │
 │  │    User-Agent / rate_min / rate_max /│
 │  │    night_min（rate_min ≤ rate_max）  │
-│  ├─ BETTING                             │
-│  │    単勝のオッズ下限                  │
-│  │    複勝を買う確信度の下限 (3 着内率) │
-│  │    連系を何点まで買うか (0 で無制限) │
-│  │    1 レースに使う上限 / 1 点あたり   │
-│  └─ BET TYPES                           │
-│       買う券種のチェックと、その券種の  │
-│       1 点あたり金額を同じ場所で編集    │
+│  └─ BETTING                             │
+│       複勝を買う確信度の下限 (3 着内率) │
+│       単勝のオッズ下限                  │
+│       1 レースに使う上限                │
+│       連系を買う確信度の下限（券種ごと）│
 └─────────────────────────────────────────┘
 ```
 
 BETTING に **EV 閾値は無い**。どの券種でも期待値は買う/買わないの判定に使わず、
 「的中確率の高い順に予算まで」買う。EV 条件を入れると回収率が落ちることが実測で
-分かっているため（`docs/ai-model.md`）。枠連は AI が買い目を生成しないので
-BET TYPES の選択肢に出さない。
+分かっているため（`docs/ai-model.md`）。券種ごとの 1 点あたり金額（旧 `stake_units`）と
+ふだん買う券種（旧 `enabled_bet_types`）は 2026-09-01 に設定から廃止した。枠連は
+`core/bet_types.py` の `supported_bet_types()` が落とすので、画面に選択肢として出ない。
 
 **確率モデルの割り当ては Settings ではなく Dashboard のモデル一覧で行う**（モデルを見比べて
 いる場所で選べないと意味がないため）。Settings に残るのは「複勝を買う確信度」という
@@ -405,7 +375,194 @@ FieldRow には help text を添える。
 
 ---
 
+## フロントエンド スタイル設計
+
+### 方向 —「実測」（2026-09-05）
+
+この道具でいちばん多い操作は買い目を決めることではなく、**測った値を読むこと**
+（回収率・的中率・95% 区間・in-sample か OOS か）。見た目もそこに合わせる。
+
+決めたことは 3 つ。
+
+1. **chrome は色を持たない。** 地・罫線・文字は無彩に近い黒鉛で組む
+2. **アクセント 1 色は〈測れているか〉を指す。** 金額でもオッズでもない
+3. **彩度はデータのもの。** 枠色と損益にしか強い色を使わない
+
+3 が制約の本体。馬が並ぶ画面には枠色チップ（`Umaban`）が常に 8 色出ているので、
+chrome にブランド色を足すと **chrome がデータと彩度を奪い合う**。旧トークンの
+琥珀（`--primary`、46 か所）を外したのはこれが理由で、好みではない。外したことで
+琥珀は `--warning` に戻り、本当の警告に使えるようになった。
+
+避けたものを 3 つ記録しておく。**次に迷ったらここへ戻る。**
+
+| 避けた形 | なぜ |
+|---|---|
+| クリーム地（旧 light の `#f7f4ef`） | 生成物によくある配色で、既視感が強い |
+| 同じ角丸カードに全部を切り分ける形 | どこかの SaaS ダッシュボードに見える。指標カードは 1 画面 1〜3 個まで |
+| 琥珀を面で使う | 「的中」を煽る見た目になり、主役が数字でなくなる |
+
+### 色の 3 層
+
+| 層 | 何が入るか | 誰が決めるか | 変えてよいか |
+|---|---|---|---|
+| データ | 枠色 8 色（`lib/waku.ts`）、曜日（土 = 青 / 日 = 赤） | JRA と暦 | **変えない。**デザインの都合で動かさない |
+| 値の向き | `--success` / `--destructive`（損益・的中・成否） | 実装 | 面積が小さくても常に色を持たせる |
+| chrome | `--primary`（実測）と `--warning`（警告）の 2 つだけ | この規定 | **ここを増やさない** |
+
+chrome の色を 3 つ目にしない。増えた時点で 3 層の区別が読めなくなり、
+「色が付いている = 何かある」以上の意味を運べなくなる。
+
+**アクセントを CTA に使わない。**`--primary` が指すのは
+〈測れているか〉と〈いまどこにいるか〉（現在地・選択中）の 2 つだけ。
+ボタンの `default` は**無彩色の反転**（`bg-foreground text-background`）で、
+強さは色ではなくコントラストで出す。アクセントを面で塗ったボタンは
+画面でいちばん強いものが「実行」になり、煽る見た目に寄る
+（実際にそうなっていたのを 2026-09-05 に直した）。`soft` と `outline` も同じ理由で
+アクセントを持たない。**アクセントの面を持つのは `Badge` の `solid` / `tone="default"` だけ。**
+
+### デザイントークン（CSS 変数）
+
+`globals.css` が唯一の出どころ。値は **HSL 三つ組**（Tailwind が `hsl(var(--x))` で読む）。
+**dark が主・light が従**で、light は面が明るいぶんアクセントと状態色の明度を落とす。
+
+| トークン | 用途 | dark | light |
+|---|---|---|---|
+| `--background` | 地 | `205 18% 9%` `#13181B` | `205 16% 96%` `#F3F5F6` |
+| `--card` | 面 | `205 16% 12%` `#1A1F23` | `0 0% 100%` `#FFFFFF` |
+| `--card-elevated` | 一段上げた面 | `205 14% 16%` `#232A2F` | `205 14% 92%` `#E8EBED` |
+| `--foreground` | 文字 | `205 12% 92%` `#E8EBED` | `205 20% 12%` `#182025` |
+| `--muted-foreground` | 副次の文字 | `205 9% 64%` `#9BA5AB` | `205 10% 40%` `#5C6870` |
+| `--subtle-foreground` | ラベル・単位 | `205 8% 44%` `#677279` | `205 9% 54%` `#7F8B94` |
+| `--border` | 区切りの罫 | `205 12% 20%` `#2D3439` | `205 14% 87%` `#D9DFE2` |
+| `--border-strong` | 囲い・表ヘッダ下の太罫 | `205 10% 32%` `#49535A` | `205 12% 72%` `#AFB9C0` |
+| `--primary` | **実測**。OOS バッジ・95% 区間・現在地・選択中 | `188 58% 55%` `#4ABDCF` | `188 62% 34%` `#217E8C` |
+| `--success` | プラス収支・的中・成功 | `158 52% 50%` `#3DC291` | `158 58% 29%` `#1F7555` |
+| `--destructive` | マイナス収支・失敗・日曜 | `6 68% 60%` `#DE6254` | `6 68% 45%` `#C13425` |
+| `--warning` | 本当の警告のみ | `38 85% 58%` `#EFAC39` | `38 88% 36%` `#AD710B` |
+| `--info` | **土曜日だけ。**暦の慣習で青 | `218 62% 62%` `#628EDA` | `218 64% 42%` `#2759B0` |
+
+地の色相を 205°（わずかに寒色寄りの黒鉛）にしてあるのは、**枠色の赤・橙を
+暖めないため**。暖色の地に置くと枠色 3（赤）と 7（橙）の差が縮む。
+
+`--info` は補足でもリンクでもなく、**土曜日を青く出すためだけ**にある（`RaceCalendar` /
+`DateYMDPicker` の 3 か所。日曜は `--destructive`）。色相を 218° に置いたのは
+`--primary` の 188° と 30° 離すためで、近いと「実測」と「土曜」が同じ色に見える。
+
+各色には `-foreground` の対（その面に載せる文字色）があり、`tailwind.config.ts` の
+`theme.extend.colors` に登録してある。`bg-success text-success-foreground` の形で使う。
+
+> web font は `index.html` が Google Fonts から Inter / JetBrains Mono / Noto Sans JP を
+> 読み込む（ウェイトは 400/500/700 の 3 段のみ。Inter 600 と Noto Sans JP 600 は太さが
+> 揃わないので混ぜない）。Inter に和文字形が無いことを利用し、**フォールバック順序だけで
+> 「英数字 = Inter / かな漢字 = Noto Sans JP」**になる。指定しないと Windows は Yu Gothic UI、
+> macOS はヒラギノに落ちて環境ごとに別アプリのように見える。
+
+### 字の尺度（5 段）
+
+**この 5 つ以外を使わない。**`tailwind.config.ts` は `fontSize` を丸ごと差し替えて
+**この 4 キーしか生成しない**ので、`text-base` / `text-xl` / `text-2xl` を書いても
+クラスが出ず無効になる。中間値を作れなくするための仕掛けで、消し忘れではない。
+
+| 段 | クラス | px | 用途 |
+|---|---|---|---|
+| 1 | `text-2xs` | 11 | ラベル・単位・バッジ・補足 |
+| 2 | `text-xs` | 12 | 表のセル、小さい本文 |
+| 3 | `text-sm` | 14 | 本文（`body` の既定） |
+| 4 | `text-lg` | 18 | 見出し（`h1` / `CardTitle`） |
+| 5 | `.text-kpi` | 26 | 数値。等幅 + `tabular-nums` |
+
+**見出しを太らせない。**画面の中でいちばん強いのは見出しではなく数字なので、
+`h1` は `text-lg font-semibold tracking-tight` にとどめる。段が 5 つで足りるのは
+「読み物」を持たない画面だから。長い説明が要るなら本文（14px）に収める。
+
+数字まわりの補助クラスは `globals.css` に置く（`.text-kpi` / `.text-label` /
+`.text-label-ja` / `.text-num` / `.text-unit` / `.cell-num`）。**すべて等幅 +
+`tabular-nums`** で、桁が縦に揃うことで「計測した値」に見える。プロポーショナル数字だと
+ただの大きい文字になる。
+
+ラベルを**大文字化しない・字間を開けない**（`text-transform: none`、`0.04em` まで）。
+トラッキングした全大文字は「読み物」の署名で、和文ラベル（単勝回収率）と並べたときに
+段差が出る。
+
+### 余白の尺度
+
+**4 の倍数のみ。**ただし最小の詰めとして 2px（`0.5`）だけ例外に置く。
+
+```
+0.5 = 2px   チップと数字のように、隣接を示すだけの詰め
+1   = 4px    2 = 8px    3 = 12px    4 = 16px
+6   = 24px   8 = 32px  12 = 48px
+```
+
+**6px / 10px / 14px（`1.5` / `2.5` / `3.5`）を作らない。**1 つ許すと、次の画面が
+その隣をまた作る。4px と 8px の間に迷ったら **8px を取る**（詰めるより離すほうが、
+表の行が増えたときに崩れにくい）。**例外は表の中だけ** — セル内の
+アイコンとラベルは 4px で詰める（8px にすると 1 行の高さが伸び、
+1 画面に入るレース数が減る）。
+
+**アイコンの寸法はこの尺度に乗せない。**余白ではなく文字に合わせる量なので、
+`14 / 16 / 18 / 20px`（`h-3.5` / `h-4` / `h-[18px]` / `h-5`）の 4 つを持つ。
+本文 14px の隣に 14px のアイコンが並ぶのは正しく、4 の倍数へ丸めると
+文字よりアイコンが大きく見える。
+
+### 角丸
+
+**2px の 1 値だけ。**ピル（バッジ）の `rounded-full` が唯一の例外で、
+「基本は直角、意図があるときだけ完全な丸」というリズムを作る。
+
+| 値 | クラス | 使いどころ |
+|---|---|---|
+| 2px | `rounded` / `rounded-sm` / `rounded-md` | ボタン・入力・チップ・馬番・ダイアログ・囲う Card |
+| 9999px | `rounded-full` | バッジだけの例外 |
+
+丸みは「やわらかい・親しみやすい」記号で、計測する道具の方向とは逆なのでほぼ捨てる。
+**ダイアログも 2px**（面が大きいほど丸みが目に付くので、ここを緩めると方向が崩れる）。
+
+`tailwind.config.ts` は `borderRadius` を **`extend` ではなく丸ごと差し替える**。
+`extend` に置くと Tailwind 既定の `rounded-lg`（8px）などが生き残り、名前だけ違う
+中間値が生えてくる。`DEFAULT` も 2px に寄せてあるので、素の `rounded` が
+別の値を指す抜け道も無い。`rounded-[2px]` のような直書きはしない。
+
+shadcn 既定の `sm = radius - 4px` という引き算スケールは使わない。`--radius` を 2px に
+すると `calc(2px - 4px)` が負値になり、**指定ごと無効になって完全な直角に落ちる**。
+
+### 状態の扱い
+
+**空が既定の状態。**スクレイピング済みデータも学習済みモデルもリポジトリに含まれないので、
+**初回起動は全画面が空**になる。ここを飛ばすと、いちばん多い状態を見ていないことになる。
+
+| 状態 | 出し方 | 決めたこと |
+|---|---|---|
+| 空 | `EmptyState` | `message` は**次にする操作**を書く（「データがありません」で終えない）。アイコンは 40px・`text-muted-foreground/25` |
+| 読み込み中 | `ui/skeleton.tsx` | 行数を実データの行数に寄せる。出た瞬間に高さが変わると読む位置を失う |
+| エラー | `EmptyState` + 状況に合った lucide アイコン | 何が起きたかを書く。謝らない・ぼかさない |
+| 長文 | `truncate` + `title` 属性 | 折り返して行数を変えない。表の行高が揃わなくなる |
+
+### Badge の組み方
+
+`src/components/ui/badge.tsx` は **形 × 意味の 2 軸**で組む。以前は
+`default / secondary / destructive / outline / success / warning / info` ＋ `soft-*` 6 種で
+13 通りあり、どれを使うかが場当たりになっていたのを畳んだもの。
+
+| 軸 | 値 | 使いどころ |
+|---|---|---|
+| `variant`（形） | `solid` | 「結論」を示すもの。**1 画面に 1 種類まで** |
+| | `soft`（既定） | 状態の表示（実行中・完了・失敗） |
+| | `outline` | 分類の表示（クラス・券種）。**常に無彩色** |
+| `tone`（意味） | `default`（= 実測） / `success` / `destructive` / `warning` | `solid` と `soft` にだけ効く |
+
+**`info` と `secondary` は Badge には無い**（`--info` トークン自体は土曜日の表示に使う）。
+`tone="default"` は `--primary` を引くので、**「測った値」を指すバッジ**になる
+（OOS・実測・95% 区間）。学習時の値には付けない。
+
+ハードコードされた Tailwind カラークラス（`bg-emerald-600 text-white` 等）は使わない。
+
+---
+
 ## UI スタイル方針
+
+**画面はこの規定の値だけを使う。ベタ書きしない。**規定に無い値が要ると分かったら、
+画面に足さずここへ戻る。ここで例外を作ると、規定は 1 か月で飾りになる。
 
 ### PageHeader コンポーネント
 
@@ -413,58 +570,47 @@ FieldRow には help text を添える。
 
 | prop | 型 | 概要 |
 |---|---|---|
-| `icon` | `LucideIcon` | 左タイルに表示するアイコン（primary tinted 背景） |
+| `icon` | `LucideIcon` | 左タイルに表示するアイコン |
 | `title` | `string` | `<h1>` に出力するページ名 |
 | `description` | `string?` | タイトル下のサブテキスト（省略可） |
-| `children` | `ReactNode?` | 右端 actions slot（ボタン類）。Models は TrainModelDialog、Race は取込・即時停止のボタンを配置 |
+| `children` | `ReactNode?` | 右端 actions slot（ボタン類） |
 
-RaceDetail は `course + race_class` を title に、開催日・距離・race_id を description に動的設定する（3 状態: loading / error / loaded 対応）。
+RaceDetail は `course + race_class` を title に、開催日・距離・race_id を description に
+動的設定する（loading / error / loaded の 3 状態に対応）。
 
-### タイポグラフィ階層
+### 領域の作り方（罫線 / 面 / 箱）
 
-| 用途 | クラス | 備考 |
+区切る手段は 3 つ。**どれを使うかは中身で決まる。**
+
+| 手段 | 見た目 | 使うもの |
 |---|---|---|
-| ページ h1 | `text-3xl font-bold tracking-tight` | PageHeader が全ルートに適用 |
-| CardTitle | `text-base font-semibold leading-tight` | `src/components/ui/card.tsx` の CardTitle デフォルト値 |
-| Topbar ロゴ span | `text-base` | ヘッダーロゴの文字サイズ |
+| 罫線と余白 | 線 1 本 + 余白 | **表とグラフ**、節の区切り |
+| 面（`.block-surface` / `-compact`） | 背景 `--card` + 角丸 2px、**罫線なし** | **ラベルと値の塊** |
+| 箱（`Card boxed`） | 背景 + 罫線 | 注意喚起、その画面の答えになる指標 |
 
-ページ h1 は `tracking-tight` を加えて視認性を高め、CardTitle は `text-2xl` から `text-base` に縮小してカード内コンテンツとのバランスを改善している。
+**表とグラフは囲わない。**それ自体でまとまって見えるので、囲うと枠が二重になる
+（画面直下の塊をすべて箱にしたことがあるが、表もグラフも囲われて散らかった）。
 
-### ナビの active state
+**ラベルと値の塊には面を使い、罫線を足さない。**以前は上下を罫線で挟む
+（`border-y`）か節ごとに `border-t` を引いていたが、そういうブロックが縦に積むと
+**引きで見たときに線が縞になり、内容より先に線が目に付く**（2026-09-05）。
+面なら罫線 0 本で同じまとまりが作れる。該当するのは Race の取込状況と
+Race Detail のレース概要。
 
-| 項目 | 値 |
-|---|---|
-| 幅 | `w-60`（変更前: `w-56`） |
-| active 背景 | `bg-primary/10 text-primary` + 左 inset shadow（変更前: `bg-primary text-primary-foreground` 反転塗りつぶし） |
-| 項目間隔 | `space-y-0.5`（変更前: `space-y-1`） |
+**指標カードが並ぶ帯には面を使わない** — `MetricCard` 自身が箱なので、
+面に載せると枠が二重になる（Ledger で実際にそうなった）。
 
-active state を反転塗りつぶしから inset shadow + tint に変更することで、選択中アイテムをより控えめに示し、コンテンツエリアへの視線誘導を妨げないようにしている。
+面の内側の余白は 2 段。
 
-### ブランド資産
+| クラス | 余白 | 使いどころ |
+|---|---|---|
+| `.block-surface` | 24px | 見出し + 複数行を載せる面（レース概要）。12px だと中身が縁に張り付き、「面に置いた」ではなく「背景が変わった」に見える |
+| `.block-surface-compact` | 縦 12px / 横 16px | 1 行だけの帯（取込状況）。24px だと帯が厚くなりすぎる |
 
-モチーフは馬蹄（∩ + 両端の studs）。デザイントークン刷新（青 → 琥珀、角丸 7px → 2px）に合わせて
-配色とジオメトリを更新済みで、パス座標は 3 か所すべてで共有する（viewBox だけが違う）。
+**面の直後に罫線を引かない。**面の下端が既に区切りなので、次の節に `border-t` を
+足すと線が二重になる（Race Detail のレース概要とその下の節が実際にそうだった）。
 
-| ファイル | 役割 |
-|---|---|
-| `src/components/BrandMark.tsx` | **アプリ内のマーク**。inline SVG + `currentColor` でテーマ追従する。地（タイル）を持たない素のグリフ |
-| `public/favicon.svg` | ブラウザタブ用のタイル。`<link rel="icon">` 経由では CSS 変数が解決されないため、`--card` / `--border-strong` / `--primary` の dark 値を HSL リテラルで写している |
-| `public/logo.svg` | アプリ外（README / 資料 / OG 画像）用の単体グリフ。同じ理由で琥珀を直書き。**アプリ内では使わない** |
-
-favicon のタイル地は明暗どちらのタブ地色でも成立するよう常に炭（`#14120f`）で、light テーマ用の
-別タイルは持たない。`index.html` の favicon link は `/favicon.svg` を参照する。
-
-Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` を 18x18 で置く。
-ここでタイルではなく素のグリフを使うのは、globals.css の「箱をやめて罫線で区切る」に従い
-ヘッダに app タイルを刺さないため。
-
-### 箱の使いどころ（2026-09-02）
-
-領域は **罫線と余白** で作る。**表とグラフは囲わない** — それ自体でまとまって
-見えるので、囲うと枠が二重になる（画面直下の塊をすべて箱にしたことがあるが、
-表もグラフも囲われて散らかった）。
-
-囲うのは次の 2 つだけ:
+**箱（罫線あり）は 2 つだけ。**
 
 1. **注意喚起** — 「判断材料が少ない」など、面で出したいもの（`Card boxed`）
 2. **その画面の答えになる指標** — `MetricCard`。Dashboard なら単勝・複勝の回収率、
@@ -473,18 +619,31 @@ Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` �
 指標カードは **1 画面 1〜3 個まで**。5 つ並べた時点でどれも目立たなくなり、
 囲う意味が消える。残りの指標は素の値のまま並べる（`MetricBand` / `Figure`）。
 
+**面と箱を入れ子にしない。**入れ子にすると外側の意味が消える。
+
+### ブランド資産
+
+モチーフは馬蹄（∩ + 両端の studs）。パス座標は 3 か所すべてで共有する（viewBox だけが違う）。
+
+| ファイル | 役割 |
+|---|---|
+| `src/components/BrandMark.tsx` | **アプリ内のマーク**。inline SVG + `currentColor` でテーマ追従する。地（タイル）を持たない素のグリフ |
+| `public/favicon.svg` | ブラウザタブ用のタイル。`<link rel="icon">` 経由では CSS 変数が解決されないため、`--card` / `--border-strong` / `--primary` の dark 値を HSL リテラルで写している |
+| `public/logo.svg` | アプリ外（README / 資料 / OG 画像）用の単体グリフ。同じ理由で色を直書き。**アプリ内では使わない** |
+
+favicon のタイル地は明暗どちらのタブ地色でも成立するよう常に黒鉛（`#1A1F23`）で、
+light テーマ用の別タイルは持たない。**トークンを変えたらこの 2 つの svg も直す**
+（CSS 変数が届かないので自動では追随しない）。
+
+Topbar のロゴは `<BrandMark className="h-[18px] w-[18px] text-primary" />` を 18x18 で置く。
+ここでタイルではなく素のグリフを使うのは、「箱をやめて罫線で区切る」に従い
+ヘッダに app タイルを刺さないため。
+
 ### micro-interactions
 
-#### Card hover
+動きは 2 つだけ。**画面に入るときのアニメーションは持たない**（測った値を読む道具で、
+値より先に動きが目に入る理由がない）。
 
-- `ui/card.tsx` に `transition-shadow duration-150` を全 Card 共通で付与し、hover 時の影変化を滑らかにする
-- クリック可能なカード（レース一覧の行）は hover 時に `shadow-lg` + `border-primary/30` アクセントを追加し、インタラクティブであることを視覚的に示す
-
-#### Dialog overlay
-
-- `ui/dialog.tsx` の overlay を `bg-black/80` から `bg-black/60 backdrop-blur-sm` に変更し、奥行き感を演出する
-
-#### Skeleton shimmer
-
-- `ui/skeleton.tsx` のアニメーションを Tailwind デフォルトの `animate-pulse` から独自 keyframes `animate-skeleton-shimmer` に変更する
-- `tailwind.config.ts` に keyframes を定義（opacity 0.6 → 1 → 0.6、1.8s、ease-in-out）。デフォルトの pulse より控えめで目に優しい点滅にする
+- **Dialog overlay** — `bg-black/60 backdrop-blur-sm`。奥行きで前後を示す
+- **Skeleton** — `animate-skeleton-shimmer`（opacity 0.6 → 1 → 0.6、1.8s）。
+  Tailwind 既定の `animate-pulse`（0.5 → 1）は振れ幅が大きく、読んでいる最中に目に付く

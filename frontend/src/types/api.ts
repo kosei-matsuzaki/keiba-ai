@@ -471,7 +471,7 @@ export interface BetBreakdown {
 
 // ── Simulation (Ledger 「シミュレーション」 タブ) ─────────────────────────────
 
-/** 戦略プリセット (= kelly_fraction + min_ev のラッパー) */
+/** 券種 / クラス / コース別の集計 1 行分。 */
 export interface SimulationGroupStats {
   /** 表示用ラベル: bet_type / race_class / course のいずれか */
   label: string;
@@ -499,13 +499,14 @@ export interface SimulationConditions {
   /** 複勝を買う確信度の下限。確率モデル未使用なら null */
   place_min_confidence: number | null;
   enabled_bet_types: string[];
-  stake_unit_by_bet_type: Record<string, number>;
   /** 1 レースに使ってよい上限 (円)。使い切る目標ではない。 */
   race_budget: number;
-  /** 連系の点数の上限 (予算から決まる)。 */
-  max_points_per_bet_type: number;
   /** 連系を買う確信度の下限 (券種ごと)。 */
   combo_min_hit_prob: Record<string, number>;
+  /** 単勝を買うオッズの下限。2026-09-05 より前の run には入っていない。 */
+  win_min_odds?: number;
+  /** 券種ごとに候補へ残した通り数。同上。 */
+  top_k_combinations?: number | null;
 }
 
 export interface SimulationResponse {

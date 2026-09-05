@@ -78,7 +78,7 @@ export function RowActionsMenu({ actions, label = '操作' }: {
                 a.onSelect();
               }}
               className={cn(
-                'block w-full px-3 py-1.5 text-left text-sm transition-colors',
+                'block w-full px-3 py-2 text-left text-sm transition-colors',
                 'hover:bg-card-elevated disabled:cursor-not-allowed disabled:opacity-40',
                 a.tone === 'destructive' ? 'text-destructive' : 'text-foreground'
               )}

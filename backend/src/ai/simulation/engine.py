@@ -6,12 +6,7 @@ aggregates ROI / hit-rate by bet_type / race_class / course.
 
 This is the engine behind the Ledger 「シミュレーション」 tab.
 
-Strategy presets translate user-friendly choices to internal stake-ratio /
-EV-threshold parameters (賭け金は 1 点定額。Kelly は廃止済み):
-
-  conservative:  1 点 = 予算の 20%, 上位 2 頭から買い目を組む (点数少なめ)
-  balanced:      1 点 = 予算の 20%, 上位 3 頭 (現行 default)
-  aggressive:    1 点 = 予算の 50%, 上位 4 頭 (点数多め)
+買い方と入力は `simulate_active_model` の docstring。
 """
 
 from __future__ import annotations
@@ -38,6 +33,7 @@ from ai.inference.confidence import (
     points_for_confidence,
 )
 from ai.inference.predict import (
+    DEFAULT_TOP_K_COMBINATIONS,
     _combinations_from_base,
     _predict_race_nn,
     merge_combination_sources,
@@ -285,6 +281,8 @@ def simulate_active_model(
     min_hit_prob_by_bet_type: dict[str, float] | None = None,
     probability_model_path: Path | None = None,
     place_min_confidence: float = 0.60,
+    win_min_odds: float = 1.1,
+    top_k_combinations: int | None = DEFAULT_TOP_K_COMBINATIONS,
     *,
     bundle: ModelBundle | None = None,
     bet_sink: list[dict] | None = None,
@@ -321,6 +319,11 @@ def simulate_active_model(
             複勝の点数を変える、(c) **連系の確率もそこから導出する**。
             買う馬は変えない (`ai/inference/confidence.py` に実測の根拠)。
         place_min_confidence: 上のしきい値 (既定 0.60 = 3 着内率)。
+        win_min_odds: 単勝を買うオッズの下限。**呼び出し側が settings の値を
+            渡すこと。** 既定のまま呼ぶと RACE 画面より低い線で買うので、
+            シミュレーションだけが Settings に追従しない。
+        top_k_combinations: 券種ごとに候補へ残す通り数 (EV 順に打ち切る)。
+            RACE 画面と同じ値にしておく (`DEFAULT_TOP_K_COMBINATIONS`)。
 
     Returns:
         SimulationResult with summary, by_bet_type, by_race_class, by_course,
@@ -368,6 +371,8 @@ def simulate_active_model(
             ),
             "enabled_bet_types": list(types),
             "race_budget": race_budget,
+            "win_min_odds": win_min_odds,
+            "top_k_combinations": top_k_combinations,
             "combo_min_hit_prob": dict(
                 min_hit_prob_by_bet_type
                 if min_hit_prob_by_bet_type is not None
@@ -453,6 +458,7 @@ def simulate_active_model(
                 bundle,
                 race_frame,
                 session=session,
+                top_k_combinations=top_k_combinations,
                 race_odds=race_odds,
                 race_odds_sources=race_odds_sources,
             )
@@ -465,7 +471,7 @@ def simulate_active_model(
                         frame=race_frame,
                         n_samples=10_000,
                         rng=None,
-                        top_k_combinations=None,
+                        top_k_combinations=top_k_combinations,
                         race_odds=race_odds,
                         race_odds_sources=race_odds_sources,
                     ),
@@ -487,6 +493,7 @@ def simulate_active_model(
             race_id=race_id,
             race_budget=race_budget,
             points_by_bet_type=points,
+            win_min_odds=win_min_odds,
             top_n_horses=eff_top_n,
             enabled_bet_types=race_types,
             min_hit_prob_by_bet_type=min_hit_prob_by_bet_type,

@@ -1,6 +1,5 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle } from 'lucide-react';
 
 import { useRacesByDate } from '@/hooks/useRacesByDate';
 import { useThisWeekendRaces } from '@/hooks/useThisWeekendRaces';
@@ -82,7 +81,7 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
       {/* 「札幌 ───────── 12 R」。罫線が見出しから右に伸びると番組表らしくなる */}
       <h3
         id={`course-${section.course}`}
-        className="mb-2 flex items-center gap-4 font-mono text-[11px] tracking-[0.18em] text-subtle-foreground"
+        className="mb-2 flex items-center gap-4 font-mono text-2xs tracking-[0.18em] text-subtle-foreground"
       >
         {section.course}
         <span className="h-px flex-1 bg-border" aria-hidden="true" />
@@ -91,12 +90,16 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-16 text-label">R</TableHead>
+            {/* レース名以外に固定幅を与え、余りを全部レース名に回す。
+                auto 配分だと「第169回天皇賞(春)」が真っ先に削られる。 */}
+            <TableHead className="w-10 text-label">R</TableHead>
             <TableHead>レース名</TableHead>
-            <TableHead>クラス</TableHead>
-            <TableHead>馬場</TableHead>
-            <TableHead className="text-right">距離</TableHead>
-            <TableHead className="text-right">頭数</TableHead>
+            <TableHead className="w-[5.25rem] whitespace-nowrap">クラス</TableHead>
+            {/* 馬場と距離は 1 列。3 場を横に並べると 1 列 460px 前後しか無く、
+                6 列だとレース名が折り返して行高が不揃いになる。
+                「芝1600m」は番組表の読み方そのものなので、畳んでも読みは落ちない。 */}
+            <TableHead className="w-[5.5rem] whitespace-nowrap text-right">馬場・距離</TableHead>
+            <TableHead className="w-12 whitespace-nowrap text-right">頭数</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -121,25 +124,25 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
                 {raceNumber(race.race_id)}
                 <span className="text-unit">R</span>
               </TableCell>
-              <TableCell>
+              <TableCell className="max-w-0 truncate" title={race.name ?? undefined}>
                 {race.name ?? <span className="text-subtle-foreground/50">·</span>}
               </TableCell>
               {/* クラスは Badge をやめて素のテキスト。G1 だけ色を持たせて格を出す */}
               <TableCell
                 className={
                   race.race_class === 'G1'
-                    ? 'font-mono text-[10px] text-primary'
-                    : 'font-mono text-[10px] text-subtle-foreground'
+                    ? 'whitespace-nowrap font-mono text-2xs text-primary'
+                    : 'whitespace-nowrap font-mono text-2xs text-subtle-foreground'
                 }
               >
                 {race.race_class ?? '·'}
               </TableCell>
-              <TableCell>{race.surface}</TableCell>
-              <TableCell className="cell-num">
+              <TableCell className="cell-num whitespace-nowrap">
+                <span className="text-unit">{race.surface}</span>
                 {race.distance}
                 <span className="text-unit">m</span>
               </TableCell>
-              <TableCell className="cell-num">
+              <TableCell className="cell-num whitespace-nowrap">
                 {race.n_runners ?? '·'}
                 <span className="text-unit">頭</span>
               </TableCell>
@@ -183,13 +186,12 @@ function WeekendIngestNotice({ onJump }: { onJump: (date: string) => void }) {
   const target = sat.toISOString().slice(0, 10);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-warning/30 bg-warning/[0.06] px-4 py-3">
-      <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-      <span className="text-sm font-medium">今週末のレースがまだ取り込まれていません</span>
-      <span className="text-sm text-muted-foreground">
-        日を選ぶと、右側に取込ボタンが出ます。
-      </span>
-      <Button size="sm" variant="outline" className="ml-auto" onClick={() => onJump(target)}>
+    <div className="flex flex-col items-start gap-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-label-ja">今週末</span>
+        <span className="font-mono text-2xs text-subtle-foreground">未取得</span>
+      </div>
+      <Button size="sm" variant="outline" onClick={() => onJump(target)}>
         {target} を開く
       </Button>
     </div>
@@ -253,7 +255,12 @@ export function Races() {
       description="開催が無かった日か、未取得の日です。左のボタンでこの日を取り込めます。"
     />
   ) : (
-    <div className="flex flex-col gap-8">
+    // 場ごとの表を横に並べる。JRA は 1 日最大 3 場なので、3 列に流すと
+    // 12R × 3 場がスクロールなしで一望でき、場をまたいだ比較がそのままできる。
+    // 以前 2 列を試したときはレース名と頭数が折り返したが、それは右半分しか
+    // 使えていなかったため。カレンダーを上に出して横幅を全部渡し、表側で
+    // 馬場と距離を 1 列に畳んだので 1 列あたり 460px 前後を確保できる。
+    <div className="grid grid-cols-1 gap-x-8 gap-y-8 md:grid-cols-2 xl:grid-cols-3">
       {sections.map((section) => (
         <RaceTable key={section.course} section={section} onRowClick={handleRowClick} />
       ))}
@@ -268,24 +275,34 @@ export function Races() {
         description="カレンダーから日を選ぶと、その日のレース一覧が出ます。予想は各レースを開いて実行します"
       />
 
-      <WeekendIngestNotice onJump={handleDateChange} />
-
       {/* いま手元にどれだけデータがあるかを最初に出す */}
       <DataCoverageBand />
 
-      <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:gap-10">
-        {/* カレンダーは「どの日が空いているか」を見るための主役なので広く取る */}
-        <div className="flex w-full flex-col gap-4 xl:w-[34rem] xl:shrink-0">
+      {/* 日を選ぶ道具は、下のレース一覧と**同じ 3 列グリッド**に載せる。
+          カレンダーが 2 列ぶん・取込パネルが 3 列目で、左右の端が下の表と
+          揃う。中央に細い柱として置くと、左右に 180px ずつ空いたまま
+          「余白」ではなく「余り」に見える。 */}
+      <div className="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2 xl:grid-cols-3">
+        {/* カレンダーは列だけを占め、上下に何も敷かない。月表示は行数が
+            決まっているので、上下に足したものはそのままセルの高さを削る。 */}
+        <div className="min-w-0 xl:col-span-2">
           <RaceCalendar value={selectedDate} onChange={handleDateChange} />
-          {/* 取込は「どの日が空いているか」が見えるカレンダーの隣に置く */}
+        </div>
+        {/* カレンダーに添えるものはこの列に縦積みにする。どちらも
+            「見出し → 状態 → 操作」の同じ並びで、区切りは余白と見出しだけ —
+            罫線を足すと 3 つ目の区切りになり、左のカレンダーにも無い線が
+            ここだけ入る。選んだ日が主、今週末の知らせが従 (見ていない日の話)。 */}
+        <div className="flex min-w-0 flex-col gap-10">
           <DayIngestPanel
             date={selectedDate}
             raceCount={sections.reduce((n, s) => n + s.races.length, 0)}
             hasResults={(data?.races ?? []).length > 0 && !isPending}
           />
+          <WeekendIngestNotice onJump={handleDateChange} />
         </div>
-        <div className="min-w-0 flex-1">{raceList}</div>
       </div>
+
+      <div className="min-w-0">{raceList}</div>
     </div>
   );
 }

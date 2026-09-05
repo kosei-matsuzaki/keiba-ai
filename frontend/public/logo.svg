@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="8 10.6 16 16">
-  <!-- アプリ外 (README / 資料 / OG 画像) 用の単体グリフ。地なし・琥珀 1 色。
+  <!-- アプリ外 (README / 資料 / OG 画像) 用の単体グリフ。地なし・藍青 1 色。
        アプリ内 (Topbar) は src/components/BrandMark.tsx を使う — <img> だと CSS 変数が
-       解決されずテーマ追従できないため。色は --primary の dark 値 (38 92% 55%)。
+       解決されずテーマ追従できないため。色は --primary の dark 値 (188 58% 55%)。
        viewBox は 32x32 版から馬蹄だけを正方形に切り出したもの (favicon と同一座標)。 -->
-  <path d="M10 21V14a6 6 0 0 1 12 0v7" fill="none" stroke="#f5a623" stroke-width="2.4" />
-  <rect x="8.8" y="22.1" width="2.4" height="2.4" fill="#f5a623" />
-  <rect x="20.8" y="22.1" width="2.4" height="2.4" fill="#f5a623" />
+  <path d="M10 21V14a6 6 0 0 1 12 0v7" fill="none" stroke="#4ABDCF" stroke-width="2.4" />
+  <rect x="8.8" y="22.1" width="2.4" height="2.4" fill="#4ABDCF" />
+  <rect x="20.8" y="22.1" width="2.4" height="2.4" fill="#4ABDCF" />
 </svg>

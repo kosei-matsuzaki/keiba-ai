@@ -39,9 +39,9 @@ from api.deps import (
 )
 from api.jobs import JobRegistry
 from api.schemas import JobAccepted
-from core.bet_types import DEFAULT_COMBO_MIN_HIT_PROB, supported_bet_types
+from core.bet_types import supported_bet_types
 from core.logging import get_logger
-from core.settings_store import SettingsStore, resolve_model_path
+from core.settings_store import SettingsStore, resolve_betting_settings
 from db.models.model_run import ModelRun
 from db.models.simulation_run import SimulationRun
 from db.session import session_scope
@@ -227,10 +227,21 @@ def _row_to_summary(row: SimulationRun) -> SimulationRunSummary:
     )
 
 
-def _validate_request(start: str | None, end: str | None) -> None:
+def _validate_request(
+    start: str | None,
+    end: str | None,
+    max_days: int = MAX_WINDOW_DAYS,
+    too_long_hint: str = (
+        " 1 年規模だと逐次 predict + settle が数分かかります。"
+        " 6 か月以内で分割実行するか、それを超える window が必要なら"
+        " バックグラウンドジョブ (POST /api/simulation/start) を使ってください。"
+    ),
+) -> None:
     """期間の妥当性を確認。違反は HTTPException(400) を投げる。
 
-    sync run と async start で共通利用。
+    sync run と background job で共通。**違いは上限日数と、超えたときの案内文
+    だけ**なので引数にした (以前は 2 本に分かれていて、docstring だけが「共通
+    利用」と言っていた)。
     """
     if start is not None and end is not None:
         try:
@@ -246,15 +257,10 @@ def _validate_request(start: str | None, end: str | None) -> None:
                 status_code=400,
                 detail="end は start 以降の日付を指定してください。",
             )
-        if (d_end - d_start).days > MAX_WINDOW_DAYS:
+        if (d_end - d_start).days > max_days:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"期間が長すぎます (max {MAX_WINDOW_DAYS} 日 ≒ 6 か月)。"
-                    " 1 年規模だと逐次 predict + settle が数分かかります。"
-                    " 6 か月以内で分割実行するか、それを超える window が必要なら"
-                    " バックグラウンドジョブ (POST /api/simulation/start) を使ってください。"
-                ),
+                detail=f"期間が長すぎます (max {max_days} 日)。{too_long_hint}",
             )
 
 
@@ -300,16 +306,8 @@ def run_simulation(
     # **券種は絞らない。** どの券種が効くかはレースによって違い、買うかどうかは
     # 確信度 (的中確率の下限) が決める。
     enabled_bet_types = None
-    # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
-    prob_model_path = resolve_model_path(settings.get("probability_model_path"))
-    place_min_confidence = float(settings.get("place_min_hit_prob", 0.60))
-    # 連系の点数も推奨 API と同じ決め方にする (的中確率の下限で買う点数が変わる)
-    _floors = settings.get("combo_min_hit_prob")
-    combo_floors = (
-        {k: float(v) for k, v in _floors.items()}
-        if isinstance(_floors, dict)
-        else dict(DEFAULT_COMBO_MIN_HIT_PROB)
-    )
+    # 買い方は推奨 API と同じ設定から解決する (アプリと数字を揃えるため)。
+    bet_settings = resolve_betting_settings(settings)
 
     logger.info(
         "Simulation request: model_run_id=%d, window=%s..%s, race_budget=%d, "
@@ -323,10 +321,11 @@ def run_simulation(
         start=start,
         end=end,
         race_budget=race_budget,
-        probability_model_path=prob_model_path,
-        place_min_confidence=place_min_confidence,
-        min_hit_prob_by_bet_type=combo_floors,
+        probability_model_path=bet_settings.probability_model_path,
+        place_min_confidence=bet_settings.place_min_confidence,
+        min_hit_prob_by_bet_type=bet_settings.combo_min_hit_prob,
         enabled_bet_types=enabled_bet_types,
+        win_min_odds=bet_settings.win_min_odds,
     )
 
     # 自動保存 (上限 50 件、超過したら古い順に削除)
@@ -404,31 +403,6 @@ def delete_run(
 MAX_BG_WINDOW_DAYS: int = 366
 
 
-def _validate_request_bg(start: str | None, end: str | None) -> None:
-    """background job 用 validation。期間 cap は MAX_BG_WINDOW_DAYS まで。"""
-    if start is not None and end is not None:
-        try:
-            d_start = date.fromisoformat(start)
-            d_end = date.fromisoformat(end)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"start / end は YYYY-MM-DD 形式で指定してください: {exc}",
-            ) from exc
-        if d_end < d_start:
-            raise HTTPException(
-                status_code=400,
-                detail="end は start 以降の日付を指定してください。",
-            )
-        if (d_end - d_start).days > MAX_BG_WINDOW_DAYS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"期間が長すぎます (max {MAX_BG_WINDOW_DAYS} 日 ≒ 1 年)。"
-                ),
-            )
-
-
 @router.post(
     "/simulation/start",
     response_model=JobAccepted,
@@ -466,7 +440,7 @@ async def start_simulation_job(
     NOTE: async def で宣言する必要がある (registry.start 内部で
     asyncio.create_task を呼ぶため、event loop 上で動かす必要がある)。
     """
-    _validate_request_bg(start, end)
+    _validate_request(start, end, max_days=MAX_BG_WINDOW_DAYS, too_long_hint="")
     # 対象モデルは submit 時点で確定する (job 実行時に active が変わっても、
     # 投入時に選んだモデルでバックテストする)。
     model_path, model_run_id = _resolve_target_model(session, model_id)
@@ -478,16 +452,8 @@ async def start_simulation_job(
         if bet_types
         else None
     )
-    # 複勝の確信度フィルタも推奨 API と同じ設定を使う (アプリと数字を揃えるため)
-    prob_model_path = resolve_model_path(settings.get("probability_model_path"))
-    place_min_confidence = float(settings.get("place_min_hit_prob", 0.60))
-    # 連系の点数も推奨 API と同じ決め方にする (的中確率の下限で買う点数が変わる)
-    _floors = settings.get("combo_min_hit_prob")
-    combo_floors = (
-        {k: float(v) for k, v in _floors.items()}
-        if isinstance(_floors, dict)
-        else dict(DEFAULT_COMBO_MIN_HIT_PROB)
-    )
+    # 買い方は推奨 API と同じ設定から解決する (アプリと数字を揃えるため)。
+    bet_settings = resolve_betting_settings(settings)
 
     logger.info(
         "Simulation job submit: model_run_id=%d, window=%s..%s, race_budget=%d, "
@@ -511,10 +477,11 @@ async def start_simulation_job(
                 start=start,
                 end=end,
                 race_budget=race_budget,
-                        probability_model_path=prob_model_path,
-                place_min_confidence=place_min_confidence,
-                min_hit_prob_by_bet_type=combo_floors,
-                        enabled_bet_types=captured_bet_types,
+                probability_model_path=bet_settings.probability_model_path,
+                place_min_confidence=bet_settings.place_min_confidence,
+                min_hit_prob_by_bet_type=bet_settings.combo_min_hit_prob,
+                enabled_bet_types=captured_bet_types,
+                win_min_odds=bet_settings.win_min_odds,
             )
             saved = save_simulation_result(
                 bg_session, result, captured_model_run_id

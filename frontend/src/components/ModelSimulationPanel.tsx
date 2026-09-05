@@ -199,7 +199,7 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
           size="sm"
           onClick={() => listQuery.refetch()}
           disabled={listQuery.isFetching}
-          className="gap-1.5"
+          className="gap-2"
         >
           <RefreshCw
             className={`h-3.5 w-3.5 ${listQuery.isFetching ? 'animate-spin' : ''}`}
@@ -443,15 +443,15 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
           <div className="flex max-w-sm flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label>期間 開始日</Label>
               <DateYMDPicker value={start} onChange={setStart} ariaLabel="開始日" />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label>期間 終了日</Label>
               <DateYMDPicker value={end} onChange={setEnd} ariaLabel="終了日" />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="sim-race-budget">1 レースに使う上限 (円)</Label>
               <Input
                 id="sim-race-budget"
@@ -463,9 +463,9 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 onChange={(e) => setRaceBudget(Math.max(100, Number(e.target.value) || 0))}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label>買う馬券</Label>
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
                 {ALL_BET_TYPES.map((betType) => {
                   const current = betTypes ?? (ALL_BET_TYPES as readonly BetType[] as BetType[]);
                   const on = current.includes(betType);
@@ -597,6 +597,11 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                       <span className="text-subtle-foreground">未使用</span>
                     )}
                   </RunCondition>
+                  {result.conditions.win_min_odds != null && (
+                    <RunCondition label="単勝オッズ下限">
+                      {result.conditions.win_min_odds.toFixed(1)} 倍
+                    </RunCondition>
+                  )}
                 </>
               )}
             </dl>
@@ -608,7 +613,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 {result.conditions.enabled_bet_types.map((bt) => (
                   <span
                     key={bt}
-                    className="rounded-sm border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
+                    className="rounded-sm border border-border px-2 py-0.5 text-xs text-muted-foreground"
                   >
                     {bt}
                   </span>
@@ -667,7 +672,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               <CardTitle className="text-label-ja">内訳</CardTitle>
               <p className="font-mono text-xs tabular-nums text-subtle-foreground">
                 {formatYen(result.summary.invested)}
-                <span className="mx-1.5 font-sans">→</span>
+                <span className="mx-2 font-sans">→</span>
                 {formatYen(result.summary.payout)}
                 <span className="mx-2 font-sans text-border">|</span>
                 <span className="font-sans">的中 </span>

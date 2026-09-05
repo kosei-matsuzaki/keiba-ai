@@ -35,12 +35,12 @@ export function PageHeader({
   return (
     <header className="flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
-        <span className="font-mono text-[11px] tracking-[0.04em] text-subtle-foreground">
+        <span className="font-mono text-2xs tracking-[0.04em] text-subtle-foreground">
           {eyebrow}
         </span>
         <div className="mt-1 flex items-center gap-3">
           {marker}
-          <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
+          <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           <span className="h-px flex-1 bg-border" aria-hidden="true" />
         </div>
         {description && (

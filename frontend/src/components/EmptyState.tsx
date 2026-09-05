@@ -21,7 +21,7 @@ export function EmptyState({
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
       {/* 40px。64px だと「何もない」ことを強調しすぎる。線幅は .lucide で統一。 */}
       <Icon className="h-10 w-10 text-muted-foreground/25" />
-      <p className="text-base font-medium text-muted-foreground">{message}</p>
+      <p className="text-sm font-medium text-muted-foreground">{message}</p>
       {description && <p className="max-w-md text-sm text-muted-foreground/70">{description}</p>}
       {children && <div className="mt-2">{children}</div>}
     </div>

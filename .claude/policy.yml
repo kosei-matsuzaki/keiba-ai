@@ -1,0 +1,311 @@
+# .claude/policy.yml — このリポジトリの規約 (道具向け)
+#
+# 誰が読むか: /claude-keeper:check /standup /refresh と、.claude/agents/ の役。
+# 手で直してよい。役を消したら .claude/agents/ の該当ファイルも消す。
+#
+# docs: と code: は 2026-09-05 に docs/.docs-policy.yml と .code-policy.yml から
+# そのまま移した。**値は 1 つも変えていない** — docs.limits の CLAUDE.md を
+# 150 → 120 に下げた 1 行だけが例外。
+
+version: 1
+
+project:
+  name: keiba-ai
+  kind: tool                  # product / tool / library / research
+  what: netkeiba のデータから買い目を出し、実オッズで収支を検証する個人研究用の道具
+  users: 自分 (README と作品ページは他人が読むが、動かすのは自分だけ)
+  revenue: none               # none / unknown / ads / subscription / paid / sponsor / contract
+  stage: running              # prototype / running / maintained
+
+# 役。why が書けない役は置かない (呼ばれずに残るだけ)。
+# marketer は置かない (revenue: none)。user-voice も置かない (動かすのは自分だけ)。
+roles:
+  - name: docs-auditor
+    why: docs が 15 件 4,200 行あり、実装より先に古びる。CLAUDE.md が実在しない ai/nn/ と migrations/versions/0001 を指したままだった
+    stance: このリポジトリを初めて読む人。競馬もこのモデルも知らず、docs だけを頼りに動かそうとする
+    reads: ["docs/README.md", "docs/**", "CLAUDE.md", "README.md"]
+
+  - name: duplication-auditor
+    why: 同じ事実が CLAUDE.md と docs の両方にある。依存方向は 2 か所、起動コマンドは 3 か所に書かれている
+    stance: この 3 か月このリポジトリを触っていない人。どれが正か覚えていない
+    reads: ["README.md", "CLAUDE.md", "docs/**"]
+
+  - name: code-steward
+    why: backtest.py が 1,071 行・evaluate() が 453 行まで伸びている。backend/scripts/ に 1 検証 1 ファイルの実験が溜まる
+    stance: 半年後にこれを引き継ぐ人。どの実験が本番でどれが没かを知らない
+    reads: ["backend/src/**", "frontend/src/**", "backend/scripts/**"]
+
+  - name: critic
+    why: 回収率の差は窓が短いと簡単に出るので、作った本人には「効いた」と見える。単一 holdout の +0.028 が 9 fold で +0.007 に消えた
+    stance: 同じ問題を市場で解いている人。「回収率が上がった」の多くが期間の偶然だと知っている
+    reads: ["docs/ai-model.md", "docs/archive/2026.md", "backend/src/ai/**", "README.md"]
+
+  - name: reviewer
+    why: 差分を読まないままコミットが積み上がる。同じ事実を書いた他の文書が置き去りになる
+    stance: この差分を最初にレビューする人。説明されずに、差分だけを渡された
+    reads: []
+
+# 生成するもの。keep に書いたものは作り直しで触らない。
+generate:
+  claude_md: CLAUDE.md
+  keep: []
+
+
+# 定期で走らせるもの。登録は /routine → skill schedule が行う。
+routines: []
+
+
+notify:
+  enabled: true
+  drift: true                 # 土台が変わったらセッションの頭で言う
+
+judgments:
+  regrow: 0.3                 # 「いまは直さない」から 3 割伸びたら言い直す
+
+# ------------------------------------------------------------------ docs
+# 2026-09-05 に docs/.docs-policy.yml からそのまま移した。
+# layout は「あるべき姿」ではなく **いまある姿** を書き起こしたもの。
+# role は docs/README.md の表から取った (言い換えていない)。
+docs:
+
+  # 索引。scope 内のすべての md はここから辿れること。
+  index: docs/README.md
+
+  # 置き場所と役割。ここに無い場所へ新しい md を作ろうとすると差し戻される。
+  # role は docs/README.md の表から取った (言い換えていない)。
+  layout:
+    - path: README.md
+      role: 作品としての説明 (概要・見どころ・技術解説)。portfolio:begin〜end の内側はサイトから生成
+    - path: CLAUDE.md
+      role: コード全体を読まないと掴めない big picture と既知の罠。作業前に読む
+    - path: CLAUDE.local.md
+      role: この環境固有の運用メモ (gitignored)
+    - path: docs/README.md
+      role: 索引。どれを読むか
+    - path: docs/spec.md
+      role: 技術仕様 (技術スタック・ディレクトリ構成・DB スキーマ・API エンドポイント・開発ビルド手順)
+    - path: docs/design.md
+      role: 設計方針 (非機能要件・アーキテクチャ図・AI モジュール責務分離・UI 画面構成・状態管理・拡張ポイント)
+    - path: docs/data-pipeline.md
+      role: スクレイピング・取り込み仕様 (対象 URL・レート制御・robots.txt 遵守・HTML キャッシュ・増分取得・失敗レジューム・法的配慮)
+    - path: docs/ai-model.md
+      role: モデル設計 (問題定義・Set Transformer・損失・確率変換・特徴量・学習評価フロー・ベットルール・改善実験)
+    - path: docs/operations.md
+      role: 運用 (セットアップ・データ取り込み・再学習サイクル・モデル世代管理・バックアップ・トラブルシューティング)
+    - path: docs/explainer/
+      role: 解説動画 (manim のソースと書き出し)。散文ではなくコードとビルド生成物
+    - path: docs/archive/
+      role: 記録。いまの仕様として読まない
+
+  # 行数の上限。現状 + 余白から始める。
+  limits:
+    CLAUDE.md: 120          # 毎セッション全文が読まれる。長さがそのまま費用 (skill claude-md)
+    CLAUDE.local.md: 100
+    README.md: 250
+    docs/README.md: 150
+    docs/spec.md: 800
+    docs/design.md: 550
+    docs/data-pipeline.md: 300
+    docs/ai-model.md: 900
+    docs/operations.md: 600
+    docs/archive/**: 2000
+    default: 400
+
+  # 「ここを触ったら、ここを直す」の対応表。
+  watch:
+    - source: ["backend/src/ai/**", "backend/src/features/**", "backend/scripts/**"]
+      docs: ["docs/ai-model.md"]
+      why: モデル・特徴量・実験ハーネスが動いた。回したのに結果が書かれていない状態を捕まえる
+
+    - source: ["backend/src/api/**", "backend/src/db/**", "backend/migrations/**"]
+      docs: ["docs/spec.md"]
+      why: API と DB スキーマは仕様そのもの
+
+    - source: ["backend/src/scraper/**", "backend/src/jobs/**"]
+      docs: ["docs/data-pipeline.md"]
+      why: 取り込み手順・レート制御・レジュームの挙動が変わった
+
+    - source: ["frontend/src/**"]
+      docs: ["docs/design.md"]
+      why: 画面構成と状態管理の記述が実装から離れた
+
+  # 記録の扱い。
+  archive:
+    dir: docs/archive/
+    index: docs/archive/README.md
+
+    rotate:
+      by: year
+      max_lines: 1500
+
+    rules:
+      - 実装履歴・試したこと・没案は archive/ にだけ書く。仕様書と設計書には書かない
+      - 否定された仮説は消さずに archive へ送る。理由を書かないと同じ実験を再度回すことになる
+      - archive の各項目には日付を付ける。日付のない記録は後から捨てられない
+      - 割ったら archive の索引に 1 行足す。索引に無い記録は無いのと同じ
+
+  # 停止時の指摘。
+  notify:
+    enabled: true
+    min_source_edits: 1
+
+  # 新規 md の置き場所チェック。backend/README.md と data/analysis/README.md は
+  # アプリ側の README なので scope の外に置く (巻き込まない)。
+  guard:
+    enabled: true
+    scope: ["docs/**", "*.md"]
+    extensions: [".md"]
+    allow: []
+
+  # CLAUDE.md は毎セッション全文が読まれる。**全体の行数だけでは足りない。**
+  # 上限の内側のまま、1 つの節が設計書に育っていることがある。節ごとに見る。
+  claude_md:
+    path: CLAUDE.md
+    max_section_lines: 25   # これを超える節は docs へ出して 1 行で指す候補
+
+  # 同じ話が複数の文書に散っていないか。見出しの重なりで見る。
+  # 同じ話かどうかは読まないと決まらないので、機械は場所を並べるだけ。
+  overlap:
+    enabled: true
+    scope: ["*.md", "docs/*.md"]   # 記録 (archive) と入れ子の docs は外す
+    ignore: []                     # 確かめずに入れると、散らばりを見る目をその場で塞ぐ
+    min_docs: 2
+
+  # 同じ文が複数の文書に書かれていないか (二重管理)。字面がそろっているものだけ。
+  # 言い換えて写したものは機械に見えない。それを見るのは役 duplication-auditor。
+  duplication:
+    enabled: true
+    min_lines: 3
+    min_chars: 80
+    scope: ["*.md", "docs/**"]
+    ignore: []
+
+
+# ------------------------------------------------------------------ code
+# 2026-09-05 に .code-policy.yml からそのまま移した。
+# CLAUDE.md が宣言している依存の向きを、機械が見張れる形に書き起こしたもの。
+# 理想ではなく **2026-09-02 時点の実物** を書いている (import を全数えして決めた)。
+# 2026-09-05 時点で逸脱は 0 件 (かつて赤かった hooks -> components の toast 5 件は
+# @/lib/toast 経由になって解消した)。逸脱が出ても allow には入れない —
+# 入れたら見張る意味がない。
+#
+# scope から外したもの:
+#   backend/scripts/**  実験は 1 検証 1 ファイルで、条件違いの写しを共通化すると
+#                       過去の実験が再現しなくなる。長さも写しも見ない
+#   tests/**            fixture は繰り返して当たり前で、重複の指摘が全部ここになる
+code:
+
+  scope:
+    include: ["backend/src/**", "frontend/src/**"]
+    exclude:
+      - "**/__pycache__/**"
+      - "**/*.d.ts"
+      - "frontend/src/__tests__/**"
+      - "frontend/src/**/*.test.ts"
+      - "frontend/src/**/*.test.tsx"
+
+  # 依存の向き。CLAUDE.md の「api -> jobs -> ai / features / scraper -> db」を、
+  # 実際の import に合わせて 5 段 (backend) + 3 段 (frontend) に畳んだもの。
+  layers:
+    - name: core
+      path: ["backend/src/core/**"]
+      role: 設定・パス・ログ・券種の語彙。横断的に呼ばれ、何にも依存しない
+      allow: []
+
+    - name: db
+      path: ["backend/src/db/**"]
+      role: SQLAlchemy のモデルとセッション。スキーマだけを持つ
+      allow: [core]
+
+    - name: scraper
+      path: ["backend/src/scraper/**"]
+      role: netkeiba の取得とパース。robots・レート制御・停止フラグを含む
+      allow: [core]
+
+    - name: domain
+      path: ["backend/src/ai/**", "backend/src/features/**", "backend/src/services/**"]
+      role: 特徴量・モデル・買い目・決済。scraper を直接呼ばない (CLAUDE.md の循環禁止)
+      allow: [db, core]
+
+    - name: app
+      path: ["backend/src/api/**", "backend/src/jobs/**", "backend/src/main.py"]
+      role: 入口。HTTP とバッチ。下の層を呼ぶだけでロジックを持たない
+      allow: [domain, scraper, db, core]
+
+    - name: ui-lib
+      path:
+        - "frontend/src/lib/**"
+        - "frontend/src/hooks/**"
+        - "frontend/src/store/**"
+        - "frontend/src/types/**"
+      role: API クライアント・整形・状態。画面部品を知らない
+      allow: []
+
+    - name: ui-parts
+      path: ["frontend/src/components/**"]
+      role: 画面部品。どの画面からも使える。画面の名前を持ち込まない
+      allow: [ui-lib]
+
+    - name: ui-pages
+      path:
+        - "frontend/src/routes/**"
+        - "frontend/src/App.tsx"
+        - "frontend/src/main.tsx"
+        - "frontend/src/router.tsx"
+      role: 画面。部品を並べるだけ
+      allow: [ui-parts, ui-lib]
+
+  # measure の「提案」列 (90% 点をもとにした値) から始める。下げるのは直しながら。
+  limits:
+    file_lines:
+      default: 550
+      "frontend/src/components/**": 400
+    # 実測の 90% 点は 40 行だが、60 行にすると 90 件出て全部無視される。
+    # 100 行から始めて、直しながら下げる (最大は 566 行)。
+    function_lines: 100
+    nesting: 4
+    params: 8                  # 学習の入口はハイパーパラメータを引数で渡す。ここは広い
+    dir_files: 35
+
+  # 実測は中央 18% / 90% 47%。日本語で「なぜ」を書く方針なので下限はゆるく、
+  # 上限は説明がコードを覆い隠す水準に置く。
+  #
+  # require_for_lines が 120 と高いのは、**この道具が docstring を見落とすため**。
+  # 判定は「def の 3 行前〜1 行後にコメント行があるか」なので、引数を 1 行 1 つ書く
+  # この書き方だと docstring が窓の外に落ちる。実測で 130 件中 92 件 (71%) が
+  # 「docstring はあるのに説明が無い」の誤検知だった。数を絞って残りを読む。
+  comments:
+    min_ratio: 0.04
+    max_ratio: 0.57
+    max_block: 35
+    require_for_lines: 120
+
+  duplication:
+    min_lines: 12
+    ignore: []
+    similar: 0.9
+    similar_min_lines: 12
+    similar_max_group: 8
+
+  # 枠組みが名前で拾うので参照が無くて当たり前の場所。ここを書かないと
+  # FastAPI のルータ関数と Lightning のフックが全部「使われていない」に出る。
+  dead:
+    entrypoints:
+      - "backend/src/main.py"
+      - "backend/src/api/routers/**"
+      - "backend/src/jobs/**"
+      - "backend/src/ai/training/**"
+      - "backend/src/**/__init__.py"
+      - "frontend/src/main.tsx"
+      - "frontend/src/router.tsx"
+      - "frontend/src/routes/**"
+    ignore: []
+    symbols: true
+
+  notify:
+    enabled: true
+
+  guard:
+    enabled: true
+    extensions: [".py", ".ts", ".tsx"]
+    allow: []

@@ -2,15 +2,15 @@
   <!-- ブラウザタブ用のタイル。アプリ内のマークは src/components/BrandMark.tsx (inline SVG,
        currentColor でテーマ追従)。こちらは <link rel="icon"> 経由で CSS 変数が解決されないため
        globals.css の dark トークンを HSL リテラルで写している:
-         地   = --card         (36 14% 7%  = #14120f)
-         罫線 = --border-strong (30 9% 25% = #46403a)
-         馬蹄 = --primary      (38 92% 55% = #f5a623)
-       タブ地色が明/暗どちらでも成立するよう、地は常に炭 (light テーマ用の別タイルは持たない)。
+         地   = --card          (205 16% 12% = #1A1F23)
+         罫線 = --border-strong (205 10% 32% = #49535A)
+         馬蹄 = --primary       (188 58% 55% = #4ABDCF)
+       タブ地色が明/暗どちらでも成立するよう、地は常に黒鉛 (light テーマ用の別タイルは持たない)。
        角丸は --radius (2px) に合わせる。 -->
-  <rect width="32" height="32" rx="2" fill="#14120f" />
-  <rect x=".5" y=".5" width="31" height="31" rx="1.5" fill="none" stroke="#46403a" />
+  <rect width="32" height="32" rx="2" fill="#1A1F23" />
+  <rect x=".5" y=".5" width="31" height="31" rx="1.5" fill="none" stroke="#49535A" />
   <!-- 馬蹄 (∩)。BrandMark.tsx と同一ジオメトリ (viewBox だけが違う) -->
-  <path d="M10 21V14a6 6 0 0 1 12 0v7" fill="none" stroke="#f5a623" stroke-width="2.4" />
-  <rect x="8.8" y="22.1" width="2.4" height="2.4" fill="#f5a623" />
-  <rect x="20.8" y="22.1" width="2.4" height="2.4" fill="#f5a623" />
+  <path d="M10 21V14a6 6 0 0 1 12 0v7" fill="none" stroke="#4ABDCF" stroke-width="2.4" />
+  <rect x="8.8" y="22.1" width="2.4" height="2.4" fill="#4ABDCF" />
+  <rect x="20.8" y="22.1" width="2.4" height="2.4" fill="#4ABDCF" />
 </svg>

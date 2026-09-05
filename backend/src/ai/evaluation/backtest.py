@@ -6,7 +6,7 @@ Usage:
                                            [--start YYYY-MM-DD]
                                            [--end YYYY-MM-DD]
                                            [--baseline favorite]
-                                           [--win-ev-threshold 1.1]
+                                           [--win-min-odds FLOAT]
                                            [--place-ev-threshold 1.05]
                                            [--exclude-top-rank 0]
                                            [--min-popularity N]
@@ -44,7 +44,11 @@ from ai.inference.confidence import is_place_worth_buying, pick_confidence
 from ai.inference.predict import predict_race
 from ai.model.registry import load_model_full
 from core.paths import db_path
-from core.settings_store import SettingsStore, resolve_model_path
+from core.settings_store import (
+    SettingsStore,
+    resolve_betting_settings,
+    resolve_model_path,
+)
 from db.models import ModelRun
 from db.session import make_engine, session_scope
 from features.builder import build_training_frame
@@ -55,8 +59,11 @@ if TYPE_CHECKING:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-#: 単勝で買うオッズの下限。実運用の `settings.win_min_odds` と同じ役割。
-#: **EV 閾値ではない** — 既定の "top1" ルールは EV を使わない。
+#: 単勝で買うオッズの下限の**フォールバック**。settings を渡さずに `evaluate()` を
+#: 直接呼んだときだけ効く (CLI・Dashboard の「計測」は settings.win_min_odds を渡す)。
+#: 実運用の既定と同じ値に保つこと — ずれると画面の KPI が「利用者が実際に得る数字」で
+#: なくなる。2026-09-05 まで CLI も画面もここを使っていて、Settings を変えても
+#: 追従していなかった。**EV 閾値ではない** — 既定の "top1" ルールは EV を使わない。
 WIN_MIN_ODDS = 1.1
 
 #: 旧ルール (--win-bet-rule ev / --place-bet-rule ev) 専用の EV 閾値。
@@ -452,7 +459,10 @@ def evaluate(
     place_top_k: int = 1,
     legacy_place_ev_threshold: float = LEGACY_PLACE_EV_THRESHOLD,
     probability_model_path: Path | None = None,
-    place_min_confidence: float = 0.30,
+    # 3 着内率の目盛り。旧 `place_min_confidence` (1 着確率・0.30) から目盛りが
+    # 変わったのに既定値だけ残っていた。低すぎても例外は出ず全レースが通るので、
+    # 直接 evaluate() を呼ぶ実験が黙ってフィルタ無しで走っていた。
+    place_min_confidence: float = 0.60,
     exclude_top_rank: int = 0,
     min_popularity: int | None = None,
     max_popularity: int | None = None,
@@ -925,8 +935,8 @@ def _cli() -> None:
     parser.add_argument(
         "--win-min-odds",
         type=float,
-        default=WIN_MIN_ODDS,
-        help=f"単勝で買うオッズの下限 (既定 {WIN_MIN_ODDS})。EV 閾値ではない。",
+        default=None,
+        help="単勝で買うオッズの下限 (既定: settings.json の win_min_odds)。EV 閾値ではない。",
     )
     parser.add_argument(
         "--place-ev-threshold",
@@ -948,7 +958,7 @@ def _cli() -> None:
     )
     parser.add_argument(
         "--place-min-confidence", type=float, default=None,
-        help="複勝を買う確信度の下限 (既定: settings.json の place_min_confidence)",
+        help="複勝を買う確信度の下限 (既定: settings.json の place_min_hit_prob)",
     )
     parser.add_argument(
         "--exclude-top-rank",
@@ -976,8 +986,9 @@ def _cli() -> None:
         choices=["ev", "top1"],
         default="top1",
         help=(
-            "単勝の買い方。'ev' (既定) は win_prob × odds > --win-ev-threshold の馬すべて。"
-            "'top1' はモデル 1 位の馬を odds > --win-ev-threshold のときだけ買う。"
+            "単勝の買い方。'top1' (既定) はモデル 1 位の馬を odds > --win-min-odds の"
+            "ときだけ買う。'ev' は旧ルールで、win_prob × odds > --place-ev-threshold の"
+            "対 (LEGACY_WIN_EV_THRESHOLD) を使う。実運用では廃止済み。"
         ),
     )
     parser.add_argument(
@@ -1025,18 +1036,23 @@ def _cli() -> None:
 
     # 既定は settings.json に合わせる。評価だけ別条件で走ると、Dashboard の KPI が
     # 「利用者が実際に得る数字」でなくなる (2026-08-24 に同じ型のズレを直している)。
-    _settings = SettingsStore().load()
+    _bet_settings = resolve_betting_settings(SettingsStore().load())
     if args.probability_model is not None:
         prob_model_path = (
             None if str(args.probability_model) == "none"
             else resolve_model_path(str(args.probability_model))
         )
     else:
-        prob_model_path = resolve_model_path(_settings.get("probability_model_path"))
+        prob_model_path = _bet_settings.probability_model_path
     place_min_conf = (
         args.place_min_confidence
         if args.place_min_confidence is not None
-        else float(_settings.get("place_min_hit_prob", 0.60))
+        else _bet_settings.place_min_confidence
+    )
+    win_min_odds = (
+        args.win_min_odds
+        if args.win_min_odds is not None
+        else _bet_settings.win_min_odds
     )
     if prob_model_path is not None:
         print(f"確率モデル: {prob_model_path.name} (複勝は確信度 {place_min_conf:.2f} 以上)")
@@ -1049,7 +1065,7 @@ def _cli() -> None:
         baseline=args.baseline,
         persist=args.persist,
         allow_in_sample=args.allow_in_sample,
-        win_min_odds=args.win_min_odds,
+        win_min_odds=win_min_odds,
         win_bet_rule=args.win_bet_rule,
         place_bet_rule=args.place_bet_rule,
         place_top_k=args.place_top_k,

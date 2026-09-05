@@ -17,6 +17,7 @@ from ai.inference.confidence import (
     points_for_confidence,
 )
 from ai.inference.predict import (
+    DEFAULT_TOP_K_COMBINATIONS,
     _combinations_from_base,
     _predict_race_nn,
     merge_combination_sources,
@@ -30,9 +31,9 @@ from api.deps import (
     get_session,
     get_settings_store,
 )
-from core.bet_types import COMBINATION_BET_TYPES, DEFAULT_COMBO_MIN_HIT_PROB
+from core.bet_types import COMBINATION_BET_TYPES
 from core.logging import get_logger
-from core.settings_store import SettingsStore, resolve_model_path
+from core.settings_store import SettingsStore, resolve_betting_settings
 
 logger = get_logger(__name__)
 
@@ -126,7 +127,7 @@ def get_recommendations(
     session: Annotated[Session, Depends(get_session)],
     odds_session: Annotated[Session, Depends(get_odds_session)],
     store: Annotated[SettingsStore, Depends(get_settings_store)],
-    top_k: Annotated[int, Query(ge=1, le=200, description="Combination upper limit per bet type (1-200)")] = 50,
+    top_k: Annotated[int, Query(ge=1, le=200, description="Combination upper limit per bet type (1-200)")] = DEFAULT_TOP_K_COMBINATIONS,
     # ── このレースだけ Settings を上書きするための任意パラメータ ──
     # 未指定なら Settings の値を使う。全レース共通の既定値は Settings 側に置き、
     # 「このレースだけ予算を絞る / 券種を単複に限る」といった判断をここで通す。
@@ -184,8 +185,9 @@ def get_recommendations(
     # 連系確率はスコアから解析的 PL で導出するので、スコアが PL の強度パラメータで
     # あることを前提にしている。active は回収率で学習しており その保証が無い。
     # 買う馬・買い目の脚は active のまま (predictions がそれを決める)。
-    settings_early = store.load()
-    prob_model_path = resolve_model_path(settings_early.get("probability_model_path"))
+    settings = store.load()
+    bet_settings = resolve_betting_settings(settings)
+    prob_model_path = bet_settings.probability_model_path
     prob_bundle = None
     if prob_model_path is not None:
         try:
@@ -217,23 +219,16 @@ def get_recommendations(
 
     # Step 6: load settings and run recommendation logic
     # クエリで渡された分だけ、このレースに限って設定を上書きする。
-    settings = store.load()
     # 連系の点数は**的中確率の下限だけ**で決まる。線を超えた買い目を全部買うので、
     # 確信度の高いレースほど点数が増え、低いレースでは 0 点になる。
     # 券種ごとの点数上限は持たない (ワイドが効くレース・三連単が効くレースを
     # 一律の点数で潰さないため)。
-    _floors = settings.get("combo_min_hit_prob")
-    eff_combo_floors: dict[str, float] = (
-        {k: float(v) for k, v in _floors.items()}
-        if isinstance(_floors, dict)
-        else dict(DEFAULT_COMBO_MIN_HIT_PROB)
-    )
+    eff_combo_floors: dict[str, float] = bet_settings.combo_min_hit_prob
 
     eff_budget: int = (
         race_budget if race_budget is not None else int(settings.get("race_budget", 5_000))
     )
-    # 単勝のオッズ下限
-    eff_win_min_odds: float = float(settings.get("win_min_odds", 1.1))
+    eff_win_min_odds: float = bet_settings.win_min_odds
     if bet_types is not None:
         requested = [t.strip() for t in bet_types.split(",") if t.strip()]
         unknown = [t for t in requested if t not in COMBINATION_BET_TYPES]
@@ -269,7 +264,7 @@ def get_recommendations(
         confidence = pick_confidence(
             prob_bundle, frame, predictions.iloc[0]["horse_id"], session=session
         )
-        conf_threshold = float(settings.get("place_min_hit_prob", 0.60))
+        conf_threshold = bet_settings.place_min_confidence
         if not is_place_worth_buying(confidence, conf_threshold):
             eff_bet_types = [b for b in eff_bet_types if b != "複勝"]
             logger.info(

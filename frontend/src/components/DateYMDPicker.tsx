@@ -127,7 +127,7 @@ export function DateYMDPicker({
   }
 
   return (
-    <div className={cn('flex items-center gap-1.5', className)}>
+    <div className={cn('flex items-center gap-2', className)}>
       <Select
         value={year !== null ? String(year) : ''}
         onValueChange={(v) => _emit(Number(v), month, day)}
