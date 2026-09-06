@@ -184,14 +184,14 @@ describe('Races', () => {
       screen.queryByRole('button', { name: '今週末のレースを取得' })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: '出馬表・オッズを更新' })
+      screen.getByRole('button', { name: 'レース情報を更新' })
     ).toBeInTheDocument();
   });
 
   it('出馬表の取得は選択中の日の race_id を発見してから走る', async () => {
     const user = userEvent.setup();
     renderRaces();
-    await user.click(await screen.findByRole('button', { name: '出馬表・オッズを更新' }));
+    await user.click(await screen.findByRole('button', { name: 'レース情報を更新' }));
 
     await waitFor(() => {
       expect(vi.mocked(discoverTodayRaceIds)).toHaveBeenCalledWith(WEEKEND_DATE);

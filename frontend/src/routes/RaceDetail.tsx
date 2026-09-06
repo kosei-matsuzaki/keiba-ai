@@ -94,7 +94,7 @@ function formatClock(d: Date): string {
  * ジョブはインメモリ管理なので、バックエンド再起動で追跡できなくなることも伝える。
  */
 function RunProgress({ stage }: { stage: 'entries' | 'predict' }) {
-  const label = stage === 'entries' ? '出馬表を取得中…' : '予想を計算中…';
+  const label = stage === 'entries' ? 'レース情報を取り込み中…' : '予想を計算中…';
   return (
     <div className="py-3">
       <div className="flex items-center gap-3">
@@ -346,7 +346,7 @@ export function RaceDetail() {
         onError: async (err) => {
           setAutoPredict(false);
           const msg = await formatErrorMessage(err);
-          toast.error('出馬表の取得に失敗しました', {
+          toast.error('レース情報の取得に失敗しました', {
             description: msg,
             action: { label: '再試行', onClick: () => handleRunShutuba(thenPredict) },
           });
@@ -398,10 +398,10 @@ export function RaceDetail() {
                 size="sm"
                 disabled={busy}
                 onClick={() => handleRunShutuba(false)}
-                title="出馬表を再取得して単勝オッズ・人気・馬場状態を最新化します（発走が近いほど確定値に近づく）"
+                title="出馬表を取り直して単勝オッズ・人気・馬体重・馬場状態を最新化します（発走が近いほど確定値に近づく。馬体重は発走 1 時間前ごろに公表）"
               >
                 <RefreshCw className="mr-1.5 h-4 w-4" />
-                オッズ更新
+                レース情報を更新
               </Button>
             )}
             <Button size="sm" disabled={busy} onClick={handleShowPrediction}>
@@ -454,8 +454,8 @@ export function RaceDetail() {
         <Card className="pt-6">
           <CardContent>
             <EmptyState
-              message="出馬表がまだ取り込まれていません"
-              description="下のボタンで出馬表の取得から予想までまとめて実行します。"
+              message="レース情報がまだ取り込まれていません"
+              description="下のボタンでレース情報の取り込みから予想までまとめて実行します。"
             >
               <Button onClick={handleShowPrediction} disabled={busy}>
                 <Sparkles className="mr-1.5 h-4 w-4" />

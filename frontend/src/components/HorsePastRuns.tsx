@@ -21,11 +21,24 @@ interface HorsePastRunsProps {
   limit?: number;
 }
 
-/** 1〜3 着は色を付ける。着順は「勝ったか」が最初に読みたい情報。 */
-function finishClass(pos: number | null): string {
-  if (pos === 1) return 'text-primary font-medium';
-  if (pos != null && pos <= 3) return 'text-foreground';
-  return 'text-muted-foreground';
+/**
+ * 順位 1〜3 に色を付ける。**netkeiba / JRA の馬柱と同じ 1 位=赤・2 位=青・3 位=緑**。
+ *
+ * 見慣れた配色に合わせるほうが速く読めるので、このアプリの意味体系より
+ * 競馬側の語彙を優先している（枠色と同じ扱い＝「データの色」）。
+ * `--destructive` / `--info` / `--success` を使い回すので色数は増えない。
+ * 過去走の表には損益の値が無いため、赤＝マイナス収支との取り違えは起きない。
+ *
+ * 4 位以下と、順位が出せないとき (null) は無彩色。
+ */
+function rankMarker(rank: number | null | undefined): string {
+  // **余白は順位に関わらず常に同じ。**色が付いた行にだけ px を足すと、
+  // 右揃えの数字が色の有無で左右にずれる (馬柱として読めなくなる)。
+  const base = 'rounded-sm px-1 font-medium';
+  if (rank === 1) return cn(base, 'bg-destructive/20 text-destructive');
+  if (rank === 2) return cn(base, 'bg-info/20 text-info');
+  if (rank === 3) return cn(base, 'bg-success/20 text-success');
+  return cn(base, 'text-muted-foreground');
 }
 
 /** 秒 → "1:34.2"。競馬の走破時計は分秒表記でないと読めない。 */
@@ -58,31 +71,35 @@ export function HorsePastRuns({ horseId, before, limit = 5 }: HorsePastRunsProps
   }
 
   return (
-    <table className="w-full text-xs">
+    // table-fixed + 列幅の明示が要る。既定の auto レイアウトだと **馬ごとに
+    // 別の table** が描かれ、その馬の中身だけで列幅が決まるため、行を 2 頭ぶん
+    // 開くと着順・人気・オッズ・タイムの位置が縦に揃わない。
+    // 幅を書かない「レース」列が余りを吸う。
+    <table className="w-full table-fixed text-xs">
       <thead className="text-subtle-foreground">
         <tr className="text-left">
-          <th className="py-1 pr-3 font-normal">日付</th>
+          <th className="w-24 py-1 pr-3 font-normal">日付</th>
           <th className="py-1 pr-3 font-normal">レース</th>
-          <th className="py-1 pr-3 font-normal">コース</th>
-          <th className="py-1 pr-3 text-right font-normal">着順</th>
-          <th className="py-1 pr-3 text-right font-normal">人気</th>
-          <th className="py-1 pr-3 text-right font-normal">オッズ</th>
-          <th className="py-1 pr-3 text-right font-normal">タイム</th>
-          <th className="py-1 pr-3 text-right font-normal">上がり</th>
-          <th className="py-1 font-normal">通過</th>
+          <th className="w-40 py-1 pr-3 font-normal">コース</th>
+          <th className="w-16 py-1 pr-3 text-right font-normal">着順</th>
+          <th className="w-12 py-1 pr-3 text-right font-normal">人気</th>
+          <th className="w-20 py-1 pr-3 text-right font-normal">オッズ</th>
+          <th className="w-20 py-1 pr-3 text-right font-normal">タイム</th>
+          <th className="w-16 py-1 pr-3 text-right font-normal">上がり</th>
+          <th className="w-24 py-1 font-normal">通過</th>
         </tr>
       </thead>
       <tbody>
         {query.data.runs.map((r) => (
           <tr key={r.race_id} className="border-t border-border/60">
             <td className="py-1 pr-3 font-mono tabular-nums text-muted-foreground">{r.date}</td>
-            <td className="max-w-[14rem] truncate py-1 pr-3" title={r.race_name ?? ''}>
+            <td className="truncate py-1 pr-3" title={r.race_name ?? ''}>
               {r.race_name ?? '·'}
               {r.race_class && (
                 <span className="ml-1 text-subtle-foreground">{r.race_class}</span>
               )}
             </td>
-            <td className="whitespace-nowrap py-1 pr-3 text-muted-foreground">
+            <td className="truncate whitespace-nowrap py-1 pr-3 text-muted-foreground">
               {r.course}
               {r.surface}
               {r.distance ? `${r.distance}m` : ''}
@@ -90,8 +107,8 @@ export function HorsePastRuns({ horseId, before, limit = 5 }: HorsePastRunsProps
                 <span className="ml-1 text-subtle-foreground">{r.track_condition}</span>
               )}
             </td>
-            <td className={cn('py-1 pr-3 text-right font-mono tabular-nums', finishClass(r.finish_position))}>
-              {r.finish_position ?? '·'}
+            <td className="py-1 pr-3 text-right font-mono tabular-nums">
+              <span className={rankMarker(r.finish_position)}>{r.finish_position ?? '·'}</span>
               {r.n_runners ? (
                 <span className="text-subtle-foreground">/{r.n_runners}</span>
               ) : null}
@@ -105,10 +122,21 @@ export function HorsePastRuns({ horseId, before, limit = 5 }: HorsePastRunsProps
             <td className="py-1 pr-3 text-right font-mono tabular-nums text-muted-foreground">
               {formatRaceTime(r.finish_time)}
             </td>
-            <td className="py-1 pr-3 text-right font-mono tabular-nums text-muted-foreground">
-              {r.agari_3f != null ? r.agari_3f.toFixed(1) : '·'}
+            {/* 色は値ではなく **そのレースでの順位** で決める。同じ 33.8 でも
+                高速馬場なら平凡、時計のかかる馬場なら最速なので、値の大小に
+                色を付けても意味を持たない。 */}
+            <td
+              className="py-1 pr-3 text-right font-mono tabular-nums"
+              title={r.agari_rank != null ? `このレースで上がり ${r.agari_rank} 位` : undefined}
+            >
+              <span className={rankMarker(r.agari_rank)}>
+                {r.agari_3f != null ? r.agari_3f.toFixed(1) : '·'}
+              </span>
             </td>
-            <td className="py-1 font-mono tabular-nums text-subtle-foreground">
+            <td
+              className="truncate py-1 font-mono tabular-nums text-subtle-foreground"
+              title={r.passing ?? undefined}
+            >
               {r.passing ?? '·'}
             </td>
           </tr>

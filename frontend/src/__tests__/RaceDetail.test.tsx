@@ -189,6 +189,7 @@ beforeEach(() => {
         horse_weight: 480,
         finish_time: 119.4,
         agari_3f: 34.8,
+        agari_rank: 1,
         passing: '5-5-4',
         margin: 'クビ',
       },
@@ -605,7 +606,7 @@ describe('RaceDetail', () => {
     });
   });
 
-  it('shows 出馬表を取得中 banner while scraping after click', async () => {
+  it('shows レース情報を取り込み中 banner while scraping after click', async () => {
     vi.mocked(fetchRaceDetail).mockResolvedValue(mockRaceNoEntries);
     // Keep job in running state so banner stays visible
     vi.mocked(fetchJob).mockResolvedValue(mockJobRunning);
@@ -616,7 +617,7 @@ describe('RaceDetail', () => {
     await user.click(btn);
 
     await waitFor(() => {
-      expect(screen.getByText(/出馬表を取得中/)).toBeInTheDocument();
+      expect(screen.getByText(/レース情報を取り込み中/)).toBeInTheDocument();
     });
   });
 

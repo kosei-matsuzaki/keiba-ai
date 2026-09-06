@@ -46,6 +46,10 @@ class HorsePastRun(BaseModel):
     horse_weight: int | None
     finish_time: float | None
     agari_3f: float | None
+    #: そのレースでの上がり 3F の速い順の順位 (1 が最速)。
+    #: netkeiba の馬柱と同じく上位 3 位に色を付けるために使う。
+    #: **同着は同順位**。そのレースの上がりが 1 つも取れていなければ None。
+    agari_rank: int | None
     passing: str | None
     margin: str | None
 
@@ -82,6 +86,9 @@ def get_horse_history(
         stmt = stmt.where(Race.date < before)
     stmt = stmt.order_by(Race.date.desc()).limit(limit)
 
+    rows = session.execute(stmt).all()
+    agari_ranks = _agari_ranks(session, [race.race_id for _entry, race, _j in rows])
+
     runs = [
         HorsePastRun(
             race_id=race.race_id,
@@ -102,9 +109,43 @@ def get_horse_history(
             horse_weight=entry.horse_weight,
             finish_time=entry.finish_time,
             agari_3f=entry.agari_3f,
+            agari_rank=agari_ranks.get((race.race_id, entry.horse_id)),
             passing=entry.passing,
             margin=entry.margin,
         )
-        for entry, race, jockey_name in session.execute(stmt).all()
+        for entry, race, jockey_name in rows
     ]
     return HorseHistoryResponse(horse_id=horse_id, before=before, runs=runs)
+
+
+def _agari_ranks(
+    session: Session, race_ids: list[str]
+) -> dict[tuple[str, str], int]:
+    """``(race_id, horse_id) -> 上がり 3F の順位`` を作る。
+
+    上がりの速さは「そのレースの中で何番目か」で読むものなので、値だけでは
+    色を付けられない (同じ 33.8 でも高速馬場なら平凡、時計のかかる馬場なら最速)。
+    返すのは過去走に出てくるレースぶんだけで、1 クエリにまとめる。
+
+    **同着は同順位**（33.5 が 2 頭なら両方 1 位、次は 3 位）。上がりが欠けている
+    馬は順位を持たない (競走中止などで計測が無い)。
+    """
+    if not race_ids:
+        return {}
+    stmt = select(Entry.race_id, Entry.horse_id, Entry.agari_3f).where(
+        Entry.race_id.in_(set(race_ids)), Entry.agari_3f.is_not(None)
+    )
+    by_race: dict[str, list[tuple[str, float]]] = {}
+    for rid, hid, agari in session.execute(stmt).all():
+        by_race.setdefault(rid, []).append((hid, agari))
+
+    ranks: dict[tuple[str, str], int] = {}
+    for rid, items in by_race.items():
+        items.sort(key=lambda x: x[1])
+        prev_agari: float | None = None
+        prev_rank = 0
+        for i, (hid, agari) in enumerate(items, start=1):
+            rank = prev_rank if agari == prev_agari else i
+            ranks[(rid, hid)] = rank
+            prev_agari, prev_rank = agari, rank
+    return ranks

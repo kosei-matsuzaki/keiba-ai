@@ -69,23 +69,23 @@ beforeEach(() => {
 });
 
 describe('DayIngestPanel', () => {
-  it('未取得の日は「出馬表を取得」を出す', async () => {
+  it('未取得の日は「レース情報を取り込む」を出す', async () => {
     renderPanel(FUTURE_DATE, 0);
-    expect(await screen.findByRole('button', { name: '出馬表を取得' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'レース情報を取り込む' })).toBeInTheDocument();
     expect(screen.getByText('未取得')).toBeInTheDocument();
   });
 
-  it('取込済みなら「出馬表・オッズを更新」と件数を出す', async () => {
+  it('取込済みなら「レース情報を更新」と件数を出す', async () => {
     renderPanel(FUTURE_DATE, 36);
     expect(
-      await screen.findByRole('button', { name: '出馬表・オッズを更新' })
+      await screen.findByRole('button', { name: 'レース情報を更新' })
     ).toBeInTheDocument();
     expect(screen.getByText('36 R 取込済み')).toBeInTheDocument();
   });
 
   it('結果は過去日にだけ出す（未来のレースには着順が無い）', async () => {
     renderPanel(FUTURE_DATE, 36);
-    await screen.findByRole('button', { name: '出馬表・オッズを更新' });
+    await screen.findByRole('button', { name: 'レース情報を更新' });
     expect(screen.queryByRole('button', { name: '結果を取り込む' })).not.toBeInTheDocument();
   });
 
@@ -109,15 +109,15 @@ describe('DayIngestPanel', () => {
     // 「今日の終わったレースの結果が翌日まで取り込めない」穴ができる。
     renderPanel(TODAY, 36);
     expect(
-      await screen.findByRole('button', { name: '出馬表・オッズを更新' })
+      await screen.findByRole('button', { name: 'レース情報を更新' })
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '結果を取り込む' })).toBeInTheDocument();
   });
 
-  it('選択中の日の race_id を発見してから出馬表を取り込む', async () => {
+  it('選択中の日の race_id を発見してからレース情報を取り込む', async () => {
     const user = userEvent.setup();
     renderPanel(TODAY, 0);
-    await user.click(await screen.findByRole('button', { name: '出馬表を取得' }));
+    await user.click(await screen.findByRole('button', { name: 'レース情報を取り込む' }));
 
     await waitFor(() => {
       expect(vi.mocked(discoverTodayRaceIds)).toHaveBeenCalledWith(TODAY);

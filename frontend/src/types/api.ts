@@ -602,6 +602,8 @@ export interface HorsePastRun {
   horse_weight: number | null;
   finish_time: number | null;
   agari_3f: number | null;
+  /** そのレースでの上がり 3F の順位 (1 が最速)。同着は同順位。未計測なら null。 */
+  agari_rank: number | null;
   passing: string | null;
   margin: string | null;
 }

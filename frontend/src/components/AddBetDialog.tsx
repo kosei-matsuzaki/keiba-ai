@@ -372,7 +372,7 @@ export function AddBetDialog() {
             <p className="text-sm text-muted-foreground">出走馬を読込中...</p>
           ) : noHorses ? (
             <p className="text-sm text-muted-foreground">
-              出走馬が未取得です。Race 画面で出馬表を取り込んでください。
+              出走馬が未取得です。Race 画面でレース情報を取り込んでください。
             </p>
           ) : (
             <div className="rounded-md border border-border/60 p-3">

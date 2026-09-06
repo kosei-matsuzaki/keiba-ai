@@ -111,3 +111,70 @@ def test_history_unknown_horse_is_empty(app_with_temp_db: FastAPI, tmp_path: Pat
         resp = client.get("/api/horses/NOPE/history")
     assert resp.status_code == 200
     assert resp.json()["runs"] == []
+
+
+def _seed_rivals(session: Session) -> None:
+    """R1 に H1 以外の馬を足して、上がり順位が付く状態にする。
+
+    H1 の R1 での上がりは 35.0（`_seed` が 34.0 + i で入れる）。
+    ライバルを 34.5 / 35.0 / 36.0 で入れると、34.5 が 1 位、35.0 が 2 頭で
+    同着 2 位、36.0 が 4 位になる。
+    """
+    from db.models.entry import Entry
+    from db.models.horse import Horse
+
+    for hid, agari in (("H2", 34.5), ("H3", 35.0), ("H4", 36.0)):
+        session.add(Horse(horse_id=hid, name=hid))
+        session.add(Entry(race_id="R1", horse_id=hid, post_position=9, agari_3f=agari))
+    session.commit()
+
+
+def test_agari_rank_is_within_the_race(app_with_temp_db: FastAPI, tmp_path: Path) -> None:
+    """上がりは「そのレースで何番目か」で読むもの。値だけでは色を付けられない。
+
+    同じ 33.8 でも高速馬場なら平凡、時計のかかる馬場なら最速なので、
+    順位はレース内の他馬と比べて出す。
+    """
+    from core.paths import db_path
+    from db.session import make_engine, session_scope
+
+    with session_scope(make_engine(db_path())) as session:
+        _seed(session)
+        _seed_rivals(session)
+
+    with _client(app_with_temp_db) as client:
+        resp = client.get("/api/horses/H1/history")
+    runs = {r["race_id"]: r for r in resp.json()["runs"]}
+
+    # H1 の 35.0 は 34.5 に次ぐ 2 位（H3 と同着）
+    assert runs["R1"]["agari_rank"] == 2
+    # R2 / R3 は H1 しか走っていないので単独 1 位
+    assert runs["R2"]["agari_rank"] == 1
+
+
+def test_agari_rank_is_none_without_agari(app_with_temp_db: FastAPI, tmp_path: Path) -> None:
+    """上がりが取れていない走りには順位を付けない（無彩色で出す側の入力）。"""
+    from core.paths import db_path
+    from db.models.entry import Entry
+    from db.models.horse import Horse
+    from db.models.race import Race
+    from db.session import make_engine, session_scope
+
+    with session_scope(make_engine(db_path())) as session:
+        session.add(Horse(horse_id="H9", name="計測なし"))
+        session.add(
+            Race(
+                race_id="RX",
+                date="2024-05-05",
+                course="中山",
+                surface="ダ",
+                distance=1200,
+                n_runners=10,
+            )
+        )
+        session.flush()
+        session.add(Entry(race_id="RX", horse_id="H9", post_position=1, agari_3f=None))
+
+    with _client(app_with_temp_db) as client:
+        resp = client.get("/api/horses/H9/history")
+    assert resp.json()["runs"][0]["agari_rank"] is None

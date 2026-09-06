@@ -97,7 +97,7 @@ export function DayIngestPanel({ date, raceCount, hasResults }: DayIngestPanelPr
         {
           onSuccess: (job) => setTrackedJobId(job.job_id),
           onError: async (err) => {
-            toast.error('出馬表の取得に失敗しました', {
+            toast.error('レース情報の取得に失敗しました', {
               description: await formatErrorMessage(err),
               action: { label: '再試行', onClick: handleFetchEntries },
             });
@@ -176,10 +176,10 @@ export function DayIngestPanel({ date, raceCount, hasResults }: DayIngestPanelPr
             variant={hasResults ? 'outline' : 'default'}
             onClick={handleFetchEntries}
             disabled={!date || busy || stopped}
-            title="出走馬・単勝オッズ・馬場状態を取り込みます（発走前の情報）"
+            title="出走馬・単勝オッズ・人気・馬体重・馬場状態を取り込みます（発走前の情報）。馬体重は発走 1 時間前ごろに公表される"
           >
             <Download className="mr-1.5 h-4 w-4" />
-            {raceCount > 0 ? '出馬表・オッズを更新' : '出馬表を取得'}
+            {raceCount > 0 ? 'レース情報を更新' : 'レース情報を取り込む'}
           </Button>
         )}
 
