@@ -1,17 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
-  RefreshCw,
-  AlertTriangle,
-} from 'lucide-react';
+import { ChevronLeft, Sparkles, RefreshCw, AlertTriangle } from 'lucide-react';
 
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
 import { useRunShutuba } from '@/hooks/useRunShutuba';
+import { DayRacePicker } from '@/components/DayRacePicker';
 import { EntryPredictionTable } from '@/components/EntryPredictionTable';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
 import type { RecommendationOverrides } from '@/components/RecommendationParamsBar';
@@ -22,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
 import { formatYen } from '@/lib/formatters';
+import { raceNumber } from '@/lib/races';
 import { toast } from '@/lib/toast';
 import type { RaceInfoCoverage } from '@/types/api';
 
@@ -30,8 +26,8 @@ import type { RaceInfoCoverage } from '@/types/api';
  * 琥珀 = オッズ・金額・レース番号に使うアクセント。
  */
 function RaceNumber({ raceId }: { raceId: string }) {
-  const n = raceId.slice(-2).replace(/^0/, '');
-  if (!n) return null;
+  const n = raceNumber(raceId);
+  if (n === null) return null;
   return (
     <span className="text-kpi text-primary">
       {n}
@@ -129,34 +125,6 @@ function TableSkeleton({ rows }: { rows: number }) {
   );
 }
 
-/**
- * 前後のレースへ移動 (B-4 ⑦)。race_id の末尾 2 桁がレース番号なので、
- * 1〜12 の範囲で前後に振る。1 開催を順に見る動線がこれで通る。
- */
-function RaceStepper({ raceId, date }: { raceId: string; date: string | null }) {
-  const prefix = raceId.slice(0, -2);
-  const n = Number(raceId.slice(-2));
-  if (!Number.isFinite(n) || n < 1) return null;
-  const q = date ? `?date=${date}` : '';
-  const to = (target: number) => `/races/${prefix}${String(target).padStart(2, '0')}${q}`;
-  return (
-    <div className="flex items-center gap-1">
-      <Button asChild variant="ghost" size="sm" disabled={n <= 1}>
-        <Link to={to(n - 1)} aria-label="前のレース" aria-disabled={n <= 1}>
-          <ChevronLeft className="h-4 w-4" />
-          {n - 1}R
-        </Link>
-      </Button>
-      <Button asChild variant="ghost" size="sm" disabled={n >= 12}>
-        <Link to={to(n + 1)} aria-label="次のレース" aria-disabled={n >= 12}>
-          {n + 1}R
-          <ChevronRight className="h-4 w-4" />
-        </Link>
-      </Button>
-    </div>
-  );
-}
-
 interface MetaItemProps {
   label: string;
   value: string;
@@ -223,11 +191,11 @@ export function RaceDetail() {
   // NOTE: 出馬表取込・AI 予想はいずれも画面表示時に自動実行しない。
   // すべて下部の各ボタン (出馬表を取得 / AI 予想を実行) で明示的に開始する。
 
-  // Race ページの Past タブへ戻る (?tab=past)。date を引き継いで一覧の選択日を復元。
+  // date を引き継いで一覧の選択日を復元する。
   // 旧 `/past` は /races へ redirect され query を落とすため直接 /races を指す。
   const backLink = dateParam
-    ? `/races?tab=past&date=${dateParam}`
-    : '/races?tab=past';
+    ? `/races?date=${dateParam}`
+    : '/races';
 
   if (raceQuery.isPending) {
     return (
@@ -376,10 +344,12 @@ export function RaceDetail() {
 
   return (
     <div className="flex flex-col gap-8 p-6">
-      <div className="flex items-center justify-between">
-        <BackLink to={backLink} />
-        <RaceStepper raceId={race.race_id} date={dateParam} />
-      </div>
+      <BackLink to={backLink} />
+
+      {/* レース間の移動はここに 1 本化してある。前後ボタンを別に持っていたが、
+          この行に隣のレースが並んでいる以上、同じ操作の入口が 2 つあるだけだった
+          (しかも前後は race_id の末尾を ±1 するので同じ開催の中しか動けない)。 */}
+      <DayRacePicker date={race.date} currentRaceId={race.race_id} />
 
       <PageHeader
         marker={<RaceNumber raceId={race.race_id} />}

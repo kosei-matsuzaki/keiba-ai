@@ -145,6 +145,101 @@ class TestRacesCalendar:
         assert resp.status_code == 422
 
 
+    def test_graded_returns_every_g3_and_above(self, app_with_temp_db, seed) -> None:
+        """G3 以上は 1 日に何本あっても全部返す。
+
+        1 本だけ返していたころは、重賞が 3〜4 本ある日でも残りがカレンダーから
+        消えていた（どの日を開くかの判断材料が落ちる）。
+
+        同格の並びは race_id 順 = 場コード順で、レース番号順ではない。
+        """
+        seed("202605010111", "2026-05-03", course="東京", race_class="G1", name="天皇賞(春)")
+        seed("202605020211", "2026-05-03", course="京都", race_class="G3", name="テスト賞")
+        seed("202605030311", "2026-05-03", course="新潟", race_class="G2", name="テストS")
+        seed("202605010101", "2026-05-03", course="未勝利場", race_class="未勝利", name="3歳未勝利")
+
+        with TestClient(app_with_temp_db) as client:
+            days = client.get("/api/races/calendar?from=2026-05-01&to=2026-05-31").json()["days"]
+        day = next(d for d in days if d["date"] == "2026-05-03")
+
+        # 格上から順に並ぶ（G1 → G2 → G3）。平場は入らない。
+        assert [(g["race_class"], g["name"]) for g in day["graded"]] == [
+            ("G1", "天皇賞(春)"),
+            ("G2", "テストS"),
+            ("G3", "テスト賞"),
+        ]
+        # 開催場も返す（同じ日に別の場の重賞が並ぶため）
+        assert [g["course"] for g in day["graded"]] == ["東京", "新潟", "京都"]
+
+    def test_graded_orders_same_grade_by_race_id_not_race_number(
+        self, app_with_temp_db, seed
+    ) -> None:
+        """同格が 2 場にあるときは場コード順。番号の小さいほうが先とは限らない。"""
+        # 場コードは 05 (東京) < 08 (京都)。レース番号は東京 11R > 京都 09R。
+        seed("202605010111", "2026-05-10", course="東京", race_class="G3", name="東京の重賞")
+        seed("202608010209", "2026-05-10", course="京都", race_class="G3", name="京都の重賞")
+
+        with TestClient(app_with_temp_db) as client:
+            days = client.get("/api/races/calendar?from=2026-05-01&to=2026-05-31").json()["days"]
+        day = next(d for d in days if d["date"] == "2026-05-10")
+
+        assert [g["name"] for g in day["graded"]] == ["東京の重賞", "京都の重賞"]
+
+    def test_graded_includes_jump_races_and_unlabelled_juusho(
+        self, app_with_temp_db, seed
+    ) -> None:
+        """`_GRADED_CLASSES` の残り 2 系統。どちらも実 DB に存在する。
+
+        障害の重賞は netkeiba が JGI/JGII/JGIII を race_class ではなく名前側に
+        持たせるので、race_class は平地と同じ "G1"。DB に JG* という race_class は
+        1 件も無く、名前に "(JG" を含むものが 113 件ある。
+
+        格が特定できない "重賞" は 7 件あり、G3 の後ろ・OP の前に並ぶ
+        （`_CLASS_PRIORITY` に入れ忘れると未知と同じ最下位に落ちる）。
+        """
+        seed("202606010111", "2026-06-14", race_class="G1", name="中山グランドジャンプ(JGI)")
+        seed("202606010112", "2026-06-14", race_class="重賞", name="葵ステークス(重賞)")
+        seed("202606010113", "2026-06-14", race_class="OP", name="オープン特別")
+
+        with TestClient(app_with_temp_db) as client:
+            days = client.get("/api/races/calendar?from=2026-06-01&to=2026-06-30").json()["days"]
+        day = next(d for d in days if d["date"] == "2026-06-14")
+
+        assert [(g["race_class"], g["name"]) for g in day["graded"]] == [
+            ("G1", "中山グランドジャンプ(JGI)"),
+            ("重賞", "葵ステークス(重賞)"),
+        ]
+
+    def test_unlabelled_juusho_outranks_open(self, app_with_temp_db, seed) -> None:
+        """"重賞" を `_CLASS_PRIORITY` に入れ忘れると未知と同じ最下位に落ち、
+        同じ日の OP がその日の主役に選ばれてしまう。
+
+        graded の並びでは差が出ない（G1〜G3 の後ろという位置は順位表に無くても
+        変わらない）ので、highlight 側でしか確かめられない。
+        """
+        seed("202606010111", "2026-06-21", race_class="重賞", name="葵ステークス(重賞)")
+        seed("202606010112", "2026-06-21", race_class="OP", name="オープン特別")
+
+        with TestClient(app_with_temp_db) as client:
+            days = client.get("/api/races/calendar?from=2026-06-01&to=2026-06-30").json()["days"]
+        day = next(d for d in days if d["date"] == "2026-06-21")
+
+        assert day["highlight_name"] == "葵ステークス(重賞)"
+
+    def test_graded_excludes_listed_and_open(self, app_with_temp_db, seed) -> None:
+        """Listed と OP は重賞ではないので graded に入れない。"""
+        seed("202606010111", "2026-06-07", race_class="Listed", name="谷川岳ステークス(L)")
+        seed("202606010112", "2026-06-08", race_class="OP", name="オープン特別")
+
+        with TestClient(app_with_temp_db) as client:
+            days = client.get("/api/races/calendar?from=2026-06-01&to=2026-06-30").json()["days"]
+        by_date = {d["date"]: d for d in days}
+
+        assert by_date["2026-06-07"]["graded"] == []
+        assert by_date["2026-06-08"]["graded"] == []
+        # graded が空でも、その日の主役は highlight として残る
+        assert by_date["2026-06-07"]["highlight_name"] == "谷川岳ステークス(L)"
+
 class TestDataCoverage:
     def test_reports_span_and_counts(self, app_with_temp_db, seed) -> None:
         seed("COV0101", "2026-01-10", finished=True)

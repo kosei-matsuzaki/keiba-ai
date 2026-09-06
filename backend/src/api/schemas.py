@@ -117,6 +117,20 @@ class PredictionResponse(BaseModel):
     info_coverage: RaceInfoCoverageOut | None = None
 
 
+class GradedRace(BaseModel):
+    """カレンダーのセルに出す重賞 1 本分。
+
+    G3 以上は「その日に何があるか」を決める情報なので、1 日に何本あっても
+    全部出す (最大 4 本の日がある)。格が読めないと重みが分からないため
+    ``race_class`` を必ず添える。
+    """
+
+    race_id: str
+    name: str
+    race_class: str
+    course: str
+
+
 class CalendarDay(BaseModel):
     """カレンダー 1 日分の取込状況。
 
@@ -129,7 +143,11 @@ class CalendarDay(BaseModel):
     race_count: int
     result_count: int
     courses: list[str]
-    # その日の主要レース (重賞優先)。カレンダーに 1 つだけ名前を出す用。
+    #: その日の G3 以上。格上から並び、同格は race_id 順 = 開催場コード →
+    #: レース番号 (レース番号順ではない。同格が 2 場にあると場ごとに固まる)。
+    #: 無い日は空。
+    graded: list[GradedRace] = []
+    # その日の主要レース (重賞に限らない)。graded が空の日にセルへ 1 つだけ出す用。
     highlight_race_id: str | None = None
     highlight_name: str | None = None
     highlight_class: str | None = None

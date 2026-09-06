@@ -21,6 +21,7 @@ vi.mock('../lib/api', () => ({
     enabled_bet_types: ['単勝', '複勝'],
   }),
   fetchRaceDetail: vi.fn(),
+  fetchRacesByDate: vi.fn(),
   fetchPredictions: vi.fn(),
   fetchRecommendations: vi.fn(),
   fetchHorseHistory: vi.fn(),
@@ -36,12 +37,48 @@ vi.mock('../lib/api', () => ({
 import {
   fetchHorseHistory,
   fetchRaceDetail,
+  fetchRacesByDate,
   fetchPredictions,
   fetchRecommendations,
   runShutubaScraper,
   fetchJob,
   isNotFoundError,
 } from '../lib/api';
+
+const mockDayRaces = {
+  races: [
+    {
+      race_id: '202406010101',
+      date: '2024-06-01',
+      course: '東京',
+      surface: '芝',
+      distance: 1600,
+      race_class: '未勝利',
+      n_runners: 16,
+      name: '3歳未勝利',
+    },
+    {
+      race_id: '202406010111',
+      date: '2024-06-01',
+      course: '東京',
+      surface: '芝',
+      distance: 2400,
+      race_class: 'G1',
+      n_runners: 18,
+      name: '第91回日本ダービー(GI)',
+    },
+    {
+      race_id: '202408020211',
+      date: '2024-06-01',
+      course: '京都',
+      surface: 'ダ',
+      distance: 1800,
+      race_class: 'OP',
+      n_runners: 15,
+      name: '京都のオープン',
+    },
+  ],
+};
 
 const mockRace: RaceDetailType = {
   race_id: '202406010101',
@@ -164,6 +201,7 @@ beforeEach(() => {
   // 呼び出し回数がテスト間でリークしないようにクリアする (実装は維持される)
   vi.clearAllMocks();
   vi.mocked(fetchRaceDetail).mockResolvedValue(mockRace);
+  vi.mocked(fetchRacesByDate).mockResolvedValue(mockDayRaces);
   vi.mocked(fetchPredictions).mockResolvedValue(mockPredictions);
   vi.mocked(fetchRecommendations).mockResolvedValue(mockRecommendations);
   vi.mocked(fetchHorseHistory).mockResolvedValue({
@@ -389,15 +427,14 @@ describe('RaceDetail', () => {
     await screen.findByText('レース概要');
     const backLink = screen.getByRole('link', { name: 'Past Races へ戻る' });
     expect(backLink).toBeInTheDocument();
-    // 旧 /past は /races へ redirect され query を落とすため /races?tab=past を直接指す
-    expect(backLink).toHaveAttribute('href', '/races?tab=past');
+    expect(backLink).toHaveAttribute('href', '/races');
   });
 
   it('renders back link with date param preserved', async () => {
     renderRaceDetail('202406010101', '?date=2024-06-01');
     await screen.findByText('レース概要');
     const backLink = screen.getByRole('link', { name: 'Past Races へ戻る' });
-    expect(backLink).toHaveAttribute('href', '/races?tab=past&date=2024-06-01');
+    expect(backLink).toHaveAttribute('href', '/races?date=2024-06-01');
   });
 
   it('shows 404 empty state when race is not found', async () => {
@@ -652,5 +689,52 @@ describe('RaceDetail', () => {
       '2019100001',
       expect.objectContaining({ before: '2024-06-01' })
     );
+  });
+});
+
+describe('RaceDetail — この日のレース', () => {
+  // この行が場をまたいで移動できる唯一の導線。前後移動は race_id の末尾を ±1
+  // するだけなので同じ開催の中しか動けず、京都へ渡るにはここしか無い。
+  //
+  // 直前まで vi.mock の factory に fetchRacesByDate が無く、queryFn が undefined を
+  // 呼んで picker が黙って null を返していた。32 件すべて緑のまま、この部品は
+  // 一度も描画されていなかった。
+
+  it('別の場のレースへのリンクを出す', async () => {
+    renderRaceDetail();
+
+    const nav = await screen.findByRole('navigation', { name: 'この日のレース' });
+    expect(within(nav).getByText('東京')).toBeInTheDocument();
+    expect(within(nav).getByText('京都')).toBeInTheDocument();
+
+    const kyoto = within(nav).getByTitle('京都のオープン');
+    expect(kyoto).toHaveAttribute('href', '/races/202408020211?date=2024-06-01');
+  });
+
+  it('いま開いているレースだけに印を付ける', async () => {
+    renderRaceDetail();
+
+    const nav = await screen.findByRole('navigation', { name: 'この日のレース' });
+    const current = within(nav).getAllByRole('link').filter(
+      (a) => a.getAttribute('aria-current') === 'page'
+    );
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveAttribute('href', '/races/202406010101?date=2024-06-01');
+  });
+
+  it('レース番号は先頭 0 を落として出す', async () => {
+    renderRaceDetail();
+
+    const nav = await screen.findByRole('navigation', { name: 'この日のレース' });
+    expect(within(nav).getByTitle('3歳未勝利')).toHaveTextContent('1');
+    expect(within(nav).getByTitle('第91回日本ダービー(GI)')).toHaveTextContent('11');
+  });
+
+  it('その日のレースが取れていない日は行ごと出さない', async () => {
+    vi.mocked(fetchRacesByDate).mockResolvedValue({ races: [] });
+    renderRaceDetail();
+
+    await screen.findByRole('heading', { name: /日本ダービー/ });
+    expect(screen.queryByRole('navigation', { name: 'この日のレース' })).toBeNull();
   });
 });

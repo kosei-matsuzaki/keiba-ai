@@ -26,7 +26,7 @@ export const router = createBrowserRouter([
       // Settings: 全レース共通の予想パラメータ + スクレイパー動作設定
       { path: 'settings', element: <Settings /> },
       // 取込は Race > 過去のレース (カレンダー横) へ移設したので、旧 /ingest はそこへ
-      { path: 'ingest', element: <Navigate to="/races?tab=past" replace /> },
+      { path: 'ingest', element: <Navigate to="/races" replace /> },
       { path: 'ledger', element: <Ledger /> },
     ],
   },

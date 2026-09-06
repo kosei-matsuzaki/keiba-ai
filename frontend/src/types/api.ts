@@ -105,6 +105,15 @@ export interface PredictionResponse {
   info_coverage?: RaceInfoCoverage | null;
 }
 
+/** カレンダーのセルに出す重賞 1 本分。 */
+export interface GradedRace {
+  race_id: string;
+  name: string;
+  /** G1 / G2 / G3 / 重賞。格が読めないと重みが分からないので必ず添える。 */
+  race_class: string;
+  course: string;
+}
+
 /** GET /api/races/calendar — カレンダー 1 日分の取込状況。 */
 export interface CalendarDay {
   date: string;
@@ -113,6 +122,9 @@ export interface CalendarDay {
   /** 着順が確定しているレース数。0 なら出馬表だけ取れている状態。 */
   result_count: number;
   courses: string[];
+  /** その日の G3 以上。格上から並び、同格は race_id 順 = 開催場コード →
+   *  レース番号 (レース番号順ではない)。無い日は空。 */
+  graded: GradedRace[];
   highlight_race_id: string | null;
   highlight_name: string | null;
   highlight_class: string | null;

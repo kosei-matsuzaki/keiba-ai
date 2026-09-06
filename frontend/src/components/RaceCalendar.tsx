@@ -5,6 +5,7 @@ import { useRacesCalendar } from '@/hooks/useRacesCalendar';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/cn';
+import { gradeClass, splitGrade } from '@/lib/races';
 import type { CalendarDay } from '@/types/api';
 
 interface RaceCalendarProps {
@@ -16,14 +17,6 @@ interface RaceCalendarProps {
 }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
-
-/** 重賞だけ色を持たせる。平場は無彩色 (色は情報なので安売りしない)。 */
-function gradeClass(raceClass: string | null): string {
-  if (!raceClass) return 'text-subtle-foreground';
-  if (raceClass.includes('G1')) return 'text-primary';
-  if (raceClass.includes('G2') || raceClass.includes('G3')) return 'text-foreground';
-  return 'text-subtle-foreground';
-}
 
 /**
  * 「第169回天皇賞(春)」→「天皇賞(春)」。
@@ -188,7 +181,9 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                   hasData
                     ? [
                         `${info.courses.join('・')} / ${info.race_count}R（結果 ${info.result_count}R）`,
-                        info.highlight_name,
+                        ...(info.graded.length > 0
+                          ? info.graded.map((g) => `${g.name}（${g.course}）`)
+                          : [info.highlight_name ?? '']),
                       ]
                         .filter(Boolean)
                         .join('\n')
@@ -198,7 +193,9 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                   // min-w-0 が要る: grid item は既定で min-width:auto なので、
                   // これが無いと重賞名が truncate されずセルごと横に膨らみ、
                   // 隣の列 (狭い画面では右のパネル) を押し出す。
-                  'flex h-14 min-w-0 flex-col items-start gap-0.5 border-b border-r border-border px-3 py-1.5 text-left transition-colors',
+                  // 高さは固定しない。重賞が 0〜4 本入るので、固定すると多い日が溢れるか、
+                  // 無い日が間延びするかのどちらかになる。
+                  'flex min-h-14 min-w-0 flex-col items-start gap-0.5 border-b border-r border-border px-3 py-1.5 text-left transition-colors',
                   '[&:nth-child(7n)]:border-r-0',
                   'cursor-pointer hover:bg-card-elevated',
                   // 未取得の日も選べる (選ぶと右側に取込ボタンが出る)
@@ -237,13 +234,36 @@ export function RaceCalendar({ value, onChange, className }: RaceCalendarProps) 
                     「第169回」は落とす (stripEdition) — 開催回数は
                     カレンダーで見たい情報ではなく、付けたままだと幅の半分を
                     食って肝心の名前から先に省略される。 */}
-                {hasData && info.highlight_name && (
-                  <span
-                    className={cn(
-                      'w-full truncate text-2xs leading-tight',
-                      gradeClass(info.highlight_class)
-                    )}
-                  >
+                {/* G3 以上は **全部** 出す。1 日に 4 本ある日があり、1 本だけだと
+                    残りがカレンダーから消えて「どの日を開くか」を決められない。
+                    格は名前の前に置く — 名前が長いと truncate で後ろが落ちるので、
+                    先に格が読めないと重みが分からなくなる。 */}
+                {hasData &&
+                  info.graded.map((g) => {
+                    const { grade, label } = splitGrade(g.name, g.race_class);
+                    return (
+                      <span
+                        key={g.race_id}
+                        className="flex w-full min-w-0 items-baseline gap-1.5 text-2xs leading-tight"
+                      >
+                        {/* 格は固定幅で右揃え。名前の開始位置が揃うので、
+                            複数本ある日でも縦に読める。 */}
+                        <span
+                          className={cn(
+                            // JGIII が 5 文字。w-9 だと収まり切らず名前とくっつく
+                            'w-10 shrink-0 text-right font-mono',
+                            gradeClass(grade)
+                          )}
+                        >
+                          {grade}
+                        </span>
+                        <span className="truncate text-foreground">{stripEdition(label)}</span>
+                      </span>
+                    );
+                  })}
+                {/* 重賞が無い日は、その日の主役を 1 本だけ無彩色で出す */}
+                {hasData && info.graded.length === 0 && info.highlight_name && (
+                  <span className="w-full truncate text-2xs leading-tight text-subtle-foreground">
                     {stripEdition(info.highlight_name)}
                   </span>
                 )}

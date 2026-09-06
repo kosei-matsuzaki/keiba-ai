@@ -18,13 +18,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { cn } from '@/lib/cn';
+import { gradeClass, groupByCourse, raceNumber } from '@/lib/races';
+import type { CourseSection } from '@/lib/races';
 import type { RaceSummary } from '@/types/api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Extract 2-digit race number from race_id (last 2 chars). */
-function raceNumber(raceId: string): string {
-  return raceId.slice(-2);
+/** 一覧は 2 桁で揃える (縦に読むため)。番号が読めない ID は素の末尾 2 桁。 */
+function raceNo(raceId: string): string {
+  const n = raceNumber(raceId);
+  return n === null ? raceId.slice(-2) : String(n).padStart(2, '0');
 }
 
 /** Today's date in YYYY-MM-DD (local time). */
@@ -41,21 +45,6 @@ function formatDayLabel(dateStr: string): string {
   if (!y || !m || !d) return dateStr;
   const dow = ['日', '月', '火', '水', '木', '金', '土'][new Date(y, m - 1, d).getDay()];
   return `${m}/${d} (${dow})`;
-}
-
-interface CourseSection {
-  course: string;
-  races: RaceSummary[];
-}
-
-function groupByCourse(races: RaceSummary[]): CourseSection[] {
-  const map = new Map<string, RaceSummary[]>();
-  for (const race of races) {
-    const list = map.get(race.course) ?? [];
-    list.push(race);
-    map.set(race.course, list);
-  }
-  return Array.from(map.entries()).map(([course, rs]) => ({ course, races: rs }));
 }
 
 function TableSkeleton() {
@@ -117,23 +106,22 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
               }}
               role="button"
               tabIndex={0}
-              aria-label={`${section.course} ${raceNumber(race.race_id)}R`}
+              aria-label={`${section.course} ${raceNo(race.race_id)}R`}
             >
               {/* 一覧の中で数字だけが光る */}
               <TableCell className="font-mono tabular-nums font-medium text-primary">
-                {raceNumber(race.race_id)}
+                {raceNo(race.race_id)}
                 <span className="text-unit">R</span>
               </TableCell>
               <TableCell className="max-w-0 truncate" title={race.name ?? undefined}>
                 {race.name ?? <span className="text-subtle-foreground/50">·</span>}
               </TableCell>
-              {/* クラスは Badge をやめて素のテキスト。G1 だけ色を持たせて格を出す */}
+              {/* クラスは Badge をやめて素のテキスト。色の規則はカレンダーと共有 */}
               <TableCell
-                className={
-                  race.race_class === 'G1'
-                    ? 'whitespace-nowrap font-mono text-2xs text-primary'
-                    : 'whitespace-nowrap font-mono text-2xs text-subtle-foreground'
-                }
+                className={cn(
+                  'whitespace-nowrap font-mono text-2xs',
+                  gradeClass(race.race_class)
+                )}
               >
                 {race.race_class ?? '·'}
               </TableCell>

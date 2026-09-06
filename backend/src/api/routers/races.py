@@ -15,6 +15,7 @@ from api.schemas import (
     CalendarResponse,
     DataCoverage,
     EntrySummary,
+    GradedRace,
     PayoutEntry,
     RaceDetail,
     RaceSummary,
@@ -204,8 +205,43 @@ def get_races_by_date(
     return UpcomingRacesResponse(races=[_race_summary(r) for r in races])
 
 
-# 重賞ほど前に来るように並べる。カレンダーに 1 つだけ名前を出すときの優先度。
-_CLASS_PRIORITY = ["G1", "G2", "G3", "OP", "L", "3勝", "2勝", "1勝", "新馬", "未勝利"]
+# 格の順位表。graded の並び順と、カレンダーに 1 つだけ名前を出すときの優先度の
+# 両方がこれを使う。**`_GRADED_CLASSES` に足したらここにも足すこと** —
+# 片方だけだと `_class_rank` が未知と同じ最下位を返し、その日の主役 (highlight)
+# に OP や平場が選ばれる。graded の並びでは差が出ないので気づけない。
+_CLASS_PRIORITY = [
+    "G1",
+    "G2",
+    "G3",
+    "重賞",  # 格が特定できない重賞。G3 未満ではないので OP より前に置く
+    "OP",
+    "L",
+    "3勝",
+    "2勝",
+    "1勝",
+    "新馬",
+    "未勝利",
+]
+
+
+#: G3 以上とみなす race_class。DB には G1 / G2 / G3 のほか、格が特定できない
+#: 「重賞」が 7 件だけ入っている (どれも重賞なので同じ扱いにする)。
+#: Listed と OP は重賞ではないので入れない。
+#:
+#: **障害の重賞もここに入る。**netkeiba は JGI/JGII/JGIII を race_class では
+#: なく名前側に持たせており (「中山グランドジャンプ(JGI)」の race_class は
+#: "G1")、DB に JG* という race_class は 1 件も無い。格は名前で読める。
+_GRADED_CLASSES = frozenset(["G1", "G2", "G3", "重賞"])
+
+
+def _is_graded(race_class: str) -> bool:
+    """G3 以上か。
+
+    完全一致で見るのは `_class_rank` の部分一致と違い、ここが「出す/出さない」の
+    判定だから。部分一致にすると将来 "G1相当" のような値が入ったときに黙って
+    通ってしまう。
+    """
+    return race_class in _GRADED_CLASSES
 
 
 def _class_rank(race_class: str | None) -> int:
@@ -216,6 +252,19 @@ def _class_rank(race_class: str | None) -> int:
         if key in race_class:
             return i
     return len(_CLASS_PRIORITY)
+
+
+def _calendar_order(race: Race) -> tuple[int, str]:
+    """カレンダーで「その日の主役から順に」並べるキー。
+
+    graded の並びと highlight の選択が同じ規則であることをここで保証する。
+    別々に書くと、片方の tie-break を変えたときに食い違い、しかも highlight は
+    graded が空の日にしか画面へ出ないので直後には気づけない。
+
+    同格の tie-break が race_id なのは、netkeiba の ID が 年+場+回+日+R なので
+    **同じ場のレースが固まる**から。レース番号順ではない。
+    """
+    return (_class_rank(race.race_class), race.race_id)
 
 
 @router.get("/races/calendar", response_model=CalendarResponse)
@@ -274,7 +323,22 @@ def get_races_calendar(
             if r.course not in courses:
                 courses.append(r.course)
 
-        highlight = min(day_races, key=lambda r: (_class_rank(r.race_class), r.race_id))
+        # G3 以上は **全部** 返す。1 日に 4 本ある日があり、1 本だけ出すと
+        # 残りがカレンダーから消える (どの日を開くかの判断材料が落ちる)。
+        graded = [
+            GradedRace(
+                race_id=r.race_id,
+                name=r.name,
+                race_class=r.race_class,
+                course=r.course,
+            )
+            for r in sorted(day_races, key=_calendar_order)
+            # name / race_class は DB で nullable、GradedRace は非 null。
+            # 落としているのは仕様ではなく ValidationError 避け。
+            if r.name and r.race_class and _is_graded(r.race_class)
+        ]
+
+        highlight = min(day_races, key=_calendar_order)
         # 平場しか無い日は名前を出さない (「未勝利」と出しても情報にならない)
         has_feature = _class_rank(highlight.race_class) < _CLASS_PRIORITY.index("3勝")
 
@@ -284,6 +348,7 @@ def get_races_calendar(
                 race_count=len(day_races),
                 result_count=sum(1 for r in day_races if r.race_id in finished_ids),
                 courses=courses,
+                graded=graded,
                 highlight_race_id=highlight.race_id if has_feature else None,
                 highlight_name=(highlight.name if has_feature else None),
                 highlight_class=(highlight.race_class if has_feature else None),

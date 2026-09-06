@@ -5,6 +5,7 @@ import { useRacesByDate } from '@/hooks/useRacesByDate';
 import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { useCreateBetsBulk } from '@/hooks/useCreateBetsBulk';
 import { betK, isOrdered, expandCombos, type BetMethod } from '@/lib/betCombos';
+import { raceNumber } from '@/lib/races';
 import { cn } from '@/lib/cn';
 import { formatYen } from '@/lib/formatters';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
@@ -322,7 +323,7 @@ export function AddBetDialog() {
               <SelectContent>
                 {races.map((r) => (
                   <SelectItem key={r.race_id} value={r.race_id}>
-                    {r.race_id.slice(-2)}R {r.course} {r.name ?? ''}
+                    {raceNumber(r.race_id) ?? '?'}R {r.course} {r.name ?? ''}
                   </SelectItem>
                 ))}
               </SelectContent>
