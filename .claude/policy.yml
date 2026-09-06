@@ -6,6 +6,9 @@
 # docs: と code: は 2026-09-05 に docs/.docs-policy.yml と .code-policy.yml から
 # そのまま移した。**値は 1 つも変えていない** — docs.limits の CLAUDE.md を
 # 150 → 120 に下げた 1 行だけが例外。
+#
+# 2026-09-06: 旧規約から一緒に移ってきた docs.notify / code.notify を削除。
+# k.py が読むのはトップレベルの notify: だけで、この 2 つは効いていなかった。
 
 version: 1
 
@@ -143,11 +146,6 @@ docs:
       - 否定された仮説は消さずに archive へ送る。理由を書かないと同じ実験を再度回すことになる
       - archive の各項目には日付を付ける。日付のない記録は後から捨てられない
       - 割ったら archive の索引に 1 行足す。索引に無い記録は無いのと同じ
-
-  # 停止時の指摘。
-  notify:
-    enabled: true
-    min_source_edits: 1
 
   # 新規 md の置き場所チェック。backend/README.md と data/analysis/README.md は
   # アプリ側の README なので scope の外に置く (巻き込まない)。
@@ -301,9 +299,6 @@ code:
       - "frontend/src/routes/**"
     ignore: []
     symbols: true
-
-  notify:
-    enabled: true
 
   guard:
     enabled: true
