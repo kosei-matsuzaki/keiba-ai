@@ -59,6 +59,9 @@ const SHOTS = [
   },
   { name: 'models', path: '/models', width: 1440, ready: `document.querySelectorAll('table tbody tr').length > 1` },
   { name: 'ledger', path: '/ledger', width: 1440 },
+  { name: '_chart', path: '/ledger', width: 1440,
+    click: `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '全期間')`,
+    settle: 2500 },
 ];
 
 // ── CDP ───────────────────────────────────────────────────────────────────
@@ -159,14 +162,13 @@ async function main() {
       if (!(await waitFor(send, sid, cond))) {
         console.warn(`  ! ${shot.name}: 準備の条件が満たされないまま撮る`);
       }
-      await sleep(shot.settle ?? 1200);
 
-      // ページの実高に合わせてから撮る。`captureBeyondViewport` だけでは
-      // override した高さ (900) で切られる。長すぎる絵は読まれないので上限を置く。
+      // 中身が揃ってから実高を測り、**リサイズしてから落ち着かせる**。
+      // 逆順にすると recharts の ResponsiveContainer が測り直す途中を撮ってしまい、
+      // グラフが axes ごと消えた絵になる。
       //
       // **スクロールするのは `<main>`** — App が `h-screen overflow-hidden` なので
-      // `documentElement.scrollHeight` は常に viewport の高さになる (最初これで
-      // 測って全部 900 になった)。Topbar のぶんを足す。
+      // `documentElement.scrollHeight` は常に viewport の高さになる。Topbar を足す。
       const h = await send('Runtime.evaluate', {
         expression:
           'Math.ceil((document.querySelector("main")?.scrollHeight ?? 0)' +
@@ -180,10 +182,8 @@ async function main() {
         deviceScaleFactor: 1,
         mobile: false,
       }, sid);
-      // リサイズすると ResponsiveContainer が測り直し、recharts の
-      // アニメーションが**やり直しになる** (400ms で撮ったら線が 1 本も
-      // 出ていない絵になった)。既定 1.5s + 余白。
-      await sleep(2200);
+      // recharts のアニメーション (既定 1.5s) と再測定が終わるまで待つ。
+      await sleep(shot.settle ?? 2500);
 
       const { data } = await send('Page.captureScreenshot', {
         format: 'png',

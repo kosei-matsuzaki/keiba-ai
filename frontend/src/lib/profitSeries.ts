@@ -1,0 +1,17 @@
+import type { BetTimeseriesPoint } from '@/types/api';
+
+/**
+ * 損益推移に描く点を選ぶ。**買っていない日は点にしない。**
+ *
+ * API は期間内の全 bucket を 0 で埋めて連続データを返す（`GET /api/bets/timeseries`）。
+ * カレンダー上の距離が正しくなる代わりに、競馬は土日開催なので日次だと
+ * **8 割以上が横ばいの平日**になる（実データで 12ヶ月 372 点中、買った日は 53 点）。
+ * 持ち越すだけの日を点にすると、線が階段状に潰れて読めない。
+ *
+ * 落とすと 5 日の間隔と 1 日の間隔が同じ幅になるが、累計損益は**買った回数の
+ * 積み上げ**なので、開催日を等間隔に並べるほうが曲線として素直に読める。
+ * 日付は目盛りに出るので「いつ負けたか」は失われない。
+ */
+export function visibleProfitPoints(points: BetTimeseriesPoint[]): BetTimeseriesPoint[] {
+  return points.filter((p) => p.bets > 0);
+}

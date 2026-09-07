@@ -13,6 +13,7 @@ import {
 
 import { useBetSummary } from '@/hooks/useBetSummary';
 import { useBetTimeseries } from '@/hooks/useBetTimeseries';
+import { visibleProfitPoints } from '@/lib/profitSeries';
 import { useBetBreakdown } from '@/hooks/useBetBreakdown';
 import { useBetList } from '@/hooks/useBetList';
 import { useDeleteBets } from '@/hooks/useDeleteBets';
@@ -419,7 +420,10 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
 
   if (isPending) return <Skeleton className="h-60 w-full" />;
   if (isError) return <EmptyState message="チャートデータ取得に失敗しました" />;
-  if (!data || data.points.length === 0) {
+
+  // 買っていない日は点にしない (理由は visibleProfitPoints)。
+  const points = visibleProfitPoints(data?.points ?? []);
+  if (points.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
         購入を記録すると、ここに累計損益が出ます
@@ -427,8 +431,8 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
     );
   }
 
-  const minProfit = Math.min(...data.points.map((p) => p.cumulative_profit));
-  const maxProfit = Math.max(...data.points.map((p) => p.cumulative_profit));
+  const minProfit = Math.min(...points.map((p) => p.cumulative_profit));
+  const maxProfit = Math.max(...points.map((p) => p.cumulative_profit));
   // 全プラスなら success (緑)、全マイナスなら destructive (赤)、混在は
   // 単系列の既定色 primary。カテゴリカルパレット (--chart-*) は使わない。
   const areaColor =
@@ -440,7 +444,7 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
 
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={data.points} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+      <AreaChart data={points} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
         <defs>
           <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={areaColor} stopOpacity={0.4} />
