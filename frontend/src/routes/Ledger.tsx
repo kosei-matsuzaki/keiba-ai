@@ -318,9 +318,12 @@ function DetailTable({ params }: { params: BetFilterParams }) {
                     ) : (
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 text-sm hover:text-foreground"
+                        className="inline-flex items-center gap-1 hover:text-foreground"
                         onClick={() => toggleExpand(g.key)}
                       >
+                        {/* 段を上げない。表は 12px で、ここだけ 14px にすると
+                            点数の列だけ文字が大きく見える。開けることは
+                            シェブロンが示すので、大きさで目立たせる必要はない。 */}
                         <span className="font-medium">{g.count}点</span>
                         {isOpen ? (
                           <ChevronUp className="h-3 w-3" />

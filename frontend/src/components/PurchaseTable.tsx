@@ -147,7 +147,7 @@ export function PurchaseTable({ candidates, runners, raceId, renderBuy }: Purcha
                   )}
                 </TableCell>
                 <TableCell className="font-medium">{g.betType}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{g.patternLabel}</TableCell>
+                <TableCell className="text-muted-foreground">{g.patternLabel}</TableCell>
                 <TableCell>
                   <Formula group={g} runners={runners} />
                 </TableCell>
