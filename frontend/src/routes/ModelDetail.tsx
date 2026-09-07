@@ -5,7 +5,6 @@ import { ArrowLeft } from 'lucide-react';
 import { fetchModel } from '@/lib/api';
 import { useActivateModel } from '@/hooks/useActivateModel';
 import { SectionHeading } from '@/components/SectionHeading';
-import { Figures } from '@/components/Figures';
 import { MetricCard } from '@/components/MetricCard';
 import { ModelSimulationPanel } from '@/components/ModelSimulationPanel';
 import { EmptyState } from '@/components/EmptyState';
@@ -51,46 +50,45 @@ function ModelScoreBand({ model }: { model: ModelMeta }) {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* **カードにするのは答えだけ。**このモデルで買って勝てるかは単勝回収率
-          1 つで決まり、残りはその読み方を支える数字 (収支台帳・シミュレーション
-          の結果・モデル画面と同じ組み立て)。 */}
-      <div className="flex flex-wrap items-start gap-6">
+      {/* 指標は 5 つ並べる。**1 つを答えに選べない** — 回収率は単勝と複勝が対、
+          的中率も本命と複勝が対で、log-loss は市場との比較で初めて意味を持つ。
+          収支台帳・シミュレーションの結果と同じ並べ方。 */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <MetricCard
-          className="min-w-[11rem]"
           label="単勝回収率"
           value={shown(m.paybackWin, formatRatio)}
           tone={m.paybackWin != null && m.paybackWin >= 1 ? 'positive' : 'negative'}
-          hint="本命に単勝を買い続けたときの払戻 ÷ 投資。1.00 = トントンで、控除率 20% があるので 1.0 未満は平均で負け越し。"
           note={roiNote(m.paybackWinCi, m.nRaces)}
+          hint="本命に単勝を買い続けたときの払戻 ÷ 投資。1.00 = トントンで、控除率 20% があるので 1.0 未満は平均で負け越し。"
         />
-        <Figures
-          className="pt-1"
-          items={[
-            {
-              label: '複勝回収率',
-              value: shown(m.paybackPlace, formatRatio),
-              paren: m.paybackPlaceCi
-                ? `95% ${m.paybackPlaceCi[0].toFixed(2)}–${m.paybackPlaceCi[1].toFixed(2)}`
-                : undefined,
-            },
-            {
-              label: '本命の的中率',
-              value: shown(m.top1Hit, formatPercent),
-              hint: '予想 1 位が 1 着になった割合。的中率が高いほど儲かるとは限らない — 人気馬を選べば当たるが配当が小さい。',
-            },
-            {
-              label: '複勝的中率',
-              value: shown(m.placeHit, formatPercent),
-              hint: `${placeHitLabel(m.source)}だった割合。実測と学習時で数え方が違うので、出所と一緒に読む。`,
-            },
-            {
-              label: 'log-loss',
-              value: shown(m.logLoss, formatScore),
-              paren:
-                m.marketLogLoss != null ? `市場 ${formatScore(m.marketLogLoss)}` : undefined,
-              hint: '本命についての二値 log-loss。小さいほど確率として正確。市場 (1/オッズ) を下回れないモデルが市場より systematically に儲けることは原理的にできない。',
-            },
-          ]}
+        <MetricCard
+          label="複勝回収率"
+          value={shown(m.paybackPlace, formatRatio)}
+          tone={m.paybackPlace != null && m.paybackPlace >= 1 ? 'positive' : 'negative'}
+          note={roiNote(m.paybackPlaceCi, m.nRaces)}
+        />
+        <MetricCard
+          label="本命の的中率"
+          value={shown(m.top1Hit, formatPercent)}
+          note="予想1位が1着"
+          hint="的中率が高いほど儲かるとは限らない。人気馬を選べば当たるが配当が小さい。"
+        />
+        <MetricCard
+          label="複勝的中率"
+          value={shown(m.placeHit, formatPercent)}
+          note={placeHitLabel(m.source)}
+          hint="出所で別の量になる (実測は予想1位が3着以内、学習時は上位3頭のうち1頭以上)。"
+        />
+        <MetricCard
+          label="log-loss"
+          value={shown(m.logLoss, formatScore)}
+          tone={
+            m.logLoss != null && m.marketLogLoss != null && m.logLoss < m.marketLogLoss
+              ? 'positive'
+              : 'default'
+          }
+          note={m.marketLogLoss != null ? `市場 ${formatScore(m.marketLogLoss)}` : '小さいほど正確'}
+          hint="本命についての二値 log-loss。市場 (1/オッズ) を下回れないモデルが市場より systematically に儲けることは原理的にできない。"
         />
       </div>
 

@@ -16,7 +16,6 @@ import {
 import { SectionHeading } from '@/components/SectionHeading';
 import { AddBetDialog } from '@/components/AddBetDialog';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
-import { Figures } from '@/components/Figures';
 import { ProfitChart } from '@/components/ProfitChart';
 import { MetricCard } from '@/components/MetricCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -24,6 +23,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -66,6 +66,18 @@ function getDateRange(preset: PeriodPreset, customFrom: string, customTo: string
   }
   return { from: undefined, to: undefined };
 }
+
+type BreakdownGroup = 'bet_type' | 'race_class' | 'month';
+
+/**
+ * 内訳の切り口。**`source` は置かない** — 上の「全件 / AI推奨 / 手動」フィルタが
+ * 同じ軸で、2 か所から同じことを操作できると、どちらが効いているのか読めなくなる。
+ */
+const BREAKDOWN_TABS: { value: BreakdownGroup; label: string }[] = [
+  { value: 'bet_type', label: '馬券種別' },
+  { value: 'race_class', label: 'レース格別' },
+  { value: 'month', label: '月別' },
+];
 
 // ── Breakdown table with sort ─────────────────────────────────────────────────
 
@@ -463,7 +475,8 @@ export function Ledger() {
   };
 
   const summaryQuery = useBetSummary(filterParams);
-  const breakdownQuery = useBetBreakdown({ ...filterParams, group_by: 'bet_type' });
+  const [groupBy, setGroupBy] = useState<BreakdownGroup>('bet_type');
+  const breakdownQuery = useBetBreakdown({ ...filterParams, group_by: groupBy });
 
   async function handleCsvDownload() {
     const url = await buildBetExportUrl(filterParams);
@@ -550,33 +563,38 @@ export function Ledger() {
       ) : summaryQuery.isError ? (
         <EmptyState message="サマリ取得に失敗しました" />
       ) : (
-        /* **カードにするのは収支だけ。**これがこの画面の答えで、残りは読み解く
-           ための補助 (全部囲うと答えが埋もれる)。シミュレーションの結果とモデル
-           画面も同じ形で、`Figures` を共有している。 */
-        <div className="flex flex-wrap items-start gap-6">
+        /* 収支は 5 つを並べる。**1 つを答えに選べない**からで、投資と払戻は対、
+           回収率と的中率も対で読む (的中率だけ高くても配当が小さければ負ける)。
+           シミュレーションの結果・モデル詳細と同じ並び・同じ言い回しにしてある。 */
+        <div className={"grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5"}>
           <MetricCard
-            className="min-w-[11rem]"
+            label="累計投資"
+            value={formatYen(summaryQuery.data.total_invested)}
+            note={`${summaryQuery.data.total_bets.toLocaleString()} 点`}
+          />
+          <MetricCard
+            label="累計払戻"
+            value={formatYen(summaryQuery.data.total_payout)}
+            note={`確定 ${summaryQuery.data.settled_bets.toLocaleString()} 点`}
+          />
+          <MetricCard
             label="純利益"
             value={formatSignedYen(summaryQuery.data.total_profit)}
             tone={summaryQuery.data.total_profit >= 0 ? 'positive' : 'negative'}
-            note={`${summaryQuery.data.total_bets.toLocaleString()} 点 / 確定 ${summaryQuery.data.settled_bets.toLocaleString()} 点`}
+            note="0 から始めた場合の収支"
           />
-          <Figures
-            className="pt-1"
-            items={[
-              {
-                label: '回収率',
-                value: formatRatio(summaryQuery.data.payback_rate),
-                hint: '払戻 ÷ 投資。1.00 = 損益分岐点。控除率 20% があるので 1.0 未満は平均で負け越し。',
-              },
-              {
-                label: '的中率',
-                value: formatPercent(summaryQuery.data.hit_rate),
-                hint: '確定した買い目のうち、払戻が出た割合。的中率が高いほど儲かるとは限らない。',
-              },
-              { label: '累計投資', value: formatYen(summaryQuery.data.total_invested) },
-              { label: '累計払戻', value: formatYen(summaryQuery.data.total_payout) },
-            ]}
+          <MetricCard
+            label="回収率"
+            value={formatRatio(summaryQuery.data.payback_rate)}
+            tone={summaryQuery.data.payback_rate >= 1 ? 'positive' : 'negative'}
+            note="1.00 = 損益分岐点"
+            hint="払戻 ÷ 投資。控除率 20% があるので 1.0 未満は平均で負け越し。"
+          />
+          <MetricCard
+            label="的中率"
+            value={formatPercent(summaryQuery.data.hit_rate)}
+            note="確定済みのうち"
+            hint="払戻が出た買い目の割合。的中率が高いほど儲かるとは限らない — 人気馬を選べば当たるが配当が小さい。"
           />
         </div>
       )}
@@ -604,19 +622,36 @@ export function Ledger() {
         </CardContent>
       </Card>
 
-      {/* Breakdown table */}
+      {/* 内訳。**切り口をタブで切り替える** — 同じ形の表を 4 つ積むと縦に伸びる
+          だけで見比べられない (シミュレーションの結果と同じ作り)。 */}
       <Card className="border-t border-border pt-6">
         <CardHeader className="pb-2">
-          <SectionHeading>券種別ブレイクダウン</SectionHeading>
+          <SectionHeading>内訳</SectionHeading>
         </CardHeader>
         <CardContent>
-          {breakdownQuery.isPending ? (
-            <Skeleton className="h-40 w-full" />
-          ) : breakdownQuery.isError ? (
-            <EmptyState message="ブレイクダウン取得に失敗しました" />
-          ) : (
-            <BreakdownTable rows={breakdownQuery.data.rows} />
-          )}
+          <Tabs value={groupBy} onValueChange={(v) => setGroupBy(v as BreakdownGroup)}>
+            <TabsList>
+              {BREAKDOWN_TABS.map(({ value, label }) => (
+                <TabsTrigger key={value} value={value}>
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            <div className="pt-3">
+              {breakdownQuery.isPending ? (
+                <Skeleton className="h-40 w-full" />
+              ) : breakdownQuery.isError ? (
+                <EmptyState message="内訳の取得に失敗しました" />
+              ) : breakdownQuery.data.rows.length === 0 ? (
+                <EmptyState
+                  message="まだ確定した購入がありません"
+                  description="購入を記録して結果が確定すると、切り口ごとの回収率がここに出ます。"
+                />
+              ) : (
+                <BreakdownTable rows={breakdownQuery.data.rows} />
+              )}
+            </div>
+          </Tabs>
         </CardContent>
       </Card>
 

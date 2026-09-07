@@ -623,31 +623,52 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               </div>
             )}
 
-            {/* **カードにするのは収支だけ。** これがこの画面の答えで、
-                残りは読み解くための補助 (全部囲うと答えが埋もれる)。 */}
-            <div className="flex flex-wrap items-start gap-4">
+            {/* 収支は 5 つを並べる。**収支台帳と同じ並び・同じ言い回し**にして、
+                「この買い方を続けたら」と「実際に続けたら」を見比べられるようにする。 */}
+            <div className={"grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5"}>
+              <MetricCard
+                label="累計投資"
+                value={formatYen(result.summary.invested)}
+                note={`${result.summary.n_bets.toLocaleString()} 点`}
+              />
+              <MetricCard
+                label="累計払戻"
+                value={formatYen(result.summary.payout)}
+                note={`${result.n_settled_races.toLocaleString()} レース`}
+              />
               <MetricCard
                 label="累計損益"
                 value={formatSignedYen(result.final_profit)}
                 tone={result.final_profit >= 0 ? 'positive' : 'negative'}
                 note="0 から始めた場合の収支"
-                className="min-w-[11rem]"
               />
-              {/* 最大益 / 最大損は出さない。**最大損は「必要だった資金」と同じ数字**
-                  (符号違い) で、山と谷はすぐ下の損益推移グラフが示している。
-                  グラフから読み取れないのは「いくら要ったか」だけなので、それを残す。 */}
-              <Figures
-                className="pt-1"
-                items={[
-                  {
-                    label: '必要だった資金',
-                    value: formatYen(result.required_capital),
-                    hint: '途中で止まらずに回すのに要した額 (= 累計損益の最小値の絶対値)。',
-                  },
-                  { label: '回収率', value: formatRatio(result.summary.payback_rate) },
-                ]}
+              <MetricCard
+                label="回収率"
+                value={formatRatio(result.summary.payback_rate)}
+                tone={result.summary.payback_rate >= 1 ? 'positive' : 'negative'}
+                note="1.00 = 損益分岐点"
+                hint="払戻 ÷ 投資。控除率 20% があるので 1.0 未満は平均で負け越し。"
               />
-              </div>
+              <MetricCard
+                label="的中率"
+                value={formatPercent(result.summary.hit_rate)}
+                note="確定したレースのうち"
+                hint="払戻が出た買い目の割合。的中率が高いほど儲かるとは限らない。"
+              />
+            </div>
+            {/* 最大益 / 最大損は出さない。**最大損は「必要だった資金」と同じ数字**
+                (符号違い) で、山と谷はすぐ下の損益推移グラフが示している。
+                グラフから読み取れないのは「いくら要ったか」だけなので、それを残す。
+                これは台帳に無い量なので、5 枚には入れず下に添える。 */}
+            <Figures
+              items={[
+                {
+                  label: '必要だった資金',
+                  value: formatYen(result.required_capital),
+                  hint: '途中で止まらずに回すのに要した額 (= 累計損益の最小値の絶対値)。',
+                },
+              ]}
+            />
             </CardContent>
           </Card>
 

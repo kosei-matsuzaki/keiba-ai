@@ -145,7 +145,11 @@ describe('Ledger', () => {
 
   it('renders breakdown table with correct rows', async () => {
     renderLedger();
-    expect(await screen.findByText('券種別ブレイクダウン')).toBeInTheDocument();
+    expect(await screen.findByText('内訳')).toBeInTheDocument();
+    // 切り口はタブで切り替える (シミュレーションの結果と同じ作り)
+    expect(screen.getByRole('tab', { name: '馬券種別' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'レース格別' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '月別' })).toBeInTheDocument();
     // 券種は購入明細 (デフォルト展開) の行にも出るため複数一致を許容
     expect((await screen.findAllByText('単勝')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('複勝').length).toBeGreaterThan(0);
@@ -254,7 +258,7 @@ describe('Ledger', () => {
     vi.mocked(fetchBetBreakdown).mockRejectedValue(new Error('network error'));
     renderLedger();
     await waitFor(() => {
-      expect(screen.getByText('ブレイクダウン取得に失敗しました')).toBeInTheDocument();
+      expect(screen.getByText('内訳の取得に失敗しました')).toBeInTheDocument();
     });
   });
 });

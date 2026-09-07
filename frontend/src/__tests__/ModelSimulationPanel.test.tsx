@@ -140,16 +140,24 @@ describe('ModelSimulationPanel の結果', () => {
     return user;
   }
 
-  it('bet 単位の統計と内訳を 1 つのパネルにまとめる', async () => {
+  it('収支は 5 枚のカードで、収支台帳と同じ並びにする', async () => {
     await loadRun();
-    // **同じ数字を 2 度出さない。** 以前は「回収率」「純利益」が結果カードと
-    // KPI カードの両方にあった。合計は内訳の見出し行に畳む。
-    const panel = (await screen.findByText('内訳')).closest('div')?.parentElement;
-    expect(panel).toBeTruthy();
-    expect(screen.queryByText('累計投資')).not.toBeInTheDocument();
-    expect(screen.queryByText('純利益')).not.toBeInTheDocument();
-    // 合計は見出し行に出る
-    expect(await screen.findByText(/2,345/)).toBeInTheDocument();
+    // 収支は 1 つを答えに選べない (投資と払戻は対、回収率と的中率も対で読む)。
+    // **収支台帳と同じ並び・同じ言い回し**にして、「この買い方を続けたら」と
+    // 「実際に続けたら」を見比べられるようにする。
+    //
+    // 以前は「同じ数字を 2 度出さない」として合計を内訳の見出し行だけに畳んで
+    // いたが、台帳と揃えるほうを取った。**投資・払戻は内訳の合計行にも出る。**
+    await screen.findByText('累計投資');
+    for (const label of ['累計払戻', '累計損益']) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    // 回収率 / 的中率 は内訳の表ヘッダにも出るので複数一致を許容
+    for (const label of ['回収率', '的中率']) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+    // 内訳は切り口ごとのタブ
+    expect(screen.getByRole('tab', { name: '馬券種別' })).toBeInTheDocument();
   });
 
   it('実行条件は項目名と値の対で出す（「・」で繋がない）', async () => {
