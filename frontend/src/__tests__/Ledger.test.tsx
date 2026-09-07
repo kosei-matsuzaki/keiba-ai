@@ -199,17 +199,28 @@ describe('Ledger', () => {
     vi.restoreAllMocks();
   });
 
-  it('changes period filter and refetches data', async () => {
+  it('既定は全期間で、日数の窓は置かない', async () => {
+    // JRA は土日開催なので 7 日 = 1〜3 開催日にしかならず、画面の主役である
+    // 回収率がそこでは読めない。実測で直近 7 日は 1.073・全期間は 0.835 と、
+    // **短い窓だけが黒字に見えた**。読みたいときはカスタムで日付を入れる。
     renderLedger();
     await screen.findByText('累計投資');
 
-    const btn7d = screen.getByRole('button', { name: '直近 7 日' });
-    fireEvent.click(btn7d);
+    expect(screen.queryByRole('button', { name: /直近/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '全期間' })).toBeInTheDocument();
+    const params = vi.mocked(fetchBetSummary).mock.calls[0]?.[0] ?? {};
+    expect(params.from).toBeUndefined();
+    expect(params.to).toBeUndefined();
+  });
+
+  it('カスタムで期間を絞れる', async () => {
+    renderLedger();
+    await screen.findByText('累計投資');
+
+    fireEvent.click(screen.getByRole('button', { name: 'カスタム' }));
 
     await waitFor(() => {
-      expect(fetchBetSummary).toHaveBeenCalledWith(
-        expect.objectContaining({ from: expect.any(String), to: expect.any(String) })
-      );
+      expect(screen.getAllByLabelText(/開始日|終了日/).length).toBeGreaterThan(0);
     });
   });
 

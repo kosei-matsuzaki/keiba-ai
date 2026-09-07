@@ -47,24 +47,28 @@ import type { BetBreakdownRow, BetRecordOut } from '@/types/api';
 
 // ── Period presets ────────────────────────────────────────────────────────────
 
-type PeriodPreset = '7d' | '30d' | 'all' | 'custom';
+/**
+ * 期間は「全期間」と「カスタム」だけ。
+ *
+ * **日数の窓を置かない。**JRA は土日開催なので 7 日 = 1〜3 開催日にしかならず、
+ * 画面の主役である回収率がそこでは読めない。実測 (2025-09〜2026-02・7,006 点) で
+ * 直近 7 日は 1.073、全期間は 0.835 — **短い窓だけが「黒字」に見える**。
+ * 0.05 の差を言うのに複勝で 1.6 年ぶんが要る量なので、日数の窓は嘘をつく側にしか
+ * 働かない (`docs/ai-model.md`「OOS 実測」)。
+ *
+ * 先週末だけ見たいときはカスタムで日付を入れる。**そこでも率は率なので、
+ * 読むのは純利益・投資・払戻のほう。**
+ */
+type PeriodPreset = 'all' | 'custom';
 
 function getDateRange(preset: PeriodPreset, customFrom: string, customTo: string) {
-  if (preset === 'all') return { from: undefined, to: undefined };
   if (preset === 'custom') {
     return {
       from: customFrom || undefined,
       to: customTo || undefined,
     };
   }
-  const today = new Date();
-  const days = preset === '7d' ? 7 : 30;
-  const from = new Date(today);
-  from.setDate(today.getDate() - days);
-  return {
-    from: from.toISOString().slice(0, 10),
-    to: today.toISOString().slice(0, 10),
-  };
+  return { from: undefined, to: undefined };
 }
 
 // ── Breakdown table with sort ─────────────────────────────────────────────────
@@ -505,7 +509,7 @@ function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 
 // ── Main Ledger page ──────────────────────────────────────────────────────────
 
 export function Ledger() {
-  const [period, setPeriod] = useState<PeriodPreset>('30d');
+  const [period, setPeriod] = useState<PeriodPreset>('all');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [source, setSource] = useState<string>('all');
@@ -549,8 +553,6 @@ export function Ledger() {
         <div className="flex gap-1">
           {(
             [
-              { label: '直近 7 日', value: '7d' },
-              { label: '直近 30 日', value: '30d' },
               { label: '全期間', value: 'all' },
               { label: 'カスタム', value: 'custom' },
             ] as const
