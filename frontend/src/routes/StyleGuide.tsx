@@ -59,43 +59,43 @@ interface TokenRow {
   hex: string;
 }
 
-/** :root に載っている CSS 変数の値と、実際に描画される色を読む。 */
+/**
+ * :root に載っている CSS 変数の値と、**実際に描画される色**を読む。
+ *
+ * probe は hook 自身が作って body に挿す。呼び出し側の ref に頼ると、
+ * 最初の layout effect の時点でまだ null で、値が出ないまま終わる
+ * (最初の実装が実際にそうなっていて、全部「測定中」で出た)。
+ */
 function useTokens(names: string[]): TokenRow[] {
-  const probeRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<TokenRow[]>([]);
 
   useLayoutEffect(() => {
-    const root = getComputedStyle(document.documentElement);
-    const probe = probeRef.current;
-    if (!probe) return;
-    setRows(
-      names.map((name) => {
-        probe.style.backgroundColor = `hsl(var(${name}))`;
-        return {
-          name,
-          hsl: root.getPropertyValue(name).trim(),
-          hex: toHex(getComputedStyle(probe).backgroundColor),
-        };
-      })
-    );
-    probe.style.backgroundColor = '';
-    // テーマを切り替えたら測り直したいので、html の class を監視する。
-    const obs = new MutationObserver(() => {
-      const r = getComputedStyle(document.documentElement);
+    const probe = document.createElement('div');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText = 'position:fixed;width:0;height:0;pointer-events:none';
+    document.body.appendChild(probe);
+
+    function read() {
+      const root = getComputedStyle(document.documentElement);
       setRows(
         names.map((name) => {
           probe.style.backgroundColor = `hsl(var(${name}))`;
           return {
             name,
-            hsl: r.getPropertyValue(name).trim(),
+            hsl: root.getPropertyValue(name).trim(),
             hex: toHex(getComputedStyle(probe).backgroundColor),
           };
         })
       );
-      probe.style.backgroundColor = '';
-    });
+    }
+    read();
+    // テーマを切り替えたら測り直す。
+    const obs = new MutationObserver(read);
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => obs.disconnect();
+    return () => {
+      obs.disconnect();
+      probe.remove();
+    };
   }, [names]);
 
   return rows;
@@ -106,7 +106,7 @@ function useTokens(names: string[]): TokenRow[] {
 const LAYERS: { layer: string; note: string; tokens: string[] }[] = [
   {
     layer: 'chrome',
-    note: '地・面・罫・文字。**--primary と --warning の 2 色だけ**で、ここを増やさない',
+    note: '地・面・罫・文字。--primary と --warning の 2 色だけで、ここを増やさない',
     tokens: [
       '--background',
       '--card',
@@ -131,16 +131,16 @@ const LAYERS: { layer: string; note: string; tokens: string[] }[] = [
   },
 ];
 
+/** hook の依存に渡すので**モジュール定数**にする。毎レンダー作り直すと
+ *  effect が毎回走って setState → 再レンダーの無限ループになる (実際になった)。 */
+const ALL_TOKENS = LAYERS.flatMap((l) => l.tokens);
+
 function Colors() {
-  const probeRef = useRef<HTMLDivElement>(null);
-  const all = LAYERS.flatMap((l) => l.tokens);
-  const rows = useTokens(all);
+  const rows = useTokens(ALL_TOKENS);
   const byName = new Map(rows.map((r) => [r.name, r]));
 
   return (
     <section className="flex flex-col gap-6">
-      {/* 色を実際に描いて読み返すための、見えない probe。 */}
-      <div ref={probeRef} aria-hidden="true" className="pointer-events-none fixed h-0 w-0" />
       {LAYERS.map(({ layer, note, tokens }) => (
         <div key={layer} className="flex flex-col gap-3">
           <SectionHeading level={3}>{layer}</SectionHeading>
@@ -348,8 +348,7 @@ function Components() {
           ))}
         </div>
         <p className="text-2xs text-muted-foreground">
-          既定は**無彩色の反転**。アクセント (--primary) は「測れているか」を指す色なので
-          CTA に使わない。
+          既定は無彩色の反転。アクセント (--primary) は「測れているか」を指す色なので CTA に使わない。
         </p>
       </div>
 
@@ -408,7 +407,7 @@ function Components() {
           />
         </div>
         <p className="text-2xs text-muted-foreground">
-          どちらも画面の下端で開くと**上に反転**する (`useAnchoredPosition`)。
+          どちらも画面の下端で開くと上に反転する (useAnchoredPosition)。
         </p>
       </div>
     </div>
