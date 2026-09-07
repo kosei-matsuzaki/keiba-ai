@@ -102,11 +102,11 @@
 │   ├── src/
 │   │   ├── main.tsx           # React + QueryClient + Router マウント
 │   │   ├── App.tsx            # Outlet レイアウト（Topbar 含む）
-│   │   ├── router.tsx         # createBrowserRouter（6 画面 + 旧 URL の Navigate リダイレクト 4 本）
+│   │   ├── router.tsx         # createBrowserRouter（6 画面 + 旧 URL のリダイレクト 6 本。`/races*` だけ loader で ?date= と race_id を保つ）
 │   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
 │   │   ├── routes/            # ページコンポーネント（1 画面 1 ファイル）
-│   │   │   ├── Dashboard.tsx        # モデルの 1 画面（KPI + 一覧 + 学習 + 役割の割り当て）
-│   │   │   ├── Races.tsx            # RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
+│   │   │   ├── Races.tsx            # `/race`（最初に出る画面）。RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
+│   │   │   ├── Models.tsx           # `/models`。モデルの 1 画面（単勝回収率 + 一覧 + 学習 + 役割の割り当て）
 │   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目（答え合わせはそのタブ）
 │   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
 │   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
@@ -406,7 +406,7 @@ CREATE TABLE model_runs (
 | メソッド | パス | ステータス | 概要 |
 |---|---|---|---|
 | GET | `/api/metrics/summary` | 200 | モデル評価指標サマリ |
-| GET | `/api/metrics/timeseries` | 200 | 時系列メトリクス。**現在フロントは参照していない**（評価窓がモデルごとに違い、時系列に並べても読めないため Dashboard はモデル比較表に変えた） |
+| GET | `/api/metrics/timeseries` | 200 | 時系列メトリクス。**現在フロントは参照していない**（評価窓がモデルごとに違い、時系列に並べても読めないためモデル画面は比較表に変えた） |
 
 **`GET /api/metrics/summary` の指標ソース**: `backtest --persist` が走っていれば、指標すべてを **同じ 1 回の評価**（同じレース集合・アプリと同じ賭けルール）から取る。混ぜると「valid の NDCG と test の回収率」のように出所の違う数字が 1 枚のカードに並ぶため、`ndcg*` も backtest 側を優先する。
 
@@ -547,7 +547,7 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
   `supported_bet_types()` が保存済み設定からも落とす）
 - **EV 閾値は全券種で廃止**（`place_ev_threshold` 2026-08-24 / `win_ev_threshold` 2026-08-28 に削除）。
   買い目の選び方と、やめた理由は [ai-model.md](ai-model.md) が持つ
-- `probability_model_path` の割り当ては **Dashboard のモデル一覧**から行う（Settings には無い）。
+- `probability_model_path` の割り当ては **モデル画面 (`/models`) の一覧**から行う（Settings には無い）。
   設定すると複勝の確信度フィルタと連系の確率がそのモデル由来になる
 - 保存済み JSON に廃止済みキーが残っていても、読み込み時に落とす（`SettingsStore.load`）
 - `data/settings.json` は `.gitignore` 対象。手で削除すると全キーが既定値に戻る

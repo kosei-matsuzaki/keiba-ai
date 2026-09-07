@@ -3,6 +3,7 @@ import { useForm, type UseFormRegisterReturn } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 
+import { SectionHeading } from '@/components/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -254,7 +255,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
           ないので、面に載せると 1 行しかない予算が 7 行あるしきい値より重く見える。
           見出しを持った節にすれば、どちらも起きない。 */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">予算</h2>
+        <SectionHeading>予算</SectionHeading>
         <Table aria-label="予算" className="w-full table-fixed">
           <TableBody>
             <SettingTableRow
@@ -274,7 +275,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">券種ごとのしきい値</h2>
+        <SectionHeading>券種ごとのしきい値</SectionHeading>
         <Table aria-label="券種ごとのしきい値" className="w-full table-fixed">
           <TableHeader>
             <TableRow>
@@ -329,7 +330,7 @@ export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProp
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">取り込み方</h2>
+        <SectionHeading>取り込み方</SectionHeading>
         <Table aria-label="取り込み方" className="w-full table-fixed">
           <TableBody>
             {INGEST_ROWS.map((row) => (

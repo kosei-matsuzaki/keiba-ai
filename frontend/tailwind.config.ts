@@ -4,11 +4,14 @@ export default {
   darkMode: ['class'],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
-    // fontSize は extend ではなく **丸ごと差し替え**。規定の 5 段
+    // fontSize は extend ではなく **丸ごと差し替え**。規定の 6 段
     // (docs/design.md「字の尺度」) 以外を書けなくするための仕掛けで、
-    // text-base / text-xl / text-2xl はクラスごと生成されなくなる。
-    // 5 段目の 26px は .text-kpi (globals.css) — 等幅・太さ・字間まで含む型なので
+    // text-xl / text-2xl はクラスごと生成されなくなる。
+    // 6 段目の 26px は .text-kpi (globals.css) — 等幅・太さ・字間まで含む型なので
     // サイズだけのユーティリティにはしない。
+    // base (16px) は**節の見出し専用**。本文 (14) とページ見出し (18) の間に段が
+    // 無かったため、Settings は text-sm font-medium、Model は text-label-ja (11px) と
+    // 画面ごとに別の逃げ方をしていた。穴があると回避が増えるので段のほうを足した。
     // borderRadius も extend ではなく差し替え。角丸は 2px の 1 値だけで、
     // ピル (バッジ) の rounded-full が唯一の例外 (docs/design.md「角丸」)。
     // extend に置くと Tailwind 既定の rounded-lg (8px) 等が生き残り、
@@ -27,7 +30,8 @@ export default {
       '2xs': ['0.6875rem', { lineHeight: '1.35' }], // 11px ラベル・単位・バッジ
       xs: ['0.75rem', { lineHeight: '1.5' }],       // 12px 表のセル
       sm: ['0.875rem', { lineHeight: '1.5' }],      // 14px 本文 (body 既定)
-      lg: ['1.125rem', { lineHeight: '1.3' }],      // 18px 見出し
+      base: ['1rem', { lineHeight: '1.4' }],        // 16px 節の見出し (h2)
+      lg: ['1.125rem', { lineHeight: '1.3' }],      // 18px ページ見出し (h1)
     },
     extend: {
       colors: {

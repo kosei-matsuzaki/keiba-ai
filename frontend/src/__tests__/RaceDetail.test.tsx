@@ -422,19 +422,19 @@ describe('RaceDetail', () => {
     expect(cardTitles).toHaveLength(0);
   });
 
-  it('renders back link pointing to Race の Past タブ when no date param', async () => {
+  it('renders back link pointing to the race list (/race) when no date param', async () => {
     renderRaceDetail();
     await screen.findByText('レース概要');
-    const backLink = screen.getByRole('link', { name: 'Past Races へ戻る' });
+    const backLink = screen.getByRole('link', { name: 'レース一覧へ戻る' });
     expect(backLink).toBeInTheDocument();
-    expect(backLink).toHaveAttribute('href', '/races');
+    expect(backLink).toHaveAttribute('href', '/race');
   });
 
   it('renders back link with date param preserved', async () => {
     renderRaceDetail('202406010101', '?date=2024-06-01');
     await screen.findByText('レース概要');
-    const backLink = screen.getByRole('link', { name: 'Past Races へ戻る' });
-    expect(backLink).toHaveAttribute('href', '/races?date=2024-06-01');
+    const backLink = screen.getByRole('link', { name: 'レース一覧へ戻る' });
+    expect(backLink).toHaveAttribute('href', '/race?date=2024-06-01');
   });
 
   it('shows 404 empty state when race is not found', async () => {

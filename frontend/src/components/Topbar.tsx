@@ -13,16 +13,20 @@ interface NavItem {
   activeMatch?: (pathname: string) => boolean;
 }
 
+// 並びは週次の流れ順 (レースを見る → 収支を突き合わせる → モデルを測り直す → 設定)。
+// 「DASHBOARD」は置かない — 最初に出る画面が RACE そのものなので、
+// 別名を与えると同じ画面に 2 つの呼び名ができる。
 const navItems: NavItem[] = [
-  // Dashboard がモデルの成績・一覧・学習・役割の割り当てを兼ねる。
-  // モデル詳細 (/models/:id) からもここが active に見えるようにする。
-  { to: '/', label: 'DASHBOARD', activeMatch: (p) => p === '/' || p.startsWith('/models') },
   {
-    to: '/races',
+    to: '/race',
     label: 'RACE',
-    activeMatch: (p) => p.startsWith('/races') || p.startsWith('/upcoming') || p.startsWith('/past'),
+    // '/races' も startsWith('/race') に入る (旧ブックマークの一瞬の滞在)。
+    activeMatch: (p) =>
+      p === '/' || p.startsWith('/race') || p.startsWith('/upcoming') || p.startsWith('/past'),
   },
   { to: '/ledger', label: 'LEDGER' },
+  // モデル詳細 (/models/:id) からもここが active に見えるようにする。
+  { to: '/models', label: 'MODEL', activeMatch: (p) => p.startsWith('/models') },
   {
     to: '/settings',
     label: 'SETTINGS',

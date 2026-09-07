@@ -2,9 +2,10 @@ import { useState } from 'react';
 import type { ChangeEvent, ReactNode } from 'react';
 import { Wallet } from 'lucide-react';
 
+import { SectionHeading } from '@/components/SectionHeading';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -232,7 +233,7 @@ export function RecommendationsCard({
     // 線を引くと面の下端と罫線が二重になる。区切りは余白と見出しが持つ。
     <Card className="pt-6">
       <CardHeader>
-        <CardTitle className="text-label-ja">推奨買目</CardTitle>
+        <SectionHeading>推奨買目</SectionHeading>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {overrides != null && onOverridesChange != null && (

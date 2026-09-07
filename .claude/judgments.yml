@@ -7,17 +7,25 @@ judgments:
   - key: "docs:models_screenshot_caption"
     path: README.md
     decision: "このリポジトリでは直さない"
-    why: "docs/images/models.png のキャプション「モデル管理 — 学習・切替・バックテストを画面から実行」は独立した画面を指すが、/models は Dashboard へ redirect 済みで、dashboard.png と同じ画面を 2 回載せている。ただし該当行 (181) は portfolio:begin〜end の内側で portfolio-site の projects.ts からの生成物なので、直しても次の生成で消える。直す場所は portfolio-site 側。画像ファイル自体は新しい配色で撮り直した"
+    why: "2026-09-06 に /models が独立した画面へ戻ったので、キャプション「モデル管理 — 学習・切替・バックテストを画面から実行」は正しくなった。残る問題は 2 つ: (a)「ダッシュボード画面」というキャプション (dashboard.png) が指す画面はもう無い、(b) 5 枚すべて Topbar が旧タブ (DASHBOARD 有り) のまま。ただし該当行 (123-135) は portfolio:begin〜end の内側で portfolio-site の projects.ts からの生成物なので、直しても次の生成で消える。直す場所は portfolio-site 側"
     at: 181
     date: 2026-09-05
     by: "/design --renew"
   - key: "design:metric_cards_over_limit"
-    path: frontend/src/routes/Dashboard.tsx
+    path: frontend/src/routes/Ledger.tsx
     decision: "いまは直さない"
-    why: "docs/design.md「箱の使いどころ」は指標カードを 1 画面 1〜3 個までとしているが、Dashboard は 5 枚 (単勝回収率/複勝回収率/本命的中率/複勝的中率/log-loss)、Ledger も 5 枚 (累計投資/累計払戻/純利益/回収率/的中率) 並んでいる。減らすには「その画面の答えはどれか」を決める必要があり、見た目ではなく情報設計の判断。/design --renew の範囲 (配色・字・余白・角丸・状態) を超えるので、独断で削らずに残す"
+    why: "docs/design.md「箱の使いどころ」は指標カードを 1 画面 1〜3 個までとしているが、Ledger は 5 枚 (累計投資/累計払戻/純利益/回収率/的中率) 並んでいる。モデル画面 (旧 Dashboard) の 7 枚は 2026-09-06 に 0 枚にした — 下の ModelTable に同じ列があってカードは active 行の焼き直しだったうえ、答え (基準を越えているか) は色つきの 1 文で言えたため。Ledger には同じ逃がし先が無く、5 つのうちどれが答えかは「収支を見に来る理由」を決めないと選べない。次に Ledger を触るときに決める"
     until: 2026-12-31
     date: 2026-09-05
     by: "/design --renew"
+  - key: "design:stale_screenshots"
+    path: docs/images/
+    decision: "この差分では撮り直さない"
+    why: "5 枚すべて Topbar が旧タブ (DASHBOARD / RACE / LEDGER / SETTINGS) で、dashboard.png は無くなった画面、models.png は KPI カード 7 枚時代のモデル画面。撮り直すにはバックエンド + 学習済みモデル + 取込済み DB を揃えてブラウザで撮る必要があり (この repo に playwright は無い)、画面構成の変更とは別作業。README の参照行は portfolio:begin〜end の生成物なのでキャプション側は portfolio-site で直す"
+    until: 2026-12-31
+    date: 2026-09-06
+    by: "/design --renew dashboard の画面構成"
+
   - key: "ref:.venv/Lib/site-packages/main.py"
     path: CLAUDE.md
     decision: "直さない"

@@ -4,8 +4,9 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play, Loader2, Archive, Trash2, RefreshCw } from 'lucide-react';
 
+import { SectionHeading } from '@/components/SectionHeading';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -189,10 +190,10 @@ function SavedRunsPanel({ modelId, activeRunId, onLoad, onDeleted }: SavedRunsPa
   return (
     <Card className="border-t border-border pt-6">
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="flex items-center gap-2 text-label-ja">
+        <SectionHeading className="gap-2">
           <Archive className="h-4 w-4" />
           過去の実行 ({runs.length})
-        </CardTitle>
+        </SectionHeading>
         <Button
           type="button"
           variant="ghost"
@@ -439,7 +440,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
           「まだ何か入力欄があるのでは」と読ませてしまうので横に並べる。 */}
       <Card className="border-t border-border pt-6">
         <CardHeader>
-          <CardTitle className="text-label-ja">条件</CardTitle>
+          <SectionHeading>条件</SectionHeading>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
           <div className="flex max-w-sm flex-col gap-4">
@@ -569,10 +570,10 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               収支は 0 スタート。元手が無いので「増えたか減ったか」だけを出す。 */}
           <Card className="border-t border-border pt-6">
             <CardHeader>
-              {/* 見出しは 条件 / 損益推移 / 内訳 と同じ CardTitle にする。
+              {/* 見出しは 条件 / 損益推移 / 内訳 と同じ SectionHeading にする。
                   素の h3 だと .text-label-ja の 11px だけが効いて、ここだけ
                   小さく出ていた。 */}
-              <CardTitle className="text-label-ja">結果</CardTitle>
+              <SectionHeading>結果</SectionHeading>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
 
@@ -655,7 +656,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
           {/* ── 3. 損益推移 ───────────────────────────────────── */}
           <Card className="border-t border-border pt-6">
             <CardHeader>
-              <CardTitle className="text-label-ja">損益推移</CardTitle>
+              <SectionHeading level={3}>損益推移</SectionHeading>
             </CardHeader>
             <CardContent>
               <ProfitChart points={result.profit_timeseries} />
@@ -669,7 +670,7 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
               なので、表の見出し行として 1 つのカードに畳む。 */}
           <Card className="border-t border-border pt-6">
             <CardHeader className="flex flex-row flex-wrap items-baseline justify-between gap-x-6 gap-y-1 space-y-0">
-              <CardTitle className="text-label-ja">内訳</CardTitle>
+              <SectionHeading level={3}>内訳</SectionHeading>
               <p className="font-mono text-xs tabular-nums text-subtle-foreground">
                 {formatYen(result.summary.invested)}
                 <span className="mx-2 font-sans">→</span>

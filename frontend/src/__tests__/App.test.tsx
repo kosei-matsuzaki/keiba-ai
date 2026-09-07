@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { App } from '../App';
-import { Dashboard } from '../routes/Dashboard';
+import { Models } from '../routes/Models';
 import { Races } from '../routes/Races';
 import { RaceDetail } from '../routes/RaceDetail';
 import { Settings } from '../routes/Settings';
@@ -64,9 +64,9 @@ function makeRouter(initialPath: string) {
         path: '/',
         element: <App />,
         children: [
-          { index: true, element: <Dashboard /> },
-          { path: 'races', element: <Races /> },
-          { path: 'races/:race_id', element: <RaceDetail /> },
+          { path: 'race', element: <Races /> },
+          { path: 'race/:race_id', element: <RaceDetail /> },
+          { path: 'models', element: <Models /> },
           { path: 'settings', element: <Settings /> },
         ],
       },
@@ -92,31 +92,53 @@ beforeEach(() => {
 });
 
 describe('Routing', () => {
-  it('renders Dashboard at /', async () => {
-    renderAt('/');
-    expect(await screen.findByRole('heading', { name: 'モデル' })).toBeInTheDocument();
-  });
-
-  it('renders the unified Race screen at /races', async () => {
-    renderAt('/races');
+  it('最初に出るのは Race 画面 (/race)', async () => {
+    renderAt('/race');
     // 見出しは選択中の日 (今週末が無ければ今日)。曜日つきの M/D 形式。
     expect(await screen.findByText('Race')).toBeInTheDocument();
   });
 
+  it('renders Models at /models', async () => {
+    renderAt('/models');
+    expect(await screen.findByRole('heading', { name: 'モデル' })).toBeInTheDocument();
+  });
+
   it('renders RaceDetail at /races/:id', async () => {
-    renderAt('/races/202406010101');
+    renderAt('/race/202406010101');
     expect(await screen.findByRole('heading', { name: 'レース詳細' })).toBeInTheDocument();
   });
 
-  it('旧 /models は Dashboard へ redirect する (ブックマーク互換)', async () => {
+  it.each(['upcoming', 'past', 'ingest'])('旧 /%s は /race へ redirect する (ブックマーク互換)', async (path) => {
     // 実際のルート定義を見る。ここだけテスト用の複製ではなく本物を確かめたい。
     const { router: appRouter } = await import('../router');
-    const child = appRouter.routes[0].children?.find((r) => r.path === 'models');
+    const child = appRouter.routes[0].children?.find((r) => r.path === path);
     expect(child).toBeDefined();
     const element = (child as { element?: unknown }).element as
       | { props?: { to?: string; replace?: boolean } }
       | undefined;
-    expect(element?.props?.to).toBe('/');
+    expect(element?.props?.to).toBe('/race');
+    expect(element?.props?.replace).toBe(true);
+  });
+
+  it.each([
+    ['/races?date=2026-07-05', {}, '/race?date=2026-07-05'],
+    ['/races', {}, '/race'],
+    ['/races/202406010101?date=2024-06-01', { race_id: '202406010101' },
+      '/race/202406010101?date=2024-06-01'],
+  ])('旧 %s は %s へ送る (?date= と race_id を落とさない)', async (from, params, to) => {
+    // 素の <Navigate to="/race"> はクエリを捨てるので、選んでいた日が消える。
+    const { racesToRaceLoader } = await import('../router');
+    const res = racesToRaceLoader({ request: new Request(`http://localhost${from}`), params });
+    expect((res as Response).headers.get('Location')).toBe(to);
+  });
+
+  it('/ は /race へ送る (画面に呼び名を 2 つ作らない)', async () => {
+    const { router: appRouter } = await import('../router');
+    const index = appRouter.routes[0].children?.find((r) => r.index);
+    const element = (index as { element?: unknown }).element as
+      | { props?: { to?: string; replace?: boolean } }
+      | undefined;
+    expect(element?.props?.to).toBe('/race');
     expect(element?.props?.replace).toBe(true);
   });
 
@@ -127,11 +149,12 @@ describe('Routing', () => {
 
   it('topbar contains all navigation links', async () => {
     renderAt('/');
-    // Topbar の 4 タブ。等幅の英字のみ (MODELS は Dashboard に統合したので無い)
-    expect(await screen.findByRole('link', { name: 'DASHBOARD' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'RACE' })).toBeInTheDocument();
+    // Topbar の 4 タブ。等幅の英字のみ。DASHBOARD は置かない —
+    // 最初に出る画面が RACE そのもので、別名を与えると呼び名が 2 つになる。
+    expect(await screen.findByRole('link', { name: 'RACE' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'LEDGER' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'MODELS' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'MODEL' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'SETTINGS' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'DASHBOARD' })).not.toBeInTheDocument();
   });
 });

@@ -89,14 +89,14 @@ const mockPredictions: BulkPredictionsResponse = {
   },
 };
 
-function renderRaces(path = '/races') {
+function renderRaces(path = '/race') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/races" element={<Races />} />
-          <Route path="/races/:race_id" element={<div data-testid="race-detail" />} />
+          <Route path="/race" element={<Races />} />
+          <Route path="/race/:race_id" element={<div data-testid="race-detail" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -147,7 +147,7 @@ describe('Races', () => {
   });
 
   it('?date= があればその日を優先する', async () => {
-    renderRaces('/races?date=2026-07-05');
+    renderRaces('/race?date=2026-07-05');
     await waitFor(() => {
       expect(vi.mocked(fetchRacesByDate)).toHaveBeenCalledWith('2026-07-05');
     });
@@ -210,7 +210,7 @@ describe('Races', () => {
   });
 
   it('今週末が未取込なら、取り込む画面であるここに知らせを出す', async () => {
-    // 以前は Dashboard に出していたが、そこから「レース一覧へ」を踏んで日を選んで
+    // 以前はモデル画面 (当時の `/`) に出していたが、そこから「レース一覧へ」を踏んで日を選んで
     // 取り込む、と動線が長かった。知らせの下がそのまま取込操作になる場所に置く。
     vi.mocked(fetchThisWeekendRaces).mockResolvedValue({ races: [] });
     renderRaces();

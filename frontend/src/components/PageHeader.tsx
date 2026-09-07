@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 interface PageHeaderProps {
   /**
    * 見出しの左に置く印。数字を持つのは**レースだけ**なので、レース系の画面が
-   * `11R` を渡す。Dashboard / Ledger / Models / Settings は渡さない
+   * `11R` を渡す。Race / Ledger / Model / Settings は渡さない
    * (章番号は読み物の語彙で、この題材のものではない)。
    */
   marker?: ReactNode;

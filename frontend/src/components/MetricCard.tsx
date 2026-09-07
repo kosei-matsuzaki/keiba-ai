@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { InfoTip } from '@/components/InfoTip';
 import { cn } from '@/lib/cn';
 import {
   METRIC_ACCENT_CLASS,
@@ -27,7 +28,10 @@ interface MetricCardProps {
   /** 値の下の 1 行。基準（1.00 = トントン）や出所を書く。 */
   note?: ReactNode;
   tone?: MetricTone;
-  /** マウスオーバーで出す補足。読まなくても困らないことはこちらへ。 */
+  /**
+   * ラベル横の「?」に畳む補足。読まなくても操作できることだけを入れる。
+   * 基準 (1.00 = トントン) のような**定義**がここ。窓は畳まず `note` に出す。
+   */
   hint?: string;
   className?: string;
 }
@@ -41,13 +45,10 @@ export function MetricCard({
   className,
 }: MetricCardProps) {
   return (
-    <div
-      title={hint}
-      className={cn(METRIC_CARD_CLASS, METRIC_ACCENT_CLASS[tone], className)}
-    >
-      <span className="text-xs text-muted-foreground">
+    <div className={cn(METRIC_CARD_CLASS, METRIC_ACCENT_CLASS[tone], className)}>
+      <span className="flex items-center gap-1 text-xs text-muted-foreground">
         {label}
-        {hint && <span className="ml-1 text-subtle-foreground/60">?</span>}
+        {hint && <InfoTip label={label} text={hint} />}
       </span>
       <span
         className={cn(

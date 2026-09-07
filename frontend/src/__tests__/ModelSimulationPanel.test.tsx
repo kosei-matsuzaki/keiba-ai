@@ -165,9 +165,10 @@ describe('ModelSimulationPanel の結果', () => {
     } as never);
     await loadRun();
     // 「期間」は入力フォームにもあるので、結果カードの中に限定して探す
-    // (見出しは CardHeader の中なので 2 つ上がって Card を取る)
+    // (h2 → SectionHeading のラッパ → CardHeader → Card で 3 つ上がる)
+    const heading = await screen.findByRole('heading', { name: '結果' });
     const card = within(
-      (await screen.findByText('結果')).parentElement?.parentElement as HTMLElement
+      heading.parentElement?.parentElement?.parentElement as HTMLElement
     );
     // 項目名が読める。以前は 5 項目を「・」で 1 行に繋いでいて区切りが分からなかった
     for (const label of ['期間', 'レース数', '1 レースの上限', '確率モデル', '券種']) {

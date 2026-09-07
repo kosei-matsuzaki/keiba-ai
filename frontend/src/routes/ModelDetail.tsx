@@ -4,13 +4,14 @@ import { ArrowLeft } from 'lucide-react';
 
 import { fetchModel } from '@/lib/api';
 import { useActivateModel } from '@/hooks/useActivateModel';
+import { SectionHeading } from '@/components/SectionHeading';
 import { MetricBand, MetricItem } from '@/components/MetricBand';
 import { ModelSimulationPanel } from '@/components/ModelSimulationPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { formatDateTime, formatScore } from '@/lib/formatters';
@@ -151,7 +152,7 @@ export function ModelDetail() {
         <>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-              <CardTitle className="flex items-center gap-3">
+              <SectionHeading className="gap-3">
                 {title}
                 {/* 役割は 2 つある: Active = 買い目を決める / 確率 = 確からしさを出す。
                     兼務もありうるので併記する。 */}
@@ -163,7 +164,7 @@ export function ModelDetail() {
                 {model.is_probability_model && (
                   <Badge title="複勝の確信度と連系の確率に使われています">確率</Badge>
                 )}
-              </CardTitle>
+              </SectionHeading>
               {!model.is_active && (
                 <Button
                   size="sm"

@@ -159,7 +159,7 @@ export function ModelTable({
                 actions={[
                   {
                     label: activatingId === model.id ? '切り替え中…' : 'Activate',
-                    title: 'このモデルで買い目を決めるようにする',
+                    hint: 'このモデルで買い目を決めるようにする',
                     disabled: model.is_active || activatingId !== null,
                     onSelect: () => onActivate(model.id),
                   },
@@ -167,7 +167,7 @@ export function ModelTable({
                     // 学習時の指標は実運用の賭けルールと別物なので、ここで測り直せる
                     // ようにする。log-loss は学習側に存在せず、これでしか埋まらない。
                     label: evaluatingId === model.id ? '計測中…' : '計測',
-                    title:
+                    hint:
                       m.source === 'backtest'
                         ? '実運用の賭けルールで測り直します (5,000 レースで 10 分前後)'
                         : '実運用の賭けルールで測ります。log-loss と評価窓もここで埋まります',
@@ -178,7 +178,7 @@ export function ModelTable({
                     // 役割の割り当ては Settings ではなくこの画面で行う。
                     // モデルを見比べている場所で選べないと意味がないため。
                     label: model.is_probability_model ? '確率を解除' : '確率に設定',
-                    title: model.is_probability_model
+                    hint: model.is_probability_model
                       ? '確率モデルの割り当てを解除します'
                       : '複勝の確信度と連系の確率にこのモデルを使います',
                     disabled: settingProbability,
@@ -189,7 +189,7 @@ export function ModelTable({
                   {
                     label: '削除',
                     tone: 'destructive',
-                    title: model.is_active ? 'Active モデルは削除できません' : undefined,
+                    hint: model.is_active ? 'Active モデルは削除できません' : undefined,
                     disabled: model.is_active,
                     onSelect: () => onDelete(model),
                   },

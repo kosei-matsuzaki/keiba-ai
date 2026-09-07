@@ -158,7 +158,7 @@ function RaceTable({ section, onRowClick }: RaceTableProps) {
 /**
  * 今週末のレースがまだ取り込まれていないことを、**取り込む画面**で知らせる。
  *
- * 以前は Dashboard に出していたが、そこから「レース一覧へ」を踏んで日を選んで
+ * 以前はモデル画面 (当時の `/`) に出していたが、そこから「レース一覧へ」を踏んで日を選んで
  * 取り込む、と動線が長かった。ここなら知らせの下がそのまま取込操作になる。
  * 取り込めているときは何も出さない。
  */
@@ -227,7 +227,7 @@ export function Races() {
   }
 
   function handleRowClick(race: RaceSummary) {
-    navigate(`/races/${race.race_id}?date=${selectedDate}`);
+    navigate(`/race/${race.race_id}?date=${selectedDate}`);
   }
 
   const raceList = isPending ? (

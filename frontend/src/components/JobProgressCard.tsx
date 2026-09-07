@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
+import { SectionHeading } from '@/components/SectionHeading';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { useJobStatus } from '@/hooks/useJobStatus';
 import { formatDateTime } from '@/lib/formatters';
 import type { JobInfo } from '@/types/api';
@@ -60,7 +61,7 @@ export function JobProgressCard({ jobId, onDismiss, title = 'ジョブ進捗' }:
   return (
     <Card className="border-t border-border pt-6">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-3">
+        <SectionHeading className="gap-3">
           {title}
           {job && statusBadge(job.status)}
           {isTerminal && onDismiss && (
@@ -68,7 +69,7 @@ export function JobProgressCard({ jobId, onDismiss, title = 'ジョブ進捗' }:
               閉じる
             </Button>
           )}
-        </CardTitle>
+        </SectionHeading>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {query.isPending && !job && (

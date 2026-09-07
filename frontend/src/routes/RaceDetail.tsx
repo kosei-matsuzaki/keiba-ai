@@ -6,6 +6,7 @@ import { useRaceDetail } from '@/hooks/useRaceDetail';
 import { usePredictions } from '@/hooks/usePredictions';
 import { useRecommendations } from '@/hooks/useRecommendations';
 import { useRunShutuba } from '@/hooks/useRunShutuba';
+import { SectionHeading } from '@/components/SectionHeading';
 import { DayRacePicker } from '@/components/DayRacePicker';
 import { EntryPredictionTable } from '@/components/EntryPredictionTable';
 import { RecommendationsCard } from '@/components/RecommendationsCard';
@@ -14,7 +15,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { isNotFoundError, isServiceUnavailableError, formatErrorMessage } from '@/lib/api';
 import { formatYen } from '@/lib/formatters';
 import { raceNumber } from '@/lib/races';
@@ -191,11 +192,10 @@ export function RaceDetail() {
   // NOTE: 出馬表取込・AI 予想はいずれも画面表示時に自動実行しない。
   // すべて下部の各ボタン (出馬表を取得 / AI 予想を実行) で明示的に開始する。
 
-  // date を引き継いで一覧の選択日を復元する。
-  // 旧 `/past` は /races へ redirect され query を落とすため直接 /races を指す。
+  // date を引き継いで一覧の選択日を復元する。一覧は `/race` (旧 /races)。
   const backLink = dateParam
-    ? `/races?date=${dateParam}`
-    : '/races';
+    ? `/race?date=${dateParam}`
+    : '/race';
 
   if (raceQuery.isPending) {
     return (
@@ -393,7 +393,7 @@ export function RaceDetail() {
       {/* Race overview — ラベルと値の塊なので面で囲う (罫線を足さない) */}
       <Card className="block-surface">
         <CardHeader>
-          <CardTitle className="text-label-ja">レース概要</CardTitle>
+          <SectionHeading>レース概要</SectionHeading>
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
@@ -462,7 +462,7 @@ export function RaceDetail() {
       {hasEntries && !recHasTabs && (
         <Card className="pt-6">
           <CardHeader>
-            <CardTitle className="text-label-ja">出走馬一覧</CardTitle>
+            <SectionHeading>出走馬一覧</SectionHeading>
           </CardHeader>
           <CardContent>{entryTable}</CardContent>
         </Card>
@@ -481,7 +481,7 @@ function BackLink({ to }: BackLinkProps) {
     <Link
       to={to}
       className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      aria-label="Past Races へ戻る"
+      aria-label="レース一覧へ戻る"
     >
       <ChevronLeft className="h-4 w-4" />
       戻る

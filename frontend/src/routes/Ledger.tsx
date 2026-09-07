@@ -18,6 +18,7 @@ import { useBetList } from '@/hooks/useBetList';
 import { useDeleteBets } from '@/hooks/useDeleteBets';
 import { buildBetExportUrl, type BetFilterParams } from '@/lib/api';
 import { formatYen, formatPercent, formatDateTime } from '@/lib/formatters';
+import { SectionHeading } from '@/components/SectionHeading';
 import { AddBetDialog } from '@/components/AddBetDialog';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
 import { MetricBand, MetricItem } from '@/components/MetricBand';
@@ -25,7 +26,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -649,7 +650,7 @@ export function Ledger() {
       {/* Cumulative profit chart */}
       <Card className="border-t border-border pt-6">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-label-ja">累計損益推移</CardTitle>
+          <SectionHeading>累計損益推移</SectionHeading>
           <div className="flex gap-1">
             {(['day', 'week', 'month'] as const).map((b) => (
               <Button
@@ -672,7 +673,7 @@ export function Ledger() {
       {/* Breakdown table */}
       <Card className="border-t border-border pt-6">
         <CardHeader className="pb-2">
-          <CardTitle className="text-label-ja">券種別ブレイクダウン</CardTitle>
+          <SectionHeading>券種別ブレイクダウン</SectionHeading>
         </CardHeader>
         <CardContent>
           {breakdownQuery.isPending ? (
@@ -693,7 +694,7 @@ export function Ledger() {
             className="flex w-full items-center justify-between"
             onClick={() => setShowDetail((v) => !v)}
           >
-            <CardTitle className="text-label-ja">購入明細</CardTitle>
+            <SectionHeading>購入明細</SectionHeading>
             {showDetail ? (
               <ChevronUp className="h-4 w-4 text-muted-foreground" />
             ) : (

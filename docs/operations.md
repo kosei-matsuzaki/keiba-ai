@@ -13,7 +13,7 @@
 2. ブラウザで `http://localhost:5173` を開く
 3. Settings 画面で User-Agent と取り込みレート（秒）を設定する
 4. Race 画面のカレンダーで日を選び、取込パネルから初回データ取り込みを実行する
-5. Dashboard で初回学習を実行し、生成されたモデルを active に切り替える
+5. Model 画面 (`/models`) で初回学習を実行し、生成されたモデルを active に切り替える
 6. Race 画面でレース一覧を確認し、Race Detail 画面で馬ごとの予想を確認する
 
 前提は [uv](https://docs.astral.sh/uv/) / Node.js 20+ / pnpm。**スクレイピング済みデータと
@@ -127,7 +127,7 @@ curl http://127.0.0.1:8765/api/jobs/{job_id}
 
 この集計を表示する画面は現在ありません。CLI 実行中の進み具合は上の `recent_activity` を叩いて確認します。
 
-UI の Dashboard / Race 画面では JobProgressCard が API ジョブ（`POST /api/models/train`、`POST /api/scraper/run`）の進捗を 2 秒間隔で polling し、terminal status（completed / failed）で自動停止します。
+UI の Model / Race 画面では JobProgressCard が API ジョブ（`POST /api/models/train`、`POST /api/scraper/run`）の進捗を 2 秒間隔で polling し、terminal status（completed / failed）で自動停止します。
 
 ### モデル学習
 
@@ -152,7 +152,7 @@ uv run python -m ai.training.train_nn --loss multi --monitor valid_tansho_roi \
 # バックテスト評価（payback_win / payback_place / top1_hit / place_hit / log_loss / NDCG）
 uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn
 
-# 評価結果を model_runs.metrics_json に保存する（Dashboard の KPI に反映させる場合は必須）
+# 評価結果を model_runs.metrics_json に保存する（Model 画面の指標に反映させる場合は必須）
 uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn --persist
 
 # 1 番人気常時投票ベースラインとの比較（delta = model - baseline を追加出力）
@@ -160,10 +160,10 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
     --baseline favorite
 ```
 
-> 画面からも実行できる（Dashboard のモデル一覧の「計測」= `POST /api/models/{id}/evaluate`）。
+> 画面からも実行できる（Model 画面のモデル一覧の「計測」= `POST /api/models/{id}/evaluate`）。
 > CLI と同じく確率モデルと確信度しきい値を settings から解決するので同じ数字になる。
 >
-> **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は学習ループが測った valid / test の指標で、レース集合も指標の定義もアプリの画面と揃っていない。`--persist` を回すと backtest が**アプリと同じ賭けルール**（単勝・複勝ともモデルの本命 1 点）で測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、**同じレース集合の** `ndcg*` を上書き保存し、Dashboard が「利用者が実際に得る数字」を表示するようになる。
+> **`--persist` を使う理由**: 学習が書く `model_runs.metrics_json` は学習ループが測った valid / test の指標で、レース集合も指標の定義もアプリの画面と揃っていない。`--persist` を回すと backtest が**アプリと同じ賭けルール**（単勝・複勝ともモデルの本命 1 点）で測り直した `top1_hit` / `place_hit` / `payback_win` / `payback_place` / `n_races` と、**同じレース集合の** `ndcg*` を上書き保存し、Model 画面が「利用者が実際に得る数字」を表示するようになる。
 >
 > 数字は変わる（以下は **test 19ヶ月の窓で測った例**で、いまの実測ではない。最新の値は [ai-model.md](ai-model.md) の「OOS 実測」）。単勝回収率は学習時 `test_tansho_roi` 0.930 に対し backtest 0.931 とほぼ一致する（どちらも本命 1 点）が、複勝的中率は 0.503 → 0.885 と大きく動く。これは改善ではなく**定義が違う**ためで、前者は「予想 1 位が 3 着以内」、後者は「上位 3 頭のうち 1 頭以上が 3 着以内」。**学習直後に必ず `--persist` 付きで評価すること。**
 
@@ -173,7 +173,7 @@ uv run python -m ai.evaluation.backtest --model data/models/20260501T120000-nn \
 curl http://127.0.0.1:8765/api/metrics/summary
 ```
 
-Dashboard 画面は同じ値を KPI 帯とモデル比較表に出します（出所・レース数・評価窓つき）。
+Model 画面は同じ値を単勝回収率のカードとモデル比較表に出します（出所・レース数・評価窓つき）。
 
 ### active モデルの切り替え
 
@@ -184,7 +184,7 @@ Dashboard 画面は同じ値を KPI 帯とモデル比較表に出します（�
 curl -X POST http://127.0.0.1:8765/api/models/{id}/activate
 ```
 
-UI の Dashboard のモデル一覧でも Activate ボタンから操作できます。
+UI の Model 画面のモデル一覧でも Activate ボタンから操作できます。
 
 ### モデル世代管理
 
@@ -208,7 +208,7 @@ data/models/          # リポジトリ直下（backend/ の下ではない。co
 - 古いモデルは自動削除されません。手動で削除するまで保持されます
 - ディスク容量の目安: 1 モデルあたり数 MB 程度（NN のパラメータ数による）
 
-モデル一覧・詳細は `GET /api/models[/{id}]`、UI の Dashboard のモデル一覧でも確認できます。
+モデル一覧・詳細は `GET /api/models[/{id}]`、UI の Model 画面でも確認できます。
 
 ### 設定の永続化
 

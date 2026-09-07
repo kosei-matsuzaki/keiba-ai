@@ -6,7 +6,7 @@ export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
    * 罫線と背景を持つ「箱」にする。既定は false。
    *
    * この UI は面ではなく **罫線と余白** で領域を作るのが基本。ただし
-   * **1 画面に別種の情報が 5〜6 個並ぶところ (Dashboard / シミュレーション) は
+   * **1 画面に別種の情報が 5〜6 個並ぶところ (Ledger / シミュレーション) は
    * 画面直下の塊にだけ箱を付ける**。罫線と余白だけだと、どこまでが 1 つの話か
    * 読み取れなかったため。
    *
@@ -40,17 +40,6 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
 );
 CardHeader.displayName = 'CardHeader';
 
-const CardTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLHeadingElement>>(
-  ({ className, ...props }, ref) => (
-    <h3
-      ref={ref}
-      className={cn('text-lg font-semibold leading-tight tracking-tight', className)}
-      {...props}
-    />
-  )
-);
-CardTitle.displayName = 'CardTitle';
-
 const CardDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
@@ -71,4 +60,4 @@ const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
 );
 CardFooter.displayName = 'CardFooter';
 
-export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter };
+export { Card, CardHeader, CardDescription, CardContent, CardFooter };

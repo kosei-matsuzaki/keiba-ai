@@ -134,7 +134,13 @@ describe('Ledger', () => {
 
   it('renders cumulative profit chart section', async () => {
     renderLedger();
-    expect(await screen.findByText('累計損益推移')).toBeInTheDocument();
+    // 節の見出しは全画面で同じ形 (SectionHeading = h2 + text-base + 右へ伸びる罫線)。
+    // 旧 CardTitle は text-label-ja を重ねていたが、レイヤ順で 18px のまま色だけ
+    // subtle になり、Model / Settings の見出しと違って見えていた。
+    const heading = await screen.findByRole('heading', { name: '累計損益推移', level: 2 });
+    expect(heading).toHaveClass('text-base');
+    // 横線は既定で引かない (縦に積むと縞になる)
+    expect(heading.nextElementSibling).not.toHaveClass('bg-border');
   });
 
   it('renders breakdown table with correct rows', async () => {

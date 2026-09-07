@@ -11,10 +11,10 @@ import { useModels } from '@/hooks/useModels';
 import { useTrainModel } from '@/hooks/useTrainModel';
 import { useUpdateModel } from '@/hooks/useUpdateModel';
 import { useUpdateSettings } from '@/hooks/useSettings';
+import { SectionHeading } from '@/components/SectionHeading';
 import { DeleteModelDialog } from '@/components/DeleteModelDialog';
 import { EditModelNameDialog } from '@/components/EditModelNameDialog';
 import { EmptyState } from '@/components/EmptyState';
-import { HelpDot } from '@/components/HelpDot';
 import { JobProgressCard } from '@/components/JobProgressCard';
 import { ModelTable } from '@/components/ModelTable';
 import { OperatingModels } from '@/components/OperatingModels';
@@ -55,14 +55,17 @@ function StatusBand({
 }
 
 /**
- * モデルに関する操作をすべて持つ 1 画面。
+ * モデルに関する操作をすべて持つ 1 画面 (`/models`)。
  *
  * 成績 (KPI)・比較 (一覧)・学習・役割の割り当てを別画面に分けていたが、
  * **見比べてから選ぶ**という流れが画面をまたいでいた。active を切り替えるのも
  * 確率モデルを割り当てるのも「数字を見た直後」にやることなので同じ画面に置く。
  * 個別モデルのバックテストだけは重いので詳細 (`/models/:id`) に残す。
+ *
+ * **最初に出る画面ではない。**開く理由は学習し直したときだけなので、最初に出るのは
+ * `/race` (`router.tsx` が `/` から送る)。
  */
-export function Dashboard() {
+export function Models() {
   const summary = useMetricsSummary();
   const modelsQuery = useModels();
   const queryClient = useQueryClient();
@@ -193,8 +196,8 @@ export function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col gap-10 p-6">
-      <PageHeader eyebrow="Dashboard" title="モデル" />
+    <div className="flex flex-col gap-8 p-6">
+      <PageHeader eyebrow="Model" title="モデル" />
 
       <StatusBand
         hasActiveModel={activeModel != null}
@@ -210,17 +213,11 @@ export function Dashboard() {
       )}
 
       {/* ── 塊 1: いま動いているもの ──────────────────────────────
-          運用中の 2 モデルと、その数字。**役割カードと KPI 帯を分けない** —
-          分けると同じ active の回収率が上下 2 箇所に出て、どのモデルの数字か
-          読み取れなくなる。左は利用者が得る回収率、右は確率としての正しさ。 */}
-      <section aria-label="運用中" className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <h2 className="text-label-ja">いま予想に使っているモデル</h2>
-          <HelpDot
-            label="いま予想に使っているモデル"
-            text="買い目を決める側 (active) と、確からしさを出す側 (確率モデル) の 2 つで動きます。買う馬を決めるのは前者、複勝を買うかの判定と連系の確率は後者です。"
-          />
-        </div>
+          運用中の 2 モデルと、その数字。**数字をモデルから切り離さない** —
+          切り離すと同じ active の回収率が 2 箇所に出て、どのモデルの数字か
+          読み取れなくなる。左が買う馬を決める側、右が確からしさを答える側。 */}
+      <section aria-label="運用中" className="flex flex-col gap-4">
+        <SectionHeading>いま予想に使っているモデル</SectionHeading>
         {summary.isError ? (
           <EmptyState
             message="メトリクス取得に失敗しました"
@@ -240,28 +237,27 @@ export function Dashboard() {
           **推移グラフを置かないのは、モデルごとに評価窓が違うから。**
           学習の --train-end を変えれば test 期間も動くので、時系列に並べても
           「良くなった / 悪くなった」は読めない。窓を列で見せる。 */}
-      <section aria-label="モデル一覧" className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h2 className="text-label-ja">手持ちのモデル</h2>
-            <HelpDot
-              label="手持ちのモデル"
-              text="役割の割り当て (Activate / 確率に設定)・実運用の賭けルールでの測り直し (計測)・名称編集・削除はこの表から行います。"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCompact}
-              disabled={compactMutation.isPending}
-              title="ModelRun.id を作成日時順に 1..N に詰める"
-            >
-              {compactMutation.isPending ? 'ID 詰め中…' : 'ID を詰める'}
-            </Button>
-            <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
-          </div>
-        </div>
+      <section aria-label="モデル一覧" className="flex flex-col gap-4">
+        {/* 一覧に対する操作は見出しの罫線の右へ。ページ見出しの横に置いていた
+            ときは、何に対する操作か分からなかった。 */}
+        <SectionHeading
+          aside={
+            <span className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCompact}
+                disabled={compactMutation.isPending}
+                title="ModelRun.id を作成日時順に 1..N に詰める"
+              >
+                {compactMutation.isPending ? 'ID 詰め中…' : 'ID を詰める'}
+              </Button>
+              <TrainModelDialog onSubmit={handleTrain} isPending={trainMutation.isPending} />
+            </span>
+          }
+        >
+          手持ちのモデル
+        </SectionHeading>
         {modelsQuery.isPending ? (
           <Skeleton className="h-64 w-full rounded-sm" />
         ) : modelsQuery.isError ? (
