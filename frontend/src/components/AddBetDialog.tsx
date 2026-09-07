@@ -330,39 +330,40 @@ export function AddBetDialog() {
             </Select>
           </div>
 
-          {/* 券種 + 買い方 */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-2">
-              <Label>券種</Label>
-              <Select value={betType} onValueChange={(v) => setBetType(v as BetType)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BET_TYPES.map((bt) => (
-                    <SelectItem key={bt} value={bt}>
-                      {bt}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>買い方</Label>
-              <div className="flex flex-wrap gap-1">
-                {allowedMethods.map((m) => (
-                  <Button
-                    key={m}
-                    type="button"
-                    size="sm"
-                    variant={method === m ? 'default' : 'outline'}
-                    className="h-9 px-2 text-xs"
-                    onClick={() => setMethod(m)}
-                  >
-                    {METHOD_LABEL[m]}
-                  </Button>
+          {/* 券種 */}
+          <div className="grid gap-2">
+            <Label>券種</Label>
+            <Select value={betType} onValueChange={(v) => setBetType(v as BetType)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BET_TYPES.map((bt) => (
+                  <SelectItem key={bt} value={bt}>
+                    {bt}
+                  </SelectItem>
                 ))}
-              </div>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* 買い方。**選択肢の並びは横のまま** — 1 つの項目の中の選び方で、
+              縦に積むと 5 行使って選ぶことになる。 */}
+          <div className="grid gap-2">
+            <Label>買い方</Label>
+            <div className="flex flex-wrap gap-1">
+              {allowedMethods.map((m) => (
+                <Button
+                  key={m}
+                  type="button"
+                  size="sm"
+                  variant={method === m ? 'default' : 'outline'}
+                  className="h-9 px-2 text-xs"
+                  onClick={() => setMethod(m)}
+                >
+                  {METHOD_LABEL[m]}
+                </Button>
+              ))}
             </div>
           </div>
 
@@ -432,22 +433,27 @@ export function AddBetDialog() {
                   {Array.from({ length: axisCount }).map((_, i) => (
                     <div key={i} className="grid gap-2">
                       <Label className="text-xs">{axisCount > 1 ? `軸${i + 1}` : '軸'}</Label>
-                      <div className="flex gap-2">
-                        <HorseSelect
-                          value={axes[i] ?? null}
-                          onChange={(v) =>
-                            setAxes((prev) => {
-                              const a = [...prev];
-                              a[i] = v;
-                              return a;
-                            })
-                          }
-                          horses={horses}
-                          exclude={axes
-                            .filter((_, j) => j !== i)
-                            .filter((x): x is number => x != null)}
-                        />
-                        {ordered && (
+                      <HorseSelect
+                        value={axes[i] ?? null}
+                        onChange={(v) =>
+                          setAxes((prev) => {
+                            const a = [...prev];
+                            a[i] = v;
+                            return a;
+                          })
+                        }
+                        horses={horses}
+                        exclude={axes
+                          .filter((_, j) => j !== i)
+                          .filter((x): x is number => x != null)}
+                      />
+                      {/* 着順は馬とは別の値なので、横に並べず**自分のラベルを持たせる**。
+                          横並びのときは何を選ぶ欄なのかがラベル無しで読めなかった。 */}
+                      {ordered && (
+                        <>
+                          <Label className="text-xs text-subtle-foreground">
+                            {axisCount > 1 ? `軸${i + 1}の着順` : '軸の着順'}
+                          </Label>
                           <Select
                             value={String(axisPositions[i] ?? i + 1)}
                             onValueChange={(v) =>
@@ -458,7 +464,7 @@ export function AddBetDialog() {
                               })
                             }
                           >
-                            <SelectTrigger className="w-24 shrink-0">
+                            <SelectTrigger>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -469,8 +475,8 @@ export function AddBetDialog() {
                               ))}
                             </SelectContent>
                           </Select>
-                        )}
-                      </div>
+                        </>
+                      )}
                     </div>
                   ))}
 
@@ -508,22 +514,22 @@ export function AddBetDialog() {
             </div>
           )}
 
-          {/* 金額 + メモ */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-2">
-              <Label>1点あたり (円)</Label>
-              <Input
-                type="number"
-                min={100}
-                step={100}
-                value={perStake}
-                onChange={handleStakeChange}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>メモ (任意)</Label>
-              <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="任意" />
-            </div>
+          {/* 1点あたり */}
+          <div className="grid gap-2">
+            <Label>1点あたり (円)</Label>
+            <Input
+              type="number"
+              min={100}
+              step={100}
+              value={perStake}
+              onChange={handleStakeChange}
+            />
+          </div>
+
+          {/* メモ */}
+          <div className="grid gap-2">
+            <Label>メモ (任意)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="任意" />
           </div>
 
           {/* 点数サマリ */}
