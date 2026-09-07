@@ -89,6 +89,8 @@ docs:
       role: 技術仕様 (技術スタック・ディレクトリ構成・DB スキーマ・API エンドポイント・開発ビルド手順)
     - path: docs/design.md
       role: 設計方針 (非機能要件・アーキテクチャ図・AI モジュール責務分離・UI 画面構成・状態管理・拡張ポイント)
+    - path: docs/ui-style.md
+      role: 見た目の規定 (方向・色の 3 層・トークン・字の尺度・余白・角丸・状態・部品の形)。画面はここの値だけを使う
     - path: docs/data-pipeline.md
       role: スクレイピング・取り込み仕様 (対象 URL・レート制御・robots.txt 遵守・HTML キャッシュ・増分取得・失敗レジューム・法的配慮)
     - path: docs/ai-model.md
@@ -108,6 +110,7 @@ docs:
     docs/README.md: 150
     docs/spec.md: 800
     docs/design.md: 550
+    docs/ui-style.md: 450
     docs/data-pipeline.md: 300
     docs/ai-model.md: 900
     docs/operations.md: 600
@@ -129,7 +132,7 @@ docs:
       why: 取り込み手順・レート制御・レジュームの挙動が変わった
 
     - source: ["frontend/src/**"]
-      docs: ["docs/design.md"]
+      docs: ["docs/design.md", "docs/ui-style.md"]
       why: 画面構成と状態管理の記述が実装から離れた
 
   # 記録の扱い。

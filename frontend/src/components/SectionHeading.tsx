@@ -29,7 +29,7 @@ interface SectionHeadingProps {
  * `globals.css` の `@layer base` にあり、Tailwind の utilities より**先**に出る。
  * 後勝ちなので `text-lg` の 18px が残り、`.text-label-ja` からは色 (subtle) だけが
  * 効いていた。**エラーは出ず、Ledger の小見出しだけが大きく灰色**になっていた。
- * 段は `docs/design.md`「字の尺度」の h2 / h3 に従う。
+ * 段は `docs/ui-style.md`「字の尺度」の h2 / h3 に従う。
  *
  * **`aside` は見出しタグの外に置く。**中に入れると、ボタンの文字まで見出しの
  * 読み上げ名に混ざる（「手持ちのモデル ID を詰める 再学習を実行」になっていた）。

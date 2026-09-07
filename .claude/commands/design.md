@@ -11,7 +11,7 @@ skill `frontend-design` があれば**先に読む**。配色・字・構造の�
 
 ## 0. 規定の置き場所について
 
-規定は `docs/design.md` の「フロントエンド スタイル設計」と「UI スタイル方針」。
+規定は `docs/ui-style.md`。
 **ただしこの文書は、アーキテクチャ図・AI モジュール設計・状態管理も持っている。**
 規定を足すほど 1 つの文書に 2 つの話が濃くなる。
 
@@ -22,7 +22,7 @@ skill `frontend-design` があれば**先に読む**。配色・字・構造の�
 
 | 引数 | 何をするか |
 |---|---|
-| なし | 規定 `docs/design.md` を作る / 直す。画面は触らない |
+| なし | 規定 `docs/ui-style.md` を作る / 直す。画面は触らない |
 | 画面名 | その画面を規定に沿って作る・直す |
 | `--renew` | **刷新。**方向から決め直して、全画面に当てる |
 | `--read-only` | 測って報告するだけ。書き換えない |
@@ -60,7 +60,7 @@ grep -rnoE '\b(bg|text|border)-(red|blue|green|yellow|gray|slate|zinc)-[0-9]{2,3
 | 尺度に乗っているか | 余白が 4 の倍数か。中間値が生えていないか |
 | 出どころ | `globals.css` 1 か所か、画面にベタ書きか |
 | 状態の抜け | 空・読み込み中・エラー・長文の分岐があるか |
-| 規定との差 | `docs/design.md` に無い値がいくつあるか |
+| 規定との差 | `docs/ui-style.md` に無い値がいくつあるか |
 
 **このプロジェクトは「空」が普通の状態。**スクレイピング済みデータも学習済み
 モデルもリポジトリに含まれないので、**初回起動は全画面が空**。
@@ -97,7 +97,7 @@ grep -rnoE '\b(bg|text|border)-(red|blue|green|yellow|gray|slate|zinc)-[0-9]{2,3
 
 ## 4. 規定に落とす
 
-行き先は `docs/design.md`。
+行き先は `docs/ui-style.md`。
 
 - **値を決め切る。**「明るめの青」ではなく `#2B6CB0`
 - **尺度で持つ。**余白は 4 の倍数、字は 4 段、角丸は 2 段。
@@ -110,7 +110,7 @@ grep -rnoE '\b(bg|text|border)-(red|blue|green|yellow|gray|slate|zinc)-[0-9]{2,3
 - 決めた理由を 1 行ずつ添える。**理由の無い規定は、次の人が平気で破る**
 
 skill `single-source` に従う。**CLAUDE.md に写さない。**CLAUDE.md からは
-`docs/design.md` を 1 行で指す。
+`docs/ui-style.md` を 1 行で指す。
 
 ## 5. 当てる
 
@@ -148,4 +148,4 @@ skill `single-source` に従う。**CLAUDE.md に写さない。**CLAUDE.md か�
 - 値の種類 **before → after**(「色 14 種類 → 5 種類」の形で)
 - 当てた画面と、**当てなかった画面とその理由**
 - 規定に**書かなかったこと**とその理由
-- **`docs/design.md` がまた伸びたなら、その行数**
+- **`docs/ui-style.md` がまた伸びたなら、その行数**

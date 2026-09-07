@@ -5,7 +5,7 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     // fontSize は extend ではなく **丸ごと差し替え**。規定の 6 段
-    // (docs/design.md「字の尺度」) 以外を書けなくするための仕掛けで、
+    // (docs/ui-style.md「字の尺度」) 以外を書けなくするための仕掛けで、
     // text-xl / text-2xl はクラスごと生成されなくなる。
     // 6 段目の 26px は .text-kpi (globals.css) — 等幅・太さ・字間まで含む型なので
     // サイズだけのユーティリティにはしない。
@@ -13,7 +13,7 @@ export default {
     // 無かったため、Settings は text-sm font-medium、Model は text-label-ja (11px) と
     // 画面ごとに別の逃げ方をしていた。穴があると回避が増えるので段のほうを足した。
     // borderRadius も extend ではなく差し替え。角丸は 2px の 1 値だけで、
-    // ピル (バッジ) の rounded-full が唯一の例外 (docs/design.md「角丸」)。
+    // ピル (バッジ) の rounded-full が唯一の例外 (docs/ui-style.md「角丸」)。
     // extend に置くと Tailwind 既定の rounded-lg (8px) 等が生き残り、
     // 名前だけ違う中間値が生えてくる。DEFAULT も 2px に寄せて、
     // 素の `rounded` が別の値を指す抜け道を塞ぐ。

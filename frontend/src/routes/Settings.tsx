@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast';
 import { formatErrorMessage } from '@/lib/api';
 import type { SettingsUpdate } from '@/types/api';
 
-// 画面の組み方は docs/design.md「UI 画面構成 > Settings」。
+// 画面の組み方は docs/design.md「UI 画面構成 > Settings」、見た目は docs/ui-style.md。
 // INGEST はレース画面の取込パネルへ、OPS の緊急停止はスクレイパー状態カードへ
 // 移設済みなので、ここには無い。
 

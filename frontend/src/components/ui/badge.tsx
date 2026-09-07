@@ -12,7 +12,7 @@ import { cn } from '@/lib/cn';
  *
  * 意味 (tone) は solid / soft にだけ効く。outline は常に無彩色。
  * tone="default" は --primary を引くので【測った値】を指すバッジになる
- * (OOS・実測・95% 区間)。学習時の値には付けない — docs/design.md「色の 3 層」。
+ * (OOS・実測・95% 区間)。学習時の値には付けない — docs/ui-style.md「色の 3 層」。
  * 以前は default / secondary / destructive / outline / success / warning / info
  * ＋ soft-* 6 種で 13 通りあり、どれを使うかが場当たりになっていた。
  *

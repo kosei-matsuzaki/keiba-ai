@@ -50,7 +50,7 @@ docs/design.md 「特徴量は builder.py に集約し、抽出器を per-domain
 | 守らないと壊れる決まりごと・既知の罠 | `CLAUDE.md` |
 | いまの仕様。やらないと決めたこと | `docs/spec.md` |
 | どう作ってあるか。設計判断とその理由 | `docs/design.md` |
-| 見た目の規定 (配色・余白・字送り・動き) | `docs/design.md` |
+| 見た目の規定 (配色・余白・字送り・動き) | `docs/ui-style.md` |
 | いまは直さないと決めたこと | `.claude/judgments.yml` |
 | 実装履歴・試したこと・没案 | `docs/archive/` |
 
@@ -68,7 +68,7 @@ docs/design.md 「特徴量は builder.py に集約し、抽出器を per-domain
 
 <!-- ○ 1 行で指す -->
 ## デザイン
-配色・余白・字送りの規定は [docs/design.md](docs/design.md)。**推測で足さない。**
+配色・余白・字送りの規定は [docs/ui-style.md](docs/ui-style.md)。**推測で足さない。**
 ```
 
 指し方の型:
@@ -76,7 +76,7 @@ docs/design.md 「特徴量は builder.py に集約し、抽出器を per-domain
 - **相対パスのリンク 1 本。**「詳しくはドキュメントを参照」は指していない
 - **要約を添えない。**添えた要約がそのまま次の二重管理になる。
   添えてよいのは「読まないと何を間違えるか」の一言だけ
-- 指す先が長いなら**節の見出しまで指す** (`docs/design.md#配色`)
+- 指す先が長いなら**節の見出しまで指す** (`docs/ui-style.md#色の-3-層`)
 
 ## 写してよい例外
 

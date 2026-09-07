@@ -191,7 +191,7 @@ const INGEST_ROWS: (SettingRow & {
  */
 export function SettingsForm({ defaults, onSubmit, isPending }: SettingsFormProps) {
   // しきい値の隣に置く実測。**数字はベタ書きしない** — 測り直すたびに動くので、
-  // 写すと画面と docs のどちらかが必ず古くなる (docs/design.md「設定値と実測」)。
+  // 写すと画面と docs のどちらかが必ず古くなる (docs/ui-style.md「設定値と実測」)。
   const breakdown = useBetBreakdown({ group_by: 'bet_type' });
   const measured = useMemo(
     () => new Map((breakdown.data?.rows ?? []).map((r) => [r.group_key, r])),
@@ -370,7 +370,7 @@ interface SettingTableRowProps {
 /**
  * 3 つの節で共有する 1 行。**行の区切り線は引かない** — 設定は 12 行あり、
  * 1 行ずつ罫線で挟むと引きで見たときに線が縞になって内容より先に目に付く
- * (docs/design.md「領域の作り方」と同じ理由)。
+ * (docs/ui-style.md「領域の作り方」と同じ理由)。
  *
  * 数値入力は幅を固定し、文字列入力は残りを埋める。**単位の枠は値が無くても
  * 取る**ので、どちらも右端が同じ位置で終わる。

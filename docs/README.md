@@ -4,9 +4,10 @@
 README の `<!-- portfolio:begin -->` 〜 `<!-- portfolio:end -->` の内側はポートフォリオサイト
 （`portfolio-site/src/data/projects.ts`）から生成しているので、直接編集しないでください。
 
-**README に出ている回収率は生成された時点の数字で、測った窓が書かれていません。**
-測り直すたびに動くので、窓（期間・レース数）と 95% 区間つきの正本は
-[ai-model.md](ai-model.md) の「OOS 実測」を見てください。
+**README に出ている回収率は旧い窓（19 ヶ月・5,390 レース）のものです。**測り直すたびに
+動くので、いまの窓（期間・レース数）と 95% 区間つきの正本は [ai-model.md](ai-model.md) の
+「OOS 実測」を見てください。README 側はポートフォリオサイトからの生成物なので、
+直す場所はあちらです。
 
 ここは開発者向けの入口です。
 
@@ -14,6 +15,7 @@ README の `<!-- portfolio:begin -->` 〜 `<!-- portfolio:end -->` の内側は�
 | --- | --- | --- |
 | [spec.md](spec.md) | 技術仕様（技術スタック・ディレクトリ構成・DB スキーマ・API エンドポイント・開発ビルド手順） | API を足す / スキーマを変える前 |
 | [design.md](design.md) | 設計方針（非機能要件・アーキテクチャ図・AI モジュール責務分離・UI 画面構成・状態管理・拡張ポイント） | 画面や層をまたぐ変更を入れる前 |
+| [ui-style.md](ui-style.md) | 見た目の規定（方向・色の 3 層・トークン・字の尺度・余白・角丸・状態・部品の形） | 画面を足す / 直す前。**画面はここの値だけを使う** |
 | [data-pipeline.md](data-pipeline.md) | スクレイピング・取り込み仕様（対象 URL・レート制御・robots.txt 遵守・HTML キャッシュ・増分取得・失敗レジューム・法的配慮） | スクレイパーを触る前。**レート制御と robots.txt は必ず** |
 | [ai-model.md](ai-model.md) | モデル設計（問題定義・Set Transformer・損失・確率変換・特徴量・学習評価フロー・ベットルール・実験の記録） | 学習・評価・買い方を変える前。**否定済みの仮説を再訪しないため** |
 | [operations.md](operations.md) | 運用（セットアップ・データ取り込み・再学習サイクル・モデル世代管理・バックアップ・トラブルシューティング） | 動かすとき・壊れたとき |
@@ -28,18 +30,9 @@ README の `<!-- portfolio:begin -->` 〜 `<!-- portfolio:end -->` の内側は�
 
 ## アーキテクチャサマリ
 
-```text
-ブラウザ (http://localhost:5173)
-    │
-    ▼  React 管理画面 (Vite dev server)
-    │
-    │  HTTP → http://127.0.0.1:8765/api/*
-    ▼
-FastAPI (uvicorn)
-    ├─ スクレイパー (netkeiba)
-    ├─ AI 推論 (PyTorch NN)
-    └─ SQLite (data/keiba.db + data/odds.db)
-```
+ブラウザ（Vite :5173）→ FastAPI（uvicorn :8765）→ スクレイパー / AI 推論 / SQLite。
+**外部へのネットワーク通信はスクレイパーだけ。**図と層の向きは
+[design.md](design.md)「アーキテクチャ図」「依存方向」が正本です。
 
 ## 重要な制約
 

@@ -40,9 +40,9 @@
 | リンター | ESLint v9 flat config |
 | パッケージ管理 | pnpm 9.x |
 
-> **shadcn/ui 配置方針**: `shadcn` CLI は CI 安定性のため走らせず、button / card / table / tabs / badge / skeleton を `src/components/ui/` に手書き配置する。`components.json` は Tailwind 設定（baseColor: slate、cssVariables: true）の記録のみに使用する。`badge.tsx` は形 `variant` × 意味 `tone` の 2 軸で組む（[design.md](design.md)「Badge の組み方」）。色はハードコードした Tailwind クラスではなくこの 2 軸で指定する。
+> **shadcn/ui 配置方針**: `shadcn` CLI は CI 安定性のため走らせず、button / card / table / tabs / badge / skeleton を `src/components/ui/` に手書き配置する。`components.json` は Tailwind 設定（baseColor: slate、cssVariables: true）の記録のみに使用する。`badge.tsx` は形 `variant` × 意味 `tone` の 2 軸で組む（[ui-style.md](ui-style.md)「Badge の組み方」）。色はハードコードした Tailwind クラスではなくこの 2 軸で指定する。
 
-> **Web フォント**: `index.html` に Google Fonts preconnect + **Inter**（400/500/600/700）・**JetBrains Mono**（400/500）を `display=swap` で読み込む。`globals.css` の `--font-sans` / `--font-mono` CSS 変数の先頭に各フォントを設定し、フォールバックはシステムスタックを維持する。`body` に `font-feature-settings: 'cv11', 'ss01', 'tnum'` を適用し、Inter の代替字形と等幅数字（テーブル内数値の桁揃え）を有効化する。
+> **Web フォント**: `index.html` が Google Fonts から **Inter** / **JetBrains Mono** / **Noto Sans JP** を `display=swap` で読み込む。`globals.css` の `--font-sans` / `--font-mono` の先頭に置き、フォールバックはシステムスタック。**読み込むウェイトと、和欧混植をフォールバック順序だけで成立させる仕掛けは [ui-style.md](ui-style.md)「デザイントークン」が正本。**
 
 ---
 
@@ -102,7 +102,7 @@
 │   ├── src/
 │   │   ├── main.tsx           # React + QueryClient + Router マウント
 │   │   ├── App.tsx            # Outlet レイアウト（Topbar 含む）
-│   │   ├── router.tsx         # createBrowserRouter（6 画面 + 旧 URL のリダイレクト 6 本。`/races*` だけ loader で ?date= と race_id を保つ）
+│   │   ├── router.tsx         # createBrowserRouter（6 画面 + `/` の転送 + 旧 URL のリダイレクト 5 本。`/races*` だけ loader で ?date= と race_id を保つ）
 │   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
 │   │   ├── routes/            # ページコンポーネント（1 画面 1 ファイル）
 │   │   │   ├── Races.tsx            # `/race`（最初に出る画面）。RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
@@ -134,7 +134,7 @@
 │   └── models/                # 学習済みモデル（<YYYYMMDDTHHMMSS>-nn/{model.pt, meta.json, ...}）
 │
 └── scripts/                   # 運用スクリプト
-    └── dev.sh                 # uv sync + alembic + (必要なら) pnpm install + uvicorn + Vite を一発起動
+    └── dev.sh                 # FastAPI と Vite を一発起動 (中身は operations.md「開発サーバ起動」)
 ```
 
 ---
@@ -472,9 +472,8 @@ backtest 未実行のときだけ学習時の指標に fallback するが、**fa
 
 - **単勝**: モデル 1 位の 1 頭のみ。買うかはオッズ下限 `win_min_odds` だけで決まる
 - **複勝**: モデル 1 位の 1 頭のみ。確率モデルがあれば 3 着内率 `place_min_hit_prob` 未満は見送る
-- **単複の点数**: `base 5 × (確信度 / 基準)^2` を 1〜15 点（**比例ではなく 2 乗**。基準は
-  単勝 0.25 / 複勝 0.50）。単勝にも同じ式が効くが、回収率が動くのは複勝だけ
-  （根拠は [ai-model.md](ai-model.md)「推奨ベットルール」）
+- **単複の点数**: 確信度から決まる（1〜15 点）。**式と基準は
+  [ai-model.md](ai-model.md)「推奨ベットルール」が正本** — 写すと片方だけ古くなる
 - **連系**（馬連 / ワイド / 馬単 / 三連複 / 三連単）: 上位 3 頭から組み、的中確率が `combo_min_hit_prob`（券種ごと）以上の買い目だけを確率の高い順に買う。**券種ごとの点数上限は持たない**（2026-09-01 に廃止。点数はレースごとに変わる。根拠は [ai-model.md](ai-model.md)）
 
 買い方の設定（確率モデル・`place_min_hit_prob`・`combo_min_hit_prob`・`win_min_odds`）は `core/settings_store.py` の `resolve_betting_settings` が唯一の入口。推奨買目・シミュレーション・モデル評価・backtest CLI が同じ買い方を再現するためで、新しい経路を足すときも settings を直接読まずにここを通す。

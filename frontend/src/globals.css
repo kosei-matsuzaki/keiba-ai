@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 /* ──────────────────────────────────────────────────────────────────────────────
-   Design tokens — 「実測」(2026-09-05)。規定の正本は docs/design.md
-   「フロントエンド スタイル設計」。ここはその値だけを持つ。
+   Design tokens — 「実測」(2026-09-05)。規定の正本は docs/ui-style.md。
+   ここはその値だけを持つ。
 
    色は 3 層。層をまたいだ使い方をしない:
      データ   枠色 8 色 (lib/waku.ts) と曜日 (土=--info / 日=--destructive)
@@ -19,7 +19,7 @@
    奪い合うから。外したことで琥珀は --warning に戻り、本当の警告に使える。
 
    dark が主・light が従。shadcn 標準の class-based 切替に従う
-   (html.dark は ThemeProvider が制御)。
+   (html.dark を付け外しするのは hooks/useTheme.ts)。
    ───────────────────────────────────────────────────────────────────────────── */
 
 @layer base {
@@ -222,7 +222,7 @@
      同じまとまりが作れる。
      使うのは**ラベルと値の塊**だけ — 表とグラフには当てない
      (それ自体でまとまって見えるので、面に載せると囲いが二重になる)。
-     詳細は docs/design.md「箱の使いどころ」。 */
+     詳細は docs/ui-style.md「領域の作り方」。 */
   .block-surface {
     background-color: hsl(var(--card));
     border-radius: var(--radius);
