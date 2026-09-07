@@ -42,13 +42,21 @@ judgments:
     date: 2026-09-07
     by: "/docs"
 
-  - key: "design:stale_screenshots"
-    path: docs/images/
-    decision: "この差分では撮り直さない"
-    why: "5 枚すべて Topbar が旧タブ (DASHBOARD / RACE / LEDGER / SETTINGS) で、dashboard.png は無くなった画面、models.png は KPI カード 7 枚時代のモデル画面。撮り直すにはバックエンド + 学習済みモデル + 取込済み DB を揃えてブラウザで撮る必要があり (この repo に playwright は無い)、画面構成の変更とは別作業。README の参照行は portfolio:begin〜end の生成物なのでキャプション側は portfolio-site で直す"
+  - key: "design:dashboard_screenshot_has_no_screen"
+    path: docs/images/dashboard.png
+    decision: "このリポジトリでは直さない"
+    why: "2026-09-07 に race-list / race-detail / models / ledger の 4 枚は撮り直したが、dashboard.png だけ**対応する画面がもう無い** (2026-09-06 に /models へ統合)。README のキャプション「ダッシュボード — モデル成績の概観」ごと portfolio:begin〜end の内側にあり、直す場所は portfolio-site の projects.ts。こちらで別の画面を入れても、キャプションが合わないまま残る。画像は旧 Topbar のままなので、portfolio-site 側で行を消すか Model Detail に差し替えるまでは古い絵が出る"
     until: 2026-12-31
-    date: 2026-09-06
-    by: "/design --renew dashboard の画面構成"
+    date: 2026-09-07
+    by: "/design"
+
+  - key: "data:sample_bet_records_in_ledger"
+    path: data/keiba.db
+    decision: "残す (消し方を書いておく)"
+    why: "README の ledger.png を撮るために、過去 6 開催日の推奨買目を bet_records へ 118 件入れた (notes = '見本 (README キャプチャ用)')。**実際に買った記録ではない** — レースもオッズも払戻も実在するが、購入した事実は無い。台帳が 0 件だと画面が全部「まだありません」になり、キャプションと合わないため。消すときは notes で引ける: DELETE FROM bet_records WHERE notes = '見本 (README キャプチャ用)'。画面のメモ列にもこの文字列が出るので、キャプチャ自体が見本であることを示している"
+    until: 2026-12-31
+    date: 2026-09-07
+    by: "/design"
 
   - key: "ref:.venv/Lib/site-packages/main.py"
     path: CLAUDE.md

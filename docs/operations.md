@@ -384,6 +384,25 @@ pnpm lint
 
 ---
 
+## 画面キャプチャの撮り直し
+
+README の画像 (`docs/images/`) は `frontend/scripts/screenshots.mjs` で撮り直す。
+
+```bash
+cd frontend
+node scripts/screenshots.mjs             # 全部
+node scripts/screenshots.mjs race-detail # 1 枚だけ
+```
+
+**Vite と FastAPI が動いていること**が前提で、取込済みの DB と学習済みモデルが要る
+（無いと空の画面が撮れる）。playwright は入れず、Windows に元からある Chrome / Edge を
+CDP で叩く。**クリックを挟めるのが要点**で、レース詳細は「予想を見る」を押さないと
+AI の列が空のまま撮れてしまう。撮る日付とレースはスクリプト冒頭の `SHOTS` に固定して
+あるので、データが動いたらそこを直す。
+
+`dashboard.png` だけは対応する画面が無いので撮っていない
+（理由は `.claude/judgments.yml`）。
+
 ## 障害対応（トラブルシューティング）
 
 このセクションは、症状別に原因・確認方法・対処を示します。
