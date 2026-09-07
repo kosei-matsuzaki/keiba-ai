@@ -43,10 +43,10 @@ judgments:
     date: 2026-09-07
     by: "/design"
 
-  - key: "data:sample_bet_records_in_ledger"
+  - key: "data:ledger_filled_from_recommendations"
     path: data/keiba.db
     decision: "残す (消し方を書いておく)"
-    why: "README の ledger.png を撮るために、過去 6 開催日の推奨買目を bet_records へ 118 件入れた (notes = '見本 (README キャプチャ用)')。**実際に買った記録ではない** — レースもオッズも払戻も実在するが、購入した事実は無い。台帳が 0 件だと画面が全部「まだありません」になり、キャプションと合わないため。消すときは notes で引ける: DELETE FROM bet_records WHERE notes = '見本 (README キャプチャ用)'。画面のメモ列にもこの文字列が出るので、キャプチャ自体が見本であることを示している"
+    why: "台帳に active モデル (ID 1) の推奨買目を 15,387 点入れてある (2025-09-06〜2026-08-23・105 開催日・3,306 レース・全レース対象)。レース・オッズ・払戻はすべて実在し実払戻で確定させているが、**実際に買った記録ではない**。active の学習期間は 2024-04-28 までなので全部 out-of-sample。購入日時と確定日時は API が入れる実行時刻ではなく、レース番号から作ったレース当日の時刻に直してある (そうしないと全部が今日になり、損益推移が 1 点になって明細も race 順に並ばない)。消すときは source で引ける: DELETE FROM bet_records WHERE source = 'recommendation'。入れ直す手順は docs/operations.md には書いていない — 一度きりの流し込みで、繰り返す道具にはしていない"
     until: 2026-12-31
     date: 2026-09-07
     by: "/design"
