@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { Figures } from '@/components/Figures';
 import { ProfitChart } from '@/components/ProfitChart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
@@ -632,23 +633,20 @@ export function ModelSimulationPanel({ modelId }: ModelSimulationPanelProps) {
                 note="0 から始めた場合の収支"
                 className="min-w-[11rem]"
               />
-              <dl className="flex flex-wrap gap-x-8 gap-y-3 pt-1">
-                {/* 最大益 / 最大損は出さない。**最大損は「必要だった資金」と同じ数字**
-                    (符号違い) で、山と谷はすぐ下の損益推移グラフが示している。
-                    グラフから読み取れないのは「いくら要ったか」だけなので、それを残す。 */}
-                <div title="途中で止まらずに回すのに要した額 (= 累計損益の最小値の絶対値)">
-                  <dt className="text-xs text-muted-foreground">必要だった資金</dt>
-                  <dd className="font-mono text-lg tabular-nums">
-                    {formatYen(result.required_capital)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">回収率</dt>
-                  <dd className="font-mono text-lg tabular-nums">
-                    {formatRatio(result.summary.payback_rate)}
-                  </dd>
-                </div>
-                </dl>
+              {/* 最大益 / 最大損は出さない。**最大損は「必要だった資金」と同じ数字**
+                  (符号違い) で、山と谷はすぐ下の損益推移グラフが示している。
+                  グラフから読み取れないのは「いくら要ったか」だけなので、それを残す。 */}
+              <Figures
+                className="pt-1"
+                items={[
+                  {
+                    label: '必要だった資金',
+                    value: formatYen(result.required_capital),
+                    hint: '途中で止まらずに回すのに要した額 (= 累計損益の最小値の絶対値)。',
+                  },
+                  { label: '回収率', value: formatRatio(result.summary.payback_rate) },
+                ]}
+              />
               </div>
             </CardContent>
           </Card>

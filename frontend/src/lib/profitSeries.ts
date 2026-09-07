@@ -1,5 +1,3 @@
-import type { BetTimeseriesPoint } from '@/types/api';
-
 /**
  * 損益推移に描く点を選ぶ。**買っていない日は点にしない。**
  *
@@ -11,7 +9,12 @@ import type { BetTimeseriesPoint } from '@/types/api';
  * 落とすと 5 日の間隔と 1 日の間隔が同じ幅になるが、累計損益は**買った回数の
  * 積み上げ**なので、開催日を等間隔に並べるほうが曲線として素直に読める。
  * 日付は目盛りに出るので「いつ負けたか」は失われない。
+ *
+ * 台帳 (`bets`) とシミュレーション (`n_bets`) で件数の名前が違うので、どちらでも
+ * 受けられるようにしてある。**同じ判定を 2 か所に書かない**ため。
  */
-export function visibleProfitPoints(points: BetTimeseriesPoint[]): BetTimeseriesPoint[] {
-  return points.filter((p) => p.bets > 0);
+export function visibleProfitPoints<T extends { bets?: number; n_bets?: number }>(
+  points: T[]
+): T[] {
+  return points.filter((p) => (p.bets ?? p.n_bets ?? 0) > 0);
 }

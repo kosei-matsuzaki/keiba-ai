@@ -117,7 +117,7 @@
 │   │   │   ├── BrandMark.tsx        # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従
 │   │   │   ├── PageHeader.tsx       # ページ見出し共通コンポーネント
 │   │   │   ├── MetricCard.tsx       # その画面の答えになる指標（囲う。1 画面 1〜3 個）
-│   │   │   ├── MetricBand.tsx       # 並べるだけの指標（囲わない。罫線区切り）
+│   │   │   ├── Figures.tsx          # 並べるだけの指標（囲わない）。答えの MetricCard 1 枚に添える
 │   │   │   ├── ModelSimulationPanel.tsx # 期間と 1 レース予算を指定してバックテストを回す
 │   │   │   ├── ProfitChart.tsx      # 0 起点の累計損益（資産残高ではない）
 │   │   │   ├── PurchaseTable.tsx    # 買い目を流し / ボックス / フォーメーションに畳んだ購入用の表

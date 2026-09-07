@@ -1,28 +1,24 @@
 import { useState, useMemo, Fragment } from 'react';
 import { ChevronDown, ChevronUp, Download, Trash2 } from 'lucide-react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ReferenceLine,
-  ResponsiveContainer,
-} from 'recharts';
-
 import { useBetSummary } from '@/hooks/useBetSummary';
 import { useBetTimeseries } from '@/hooks/useBetTimeseries';
-import { visibleProfitPoints } from '@/lib/profitSeries';
 import { useBetBreakdown } from '@/hooks/useBetBreakdown';
 import { useBetList } from '@/hooks/useBetList';
 import { useDeleteBets } from '@/hooks/useDeleteBets';
 import { buildBetExportUrl, type BetFilterParams } from '@/lib/api';
-import { formatYen, formatPercent, formatDateTime } from '@/lib/formatters';
+import {
+  formatDateTime,
+  formatPercent,
+  formatRatio,
+  formatSignedYen,
+  formatYen,
+} from '@/lib/formatters';
 import { SectionHeading } from '@/components/SectionHeading';
 import { AddBetDialog } from '@/components/AddBetDialog';
 import { DateYMDPicker } from '@/components/DateYMDPicker';
-import { MetricBand, MetricItem } from '@/components/MetricBand';
+import { Figures } from '@/components/Figures';
+import { ProfitChart } from '@/components/ProfitChart';
+import { MetricCard } from '@/components/MetricCard';
 import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -419,90 +415,31 @@ function DetailTable({ params }: { params: BetFilterParams }) {
 
 // ── Cumulative profit chart ───────────────────────────────────────────────────
 
-function ProfitChart({ params }: { params: BetFilterParams & { bucket?: 'day' | 'week' | 'month' } }) {
+/**
+ * 累計損益推移。**描くのは共通の `ProfitChart`** なので、シミュレーションの結果と
+ * 同じ見た目・同じ規則になる (買っていない日を落とす / 符号で色が変わる /
+ * 0 の基準線を必ず含む)。ここは API の形を合わせるだけ。
+ */
+function LedgerProfitChart({
+  params,
+}: {
+  params: BetFilterParams & { bucket?: 'day' | 'week' | 'month' };
+}) {
   const { data, isPending, isError } = useBetTimeseries(params);
 
   if (isPending) return <Skeleton className="h-60 w-full" />;
   if (isError) return <EmptyState message="チャートデータ取得に失敗しました" />;
 
-  // 買っていない日は点にしない (理由は visibleProfitPoints)。
-  const points = visibleProfitPoints(data?.points ?? []);
-  if (points.length === 0) {
-    return (
-      <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-        購入を記録すると、ここに累計損益が出ます
-      </div>
-    );
-  }
-
-  const minProfit = Math.min(...points.map((p) => p.cumulative_profit));
-  const maxProfit = Math.max(...points.map((p) => p.cumulative_profit));
-  // 全プラスなら success (緑)、全マイナスなら destructive (赤)、混在は
-  // 単系列の既定色 primary。カテゴリカルパレット (--chart-*) は使わない。
-  const areaColor =
-    minProfit >= 0
-      ? 'hsl(var(--success))'
-      : maxProfit <= 0
-      ? 'hsl(var(--destructive))'
-      : 'hsl(var(--primary))';
+  const points = (data?.points ?? []).map((p) => ({
+    date: p.date,
+    profit: p.cumulative_profit,
+    invested: p.invested,
+    payout: p.payout,
+    n_bets: p.bets,
+  }));
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={points} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-        <defs>
-          <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={areaColor} stopOpacity={0.4} />
-            <stop offset="95%" stopColor={areaColor} stopOpacity={0.0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
-        {/* 損益分岐線。これが無いと「上下している」以上のことが読めない */}
-        <ReferenceLine
-          y={0}
-          stroke="hsl(var(--border-strong))"
-          strokeDasharray="3 3"
-          label={{
-            value: '損益分岐',
-            position: 'insideTopLeft',
-            fill: 'hsl(var(--subtle-foreground))',
-            fontSize: 10,
-          }}
-        />
-        <XAxis
-          dataKey="date"
-          tick={{ fontSize: 10, fill: 'hsl(var(--subtle-foreground))', fontFamily: 'var(--font-mono)' }}
-          axisLine={false}
-          tickLine={false}
-                    tickFormatter={(v: string) => v.slice(5)}
-        />
-        <YAxis
-          tick={{ fontSize: 10, fill: 'hsl(var(--subtle-foreground))', fontFamily: 'var(--font-mono)' }}
-          axisLine={false}
-          tickLine={false}
-                    tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`}
-        />
-        <Tooltip
-          labelFormatter={(label: string) => label}
-          formatter={(value: number) => [formatYen(value), '累計損益']}
-          contentStyle={{
-            background: 'hsl(var(--popover))',
-            border: '1px solid hsl(var(--border))',
-            borderRadius: '2px',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-          }}
-        />
-        <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" />
-        <Area
-          type="monotone"
-          dataKey="cumulative_profit"
-          stroke={areaColor}
-          strokeWidth={1.5}
-          fill="url(#profitGrad)"
-          dot={false}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
+    <ProfitChart points={points} emptyMessage="購入を記録すると、ここに累計損益が出ます" />
   );
 }
 
@@ -613,44 +550,35 @@ export function Ledger() {
       ) : summaryQuery.isError ? (
         <EmptyState message="サマリ取得に失敗しました" />
       ) : (
-        <MetricBand cols={5}>
-          <MetricItem
-            title="累計投資"
-            value={summaryQuery.data.total_invested}
-            format="yen"
-            description={`${summaryQuery.data.total_bets} 件`}
-          />
-          <MetricItem
-            title="累計払戻"
-            value={summaryQuery.data.total_payout}
-            format="yen"
-            description={`確定 ${summaryQuery.data.settled_bets} 件`}
-          />
-          <MetricItem
-            title="純利益"
-            value={summaryQuery.data.total_profit}
-            format="yen"
+        /* **カードにするのは収支だけ。**これがこの画面の答えで、残りは読み解く
+           ための補助 (全部囲うと答えが埋もれる)。シミュレーションの結果とモデル
+           画面も同じ形で、`Figures` を共有している。 */
+        <div className="flex flex-wrap items-start gap-6">
+          <MetricCard
+            className="min-w-[11rem]"
+            label="純利益"
+            value={formatSignedYen(summaryQuery.data.total_profit)}
             tone={summaryQuery.data.total_profit >= 0 ? 'positive' : 'negative'}
-            description={summaryQuery.data.total_profit >= 0 ? 'プラス収支' : 'マイナス収支'}
+            note={`${summaryQuery.data.total_bets.toLocaleString()} 点 / 確定 ${summaryQuery.data.settled_bets.toLocaleString()} 点`}
           />
-          <MetricItem
-            title="回収率"
-            value={summaryQuery.data.payback_rate}
-            format="ratio"
-            tone={
-              summaryQuery.data.payback_rate != null && summaryQuery.data.payback_rate >= 1
-                ? 'positive'
-                : 'negative'
-            }
-            description="1.00 = 損益分岐点"
+          <Figures
+            className="pt-1"
+            items={[
+              {
+                label: '回収率',
+                value: formatRatio(summaryQuery.data.payback_rate),
+                hint: '払戻 ÷ 投資。1.00 = 損益分岐点。控除率 20% があるので 1.0 未満は平均で負け越し。',
+              },
+              {
+                label: '的中率',
+                value: formatPercent(summaryQuery.data.hit_rate),
+                hint: '確定した買い目のうち、払戻が出た割合。的中率が高いほど儲かるとは限らない。',
+              },
+              { label: '累計投資', value: formatYen(summaryQuery.data.total_invested) },
+              { label: '累計払戻', value: formatYen(summaryQuery.data.total_payout) },
+            ]}
           />
-          <MetricItem
-            title="的中率"
-            value={summaryQuery.data.hit_rate}
-            format="percent"
-            description="確定済み中"
-          />
-        </MetricBand>
+        </div>
       )}
 
       {/* Cumulative profit chart */}
@@ -672,7 +600,7 @@ export function Ledger() {
           </div>
         </CardHeader>
         <CardContent>
-          <ProfitChart params={{ ...filterParams, bucket }} />
+          <LedgerProfitChart params={{ ...filterParams, bucket }} />
         </CardContent>
       </Card>
 

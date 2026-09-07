@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 
 import { formatSignedYen, formatYen } from '@/lib/formatters';
+import { visibleProfitPoints } from '@/lib/profitSeries';
 import type { ProfitPoint } from '@/types/api';
 
 /**
@@ -23,6 +24,8 @@ import type { ProfitPoint } from '@/types/api';
  */
 interface ProfitChartProps {
   points: ProfitPoint[];
+  /** 1 点も無いときの文言。画面ごとに次にする操作が違う。 */
+  emptyMessage?: string;
 }
 
 interface TooltipPayloadItem {
@@ -63,11 +66,13 @@ function _CustomTooltip({ active, payload, label }: TooltipProps) {
   );
 }
 
-function ProfitChartImpl({ points }: ProfitChartProps) {
+function ProfitChartImpl({ points: raw, emptyMessage }: ProfitChartProps) {
+  // 買っていない日は点にしない (理由は visibleProfitPoints)。
+  const points = visibleProfitPoints(raw);
   if (points.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-        bet データがないため損益推移を描画できません
+        {emptyMessage ?? 'bet データがないため損益推移を描画できません'}
       </div>
     );
   }
@@ -78,13 +83,22 @@ function ProfitChartImpl({ points }: ProfitChartProps) {
   const bottom = Math.min(0, ...values);
   const pad = Math.max(1000, Math.round((top - bottom) * 0.05));
 
+  // 全部プラスなら success、全部マイナスなら destructive、またぐなら primary。
+  // カテゴリカルな色は使わない (単系列なので識別の必要が無い)。
+  const color =
+    bottom >= 0
+      ? 'hsl(var(--success))'
+      : top <= 0
+        ? 'hsl(var(--destructive))'
+        : 'hsl(var(--primary))';
+
   return (
     <ResponsiveContainer width="100%" height={280}>
       <AreaChart data={points} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
         <defs>
           <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.5} />
-            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.04} />
+            <stop offset="0%" stopColor={color} stopOpacity={0.5} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.04} />
           </linearGradient>
         </defs>
         <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
@@ -132,9 +146,10 @@ function ProfitChartImpl({ points }: ProfitChartProps) {
         <Area
           type="monotone"
           dataKey="profit"
-          stroke="hsl(var(--primary))"
+          stroke={color}
           strokeWidth={1.5}
           fill="url(#profitGradient)"
+          dot={false}
         />
       </AreaChart>
     </ResponsiveContainer>

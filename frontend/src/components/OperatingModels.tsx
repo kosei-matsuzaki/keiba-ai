@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-import { InfoTip } from '@/components/InfoTip';
+import { Figures, type Figure } from '@/components/Figures';
 import { MetricCard } from '@/components/MetricCard';
 import { SectionHeading } from '@/components/SectionHeading';
 import { Badge } from '@/components/ui/badge';
@@ -72,18 +72,6 @@ function beatsMarket(
 /** 比べる相手は畳まずに出す。値の右にかっこ書きで添える。 */
 function marketNote(market: number | null | undefined): string | undefined {
   return market == null ? undefined : `市場 ${formatScore(market)}`;
-}
-
-interface Figure {
-  label: string;
-  value: string;
-  /**
-   * 値の**右にかっこ書き**で添えるもの (比べる相手など)。
-   * 下に置くと 1 段増えて左右の列で高さが揃わず、値との結び付きも弱くなる。
-   */
-  paren?: string;
-  /** ラベル横の「?」に畳む定義。量の言い換えはこちら。 */
-  hint?: string;
 }
 
 /**
@@ -159,22 +147,7 @@ function Role({
             note={<span className="font-mono">{windowText}</span>}
           />
 
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
-            {figures.map(({ label, value: v, paren, hint }) => (
-              <div key={label} className="flex min-w-0 flex-col gap-1">
-                {/* 量の定義 (「予想1位が1着」など) は「?」に畳む。読まないと
-                    誤解するが、常時出ていると値より先に目に入る。 */}
-                <dt className="flex items-center gap-1 text-label-ja">
-                  {label}
-                  {hint && <InfoTip label={label} text={hint} />}
-                </dt>
-                <dd className="text-num font-mono text-xs text-foreground">
-                  {v}
-                  {paren && <span className="ml-1 text-subtle-foreground">({paren})</span>}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <Figures items={figures} />
         </>
       ) : (
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
