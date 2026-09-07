@@ -11,13 +11,6 @@ judgments:
     at: 181
     date: 2026-09-05
     by: "/design --renew"
-  - key: "design:metric_cards_over_limit"
-    path: frontend/src/routes/Ledger.tsx
-    decision: "いまは直さない"
-    why: "docs/ui-style.md「領域の作り方」は指標カードを 1 画面 1〜3 個までとしているが、Ledger は 5 枚 (累計投資/累計払戻/純利益/回収率/的中率) 並んでいる。モデル画面 (旧 Dashboard) の 7 枚は 2026-09-06 に 0 枚にした — 下の ModelTable に同じ列があってカードは active 行の焼き直しだったうえ、答え (基準を越えているか) は色つきの 1 文で言えたため。Ledger には同じ逃がし先が無く、5 つのうちどれが答えかは「収支を見に来る理由」を決めないと選べない。次に Ledger を触るときに決める"
-    until: 2026-12-31
-    date: 2026-09-05
-    by: "/design --renew"
   - key: "docs:font_weight_600_not_loaded"
     path: docs/ui-style.md
     decision: "docs には食い違いとして書き、コードは直さない"
