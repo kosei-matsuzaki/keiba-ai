@@ -58,7 +58,9 @@ const SHOTS = [
     settle: 2500,
   },
   { name: 'models', path: '/models', width: 1440, ready: `document.querySelectorAll('table tbody tr').length > 1` },
-  { name: 'ledger', path: '/ledger', width: 1440 },
+  // 購入明細が全期間ぶん伸びて実高 2000px になる。図版としては縦長すぎるので、
+  // 内訳の表までで切る (指標カード・損益推移・内訳が入り、ちょうど表の下端で終わる)。
+  { name: 'ledger', path: '/ledger', width: 1440, maxHeight: 1140 },
   { name: '_chart', path: '/ledger', width: 1440,
     click: `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '全期間')`,
     settle: 2500 },
@@ -175,7 +177,7 @@ async function main() {
           ' + (document.querySelector("header")?.offsetHeight ?? 0))',
         returnByValue: true,
       }, sid);
-      const height = Math.min(Math.max(h.result?.value ?? 900, 600), MAX_HEIGHT);
+      const height = Math.min(Math.max(h.result?.value ?? 900, 600), shot.maxHeight ?? MAX_HEIGHT);
       await send('Emulation.setDeviceMetricsOverride', {
         width: shot.width,
         height,
