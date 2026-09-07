@@ -16,6 +16,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
+from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from ai.model.registry import get_active
@@ -372,10 +373,17 @@ def list_bets(
 
     if race_id is not None:
         stmt = stmt.where(BetRecord.race_id == race_id)
+    # **期間は確定日で見る。**集計 (summary / breakdown / timeseries) が
+    # settled_at で絞っているので、ここだけ created_at で絞ると同じ画面の同じ
+    # 日付フィルタで件数が食い違う (サマリ 118 件・明細 0 件になっていた)。
+    # 未確定の買い目は settled_at を持たないので、記録した日で拾う。
+    when = sa_func.coalesce(BetRecord.settled_at, BetRecord.created_at)
     if from_ is not None:
-        stmt = stmt.where(BetRecord.created_at >= from_)
+        stmt = stmt.where(when >= from_)
     if to is not None:
-        stmt = stmt.where(BetRecord.created_at <= to)
+        # `to` は日付だけで来る。`2026-09-07T04:21` は文字列比較で `2026-09-07`
+        # より大きいので、末尾を足さないと**その日のぶんが必ず落ちる**。
+        stmt = stmt.where(when <= f"{to}T23:59:59")
     if source is not None:
         stmt = stmt.where(BetRecord.source == source)
     if settled is True:

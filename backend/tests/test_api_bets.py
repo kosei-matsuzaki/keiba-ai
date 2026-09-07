@@ -254,6 +254,56 @@ class TestListBets:
         assert resp.status_code == 200
         assert resp.json()["total"] == 2
 
+    def test_period_filter_matches_the_aggregates(self, app_with_temp_db: FastAPI) -> None:
+        """期間フィルタは集計と同じく **確定日 (settled_at)** で見る。
+
+        以前ここだけ created_at で絞っていて、同じ画面の同じ日付フィルタで
+        サマリと明細の件数が食い違っていた (サマリ 118 件・明細 0 件)。
+        """
+        engine = _get_engine_and_session(app_with_temp_db)
+        from db.session import session_scope
+        with session_scope(engine) as session:
+            _insert_race(session)
+            # 6/10 に記録し、レース当日 (6/1) に確定したことにする
+            session.add(BetRecord(
+                created_at="2024-06-10T10:00:00+00:00",
+                settled_at="2024-06-01T17:30:00+00:00",
+                race_id="202406010101",
+                bet_type="単勝",
+                combo="3",
+                stake=100,
+                source="manual",
+            ))
+            session.commit()
+
+        with TestClient(app_with_temp_db) as client:
+            # 確定日で入る窓なら出る (記録日 6/10 は窓の外)
+            assert client.get("/api/bets?from=2024-06-01&to=2024-06-02").json()["total"] == 1
+            # 記録日しか含まない窓では出ない
+            assert client.get("/api/bets?from=2024-06-09&to=2024-06-11").json()["total"] == 0
+
+    def test_period_filter_includes_the_end_day(self, app_with_temp_db: FastAPI) -> None:
+        """`to` は日付だけで来る。末尾を足さないと **その日のぶんが必ず落ちる**。
+
+        `"2024-06-01T17:30" <= "2024-06-01"` は文字列比較で偽になる。
+        """
+        engine = _get_engine_and_session(app_with_temp_db)
+        from db.session import session_scope
+        with session_scope(engine) as session:
+            _insert_race(session)
+            session.add(BetRecord(
+                created_at="2024-06-01T17:30:00+00:00",
+                race_id="202406010101",
+                bet_type="単勝",
+                combo="3",
+                stake=100,
+                source="manual",
+            ))
+            session.commit()
+
+        with TestClient(app_with_temp_db) as client:
+            assert client.get("/api/bets?from=2024-06-01&to=2024-06-01").json()["total"] == 1
+
     def test_filter_by_race_id(self, app_with_temp_db: FastAPI) -> None:
         engine = _get_engine_and_session(app_with_temp_db)
         from db.session import session_scope
