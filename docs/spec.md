@@ -102,7 +102,7 @@
 │   ├── src/
 │   │   ├── main.tsx           # React + QueryClient + Router マウント
 │   │   ├── App.tsx            # Outlet レイアウト（Topbar 含む）
-│   │   ├── router.tsx         # createBrowserRouter（6 画面 + `/` の転送 + 旧 URL のリダイレクト 5 本。`/races*` だけ loader で ?date= と race_id を保つ）
+│   │   ├── router.tsx         # createBrowserRouter（6 画面 + 開発用の /style + `/` の転送 + 旧 URL のリダイレクト 5 本。`/races*` だけ loader で ?date= と race_id を保つ）
 │   │   ├── globals.css        # Tailwind ベース + CSS 変数（デザイントークン）
 │   │   ├── routes/            # ページコンポーネント（1 画面 1 ファイル）
 │   │   │   ├── Races.tsx            # `/race`（最初に出る画面）。RaceCalendar + DayIngestPanel（旧 UpcomingRaces / PastRaces / Ingest を統合）
@@ -110,7 +110,8 @@
 │   │   │   ├── RaceDetail.tsx       # レース概要 + 出走馬表 + 推奨買目（答え合わせはそのタブ）
 │   │   │   ├── Ledger.tsx           # 購入記録と収支（回収率・的中率・損益推移）
 │   │   │   ├── ModelDetail.tsx      # モデル 1 件の詳細 + ModelSimulationPanel
-│   │   │   └── Settings.tsx         # react-hook-form + zod バリデーション
+│   │   │   ├── Settings.tsx         # react-hook-form + zod バリデーション
+│   │   │   └── StyleGuide.tsx       # `/style`。見た目の規定を実コードから描いて測る（開発用）
 │   │   ├── components/        # 共通コンポーネント。以下は「知らないと探せない」ものだけ
 │   │   │   ├── Topbar.tsx           # 上部ナビ（全画面共通）。**サイドバーは無い**
 │   │   │   ├── BrandMark.tsx        # ブランドマーク（馬蹄）。inline SVG + currentColor でテーマ追従

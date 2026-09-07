@@ -5,6 +5,7 @@ import { RaceDetail } from './routes/RaceDetail';
 import { Models } from './routes/Models';
 import { ModelDetail } from './routes/ModelDetail';
 import { Settings } from './routes/Settings';
+import { StyleGuide } from './routes/StyleGuide';
 import { Ledger } from './routes/Ledger';
 
 /**
@@ -48,6 +49,9 @@ export const router = createBrowserRouter([
       // Settings: 全レース共通の予想パラメータ + スクレイパー動作設定
       { path: 'settings', element: <Settings /> },
       { path: 'ledger', element: <Ledger /> },
+      // 見た目の規定を実物で確かめる 1 画面。Topbar には出さない
+      // (毎日使う画面ではない)。docs/ui-style.md から指す。
+      { path: 'style', element: <StyleGuide /> },
     ],
   },
 ]);

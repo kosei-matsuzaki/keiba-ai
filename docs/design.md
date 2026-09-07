@@ -134,6 +134,9 @@ FastAPI の依存注入（`api/deps.py`）で以下を提供する。
 | 5 | Model Detail | `/models/:model_id` | モデル 1 件の詳細と、期間・予算を指定したバックテスト | `GET /api/models/{id}`, `POST /api/simulation/start`, `GET /api/simulation/runs/{run_id}` |
 | 6 | Settings | `/settings` | 全レース共通の予想パラメータとスクレイパー設定（予算 / 券種ごとのしきい値 / 取り込み方 の 3 節） | `GET /api/settings`, `PUT /api/settings` |
 
+ほかに `/style` がある。見た目の規定を実コードから描いて確かめるための開発用の画面で、
+API を叩かず、Topbar にも出さない（[ui-style.md](ui-style.md) から指す）。
+
 旧 `/upcoming` `/past` `/ingest` `/races` `/races/:race_id` はすべて `/race*` へ送る。
 ブックマーク互換で `router.tsx` に残してあるだけの経路で、`/races` 系だけは `Navigate` ではなく
 **loader で `redirect`** している — 素の `<Navigate>` は `?date=` と `race_id` を落とすので、

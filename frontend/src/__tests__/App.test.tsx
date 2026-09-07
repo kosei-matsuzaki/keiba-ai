@@ -142,6 +142,14 @@ describe('Routing', () => {
     expect(element?.props?.replace).toBe(true);
   });
 
+  it('/style は Topbar に出さない (毎日使う画面ではない)', async () => {
+    const { router: appRouter } = await import('../router');
+    expect(appRouter.routes[0].children?.some((r) => r.path === 'style')).toBe(true);
+    renderAt('/race');
+    expect(await screen.findByRole('link', { name: 'RACE' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /STYLE/i })).not.toBeInTheDocument();
+  });
+
   it('renders Settings at /settings', async () => {
     renderAt('/settings');
     expect(await screen.findByRole('heading', { name: '設定' })).toBeInTheDocument();
