@@ -7,9 +7,7 @@ import { toast } from '@/lib/toast';
 import { formatErrorMessage } from '@/lib/api';
 import type { SettingsUpdate } from '@/types/api';
 
-// タブ (SCRAPER / BETTING) は外した。合計 8 項目しかなく、隠す量ではない。
-// 分けていると「取り込み方」と「買い方」を両方直したいときに切り替えが要り、
-// 保存も 2 回になる。1 画面に 2 グループを縦に並べれば 1 回で済む。
+// 画面の組み方は docs/design.md「UI 画面構成 > Settings」。
 // INGEST はレース画面の取込パネルへ、OPS の緊急停止はスクレイパー状態カードへ
 // 移設済みなので、ここには無い。
 
@@ -39,8 +37,9 @@ export function Settings() {
         description="全レース共通の予想パラメータとスクレイパーの動作設定"
       />
 
-      {/* 見出しは他のタブと同じく全幅。中身だけ中央に寄せる —
-          行長を max-w-3xl に締めてあるので、左寄せだと右半分が空いたままになる。 */}
+      {/* 行長の上限はここ 1 か所。付けないと 1440px の画面でラベルが左端・
+          入力が右端に張り付き、1 項目を読むのに目が 1000px 以上動く。
+          見出しは全幅のまま、中身だけ中央に寄せる (左寄せだと右半分が空く)。 */}
       <div className="mx-auto w-full max-w-3xl">
       {settingsQuery.isPending ? (
         <Skeleton className="h-96 w-full rounded-sm" />

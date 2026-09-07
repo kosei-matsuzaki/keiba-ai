@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -8,6 +8,7 @@ import type { SettingsResponse } from '../types/api';
 
 vi.mock('../lib/api', () => ({
   fetchSettings: vi.fn(),
+  fetchBetBreakdown: vi.fn(),
   // Settings の MODELS タブが確率モデルの選択肢を取りに行く
   fetchModels: vi.fn().mockResolvedValue([]),
   updateSettings: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock('../lib/api', () => ({
   formatErrorMessage: vi.fn().mockResolvedValue('エラーが発生しました'),
 }));
 
-import { fetchSettings, updateSettings } from '../lib/api';
+import { fetchBetBreakdown, fetchSettings, updateSettings } from '../lib/api';
 
 const mockSettings: SettingsResponse = {
   user_agent: 'TestAgent/1.0',
@@ -64,19 +65,21 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(fetchSettings).mockResolvedValue(mockSettings);
   vi.mocked(updateSettings).mockResolvedValue(mockSettings);
+  // 既定は台帳が空 = 初回起動と同じ状態
+  vi.mocked(fetchBetBreakdown).mockResolvedValue({ group_by: 'bet_type', rows: [] });
 });
 
-/** 馬券種トグル (aria-pressed ボタン) を取得する。 */
 describe('Settings', () => {
   it('renders settings form with loaded values', async () => {
     renderSettings();
-    const input = await screen.findByDisplayValue('TestAgent/1.0');
-    expect(input).toBeInTheDocument();
+    // 取り込み方は畳まない。何も操作せずに 3 つの節がすべて読める
+    expect(await screen.findByDisplayValue('TestAgent/1.0')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '取り込み方' })).toBeInTheDocument();
   });
 
   it('hides the save bar entirely when the form is not dirty', async () => {
     renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
+    await screen.findByLabelText('1 レースに使う上限');
     // 常時出ていると「未保存かどうか」の情報が失われるので、変更が無ければ出さない
     expect(screen.queryByRole('button', { name: '変更を保存' })).not.toBeInTheDocument();
     expect(screen.queryByText(/件の変更があります/)).not.toBeInTheDocument();
@@ -155,7 +158,7 @@ describe('Settings', () => {
 
   it('Kelly / 軍資金の入力は無くなっている', async () => {
     renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
+    await screen.findByLabelText('1 レースに使う上限');
     // 賭け金は「1 レースの上限」と「1 点あたり」の 2 つだけで決まる
     expect(screen.queryByLabelText('軍資金（全体）')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('賭け金の思い切り')).not.toBeInTheDocument();
@@ -166,7 +169,7 @@ describe('Settings', () => {
     // オッズ・払戻は取得しているが COMBINATION_BET_TYPES に無いので候補が 0 件。
     // 選べるのに何も起きない選択肢を残さない。
     renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
+    await screen.findByLabelText('1 レースに使う上限');
     expect(screen.queryByRole('button', { name: '枠連' })).not.toBeInTheDocument();
   });
 
@@ -175,15 +178,10 @@ describe('Settings', () => {
   it('shows validation error when race_budget is below 100', async () => {
     const user = userEvent.setup();
     renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
+    await screen.findByLabelText('1 レースに使う上限');
 
     const budgetInput = screen.getByLabelText('1 レースに使う上限');
     fireEvent.change(budgetInput, { target: { value: '50' } });
-
-    // user_agent を編集して isDirty にする
-    const userAgentInput = screen.getByDisplayValue('TestAgent/1.0');
-    await user.tripleClick(userAgentInput);
-    await user.type(userAgentInput, 'EditedAgent');
 
     const saveBtn = screen.getByRole('button', { name: '変更を保存' });
     await waitFor(() => expect(saveBtn).not.toBeDisabled());
@@ -198,7 +196,7 @@ describe('Settings', () => {
   it('submits the per-race budget after editing', async () => {
     const user = userEvent.setup();
     renderSettings();
-    await screen.findByDisplayValue('TestAgent/1.0');
+    await screen.findByLabelText('1 レースに使う上限');
 
     const budgetInput = screen.getByLabelText('1 レースに使う上限');
     fireEvent.change(budgetInput, { target: { value: '20000' } });
@@ -245,6 +243,99 @@ describe('Settings', () => {
     await waitFor(() => {
       const call = vi.mocked(updateSettings).mock.calls[0][0];
       expect(call.combo_min_hit_prob?.['馬連']).toBeCloseTo(0.09);
+    });
+  });
+});
+
+describe('Settings — 買い方', () => {
+  const rows = [
+    { group_key: '単勝', bets: 312, invested: 156000, payout: 141492, profit: -14508, payback_rate: 0.907, hit_rate: 0.37 },
+    { group_key: '複勝', bets: 298, invested: 149000, payout: 152980, profit: 3980, payback_rate: 1.027, hit_rate: 0.61 },
+  ];
+
+  it('並びは推奨が予算を使う順（単勝 → 複勝 → 連系）', async () => {
+    renderSettings();
+    await screen.findByLabelText('1 レースに使う上限');
+
+    const table = screen.getByRole('table', { name: '券種ごとのしきい値' });
+    const names = within(table)
+      .getAllByRole('row')
+      .slice(1) // ヘッダ行を除く
+      .map((r) => within(r).getAllByRole('cell')[0].textContent);
+
+    expect(names).toEqual(['単勝', '複勝', '馬連', 'ワイド', '馬単', '三連複', '三連単']);
+  });
+
+  it('予算は券種の表に混ぜず、独立した節に置く', async () => {
+    renderSettings();
+    await screen.findByLabelText('1 レースに使う上限');
+
+    for (const name of ['予算', '券種ごとのしきい値', '取り込み方']) {
+      expect(screen.getByRole('heading', { name })).toBeInTheDocument();
+    }
+    // 券種の表に予算の行は無い
+    const table = screen.getByRole('table', { name: '券種ごとのしきい値' });
+    expect(within(table).queryByLabelText('1 レースに使う上限')).not.toBeInTheDocument();
+  });
+
+  it('台帳に記録があれば、しきい値の隣に実測を出す', async () => {
+    vi.mocked(fetchBetBreakdown).mockResolvedValue({ group_by: 'bet_type', rows });
+    renderSettings();
+
+    // 数字はベタ書きせず API から引く (測り直すたびに動くため)
+    expect(await screen.findByText('0.91')).toBeInTheDocument();
+    expect(screen.getByText('1.03')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '回収率' })).toBeInTheDocument();
+
+    // 記録の無い券種は行が残り、実測だけ空く
+    const cells = within(screen.getByRole('row', { name: /三連単/ })).getAllByRole('cell');
+    expect(cells[cells.length - 1]).toHaveTextContent('·');
+  });
+
+  it('記録が 1 件も無ければ実測の列ごと出さない', async () => {
+    // 初回起動は必ずこの状態。「未計測」が 7 行並んでも何も伝わらない
+    renderSettings();
+    await screen.findByLabelText('1 レースに使う上限');
+
+    expect(screen.queryByRole('columnheader', { name: '回収率' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: '記録' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '設定' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '券種' })).toBeInTheDocument();
+  });
+
+  it('複勝の下限も % で入出力する（連系と同じ列に並ぶため）', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    // 0.6 と 7.5 が同じ列に並ぶと 100 倍違う数が同じ大きさに見える
+    const place = (await screen.findByLabelText('複勝を買う確信度の下限')) as HTMLInputElement;
+    expect(place.value).toBe('60');
+
+    fireEvent.change(place, { target: { value: '65' } });
+    const saveBtn = await screen.findByRole('button', { name: '変更を保存' });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+
+    await waitFor(() => {
+      const call = vi.mocked(updateSettings).mock.calls[0][0];
+      expect(call.place_min_hit_prob).toBeCloseTo(0.65);
+    });
+  });
+
+  it('scraper_stopped は送らない（画面に無い値を保存で送り返さない）', async () => {
+    // 送り返すと、その間に Race 画面から止めた停止フラグが戻る
+    const user = userEvent.setup();
+    renderSettings();
+
+    const budget = await screen.findByLabelText('1 レースに使う上限');
+    fireEvent.change(budget, { target: { value: '7000' } });
+    const saveBtn = await screen.findByRole('button', { name: '変更を保存' });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+
+    await waitFor(() => {
+      const call = vi.mocked(updateSettings).mock.calls[0][0];
+      expect(call).not.toHaveProperty('scraper_stopped');
     });
   });
 });
