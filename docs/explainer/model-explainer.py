@@ -47,8 +47,16 @@ BG        = "#0c1420"
 CONTENT_W = 12.8
 CONTENT_H = 4.9
 CONTENT_C = np.array([0.0, -0.05, 0.0])
-CAP_W = 12.6
+CAP_W = 12.0
 MAX_GROW = 1.25
+
+# 字の大きさはこの 5 段だけ。役割で選ぶ (画面のどこに出るかではなく)
+T_END = 26      # 締めのカード
+T_CAP = 23      # 字幕
+T_HEAD = 20     # 図の見出し
+T_LABEL = 16    # 図中のラベル
+T_NOTE = 15     # 補足
+T_MICRO = 13    # 目盛り・縮小図
 
 # 幕 2-4 は右端にエンコーダの地図を出したままにする。いま開いているブロックが
 # どこの話なのかを、言葉ではなく位置で示すため。
@@ -57,11 +65,12 @@ MAX_GROW = 1.25
 # 「三つのうちどれか」を指すことなので、**指す対象が小さくなっては意味がない**。
 # 本文と地図は「左右に振り分ける」のではなく、2 つで 1 つの構図として置く。
 # 端に寄せると本文も地図も小さいまま中央が空く
-MAP_SCALE = 0.57         # 縮小図の倍率 (層の間だけ別に詰める)
-MAP_C = np.array([3.60, -0.05, 0.0])
+MAP_SCALE = 0.90         # 縮小図の倍率 (層の間だけ別に詰める)
+MAP_GAP = 0.75           # 縮小図の段の間隔。倍率だけ上げても幅は伸びない
+MAP_C = np.array([3.50, -0.05, 0.0])
 MAP_DIM = 0.32
-MAP_FREE_W = 6.2
-MAP_FREE_C = np.array([-2.90, -0.05, 0.0])
+MAP_FREE_W = 6.6
+MAP_FREE_C = np.array([-3.05, -0.05, 0.0])
 MAP_FREE_GROW = 1.5
 
 POOL = [0.25, 0.82, 0.48, 0.35, 0.9, 0.6, 0.18, 0.72, 0.42, 0.55,
@@ -179,10 +188,10 @@ def chip(s, color, size=19, width=None, pad=0.55, caps=False):
     return VGroup(box, t)
 
 
-def nlayer(k, color, x, span=1.15):
+def nlayer(k, color, x, span=1.15, size=0.23):
     """A hidden layer -- same shape as a value, so the whole diagram reads as one."""
     ys = np.linspace(span, -span, k)
-    return VGroup(*[Square(0.23, stroke_color=color, stroke_width=2,
+    return VGroup(*[Square(size, stroke_color=color, stroke_width=2,
                            fill_color=color, fill_opacity=0.15).move_to([x, y, 0])
                     for y in ys])
 
@@ -209,8 +218,8 @@ def probbars(vals, labels, color, bw=0.44, gap=0.26, hmax=1.7, fmt="{:.0%}"):
     for v, lb in zip(vals, labels):
         bar = Rectangle(width=bw, height=max(0.05, hmax * v), stroke_width=0,
                         fill_color=color, fill_opacity=0.85)
-        name = jt(lb, 14, C_DIM).next_to(bar, DOWN, buff=0.10)
-        val = jt(fmt.format(v), 13, color).next_to(bar, UP, buff=0.08)
+        name = jt(lb, T_MICRO, C_DIM).next_to(bar, DOWN, buff=0.10)
+        val = jt(fmt.format(v), T_MICRO, color).next_to(bar, UP, buff=0.08)
         g.add(VGroup(bar, name, val))
     g.arrange(RIGHT, buff=gap, aligned_edge=DOWN)
     return g
@@ -269,11 +278,13 @@ class ModelMath(Scene):
         self._cap = None
 
         title = jt("Horse-Racing Prediction with a Set Transformer", 34, weight=BOLD)
-        sub = jt("Inside the computation -- how a race becomes a score", 21, color=C_DIM)
+        sub = jt("Inside the computation -- how a race becomes a score", T_CAP, color=C_DIM)
         VGroup(title, sub).arrange(DOWN, buff=0.30).move_to(ORIGIN)
         self.play(Write(title), FadeIn(sub, shift=UP * 0.2))
         self.wait(1.1)
-        self.play(FadeOut(sub), title.animate.scale(0.55).to_corner(UL, buff=0.35), run_time=0.9)
+        self.play(FadeOut(sub),
+                  title.animate.scale(0.46).set_opacity(0.55).to_corner(UL, buff=0.38),
+                  run_time=0.9)
         self.title = title
         self._act_head = None
 
@@ -288,8 +299,8 @@ class ModelMath(Scene):
         self.play(FadeOut(self._cap), FadeOut(self.title), FadeOut(self._act_head),
                   run_time=0.7)
         end = VGroup(
-            jt("Separate ability from market price.", 26),
-            jt("Then optimise the money, not the ranking.", 26, C_DIM),
+            jt("Separate ability from market price.", T_END),
+            jt("Then optimise the money, not the ranking.", T_END, C_DIM),
         ).arrange(DOWN, buff=0.36).move_to(ORIGIN)
         self.play(FadeIn(end[0], shift=UP * 0.2))
         self.play(FadeIn(end[1], shift=UP * 0.2), run_time=0.9)
@@ -302,10 +313,13 @@ class ModelMath(Scene):
         どの幕も同じ枠なので、外から見て「いまどこか」の手がかりが画面に無い。
         色はその幕が説明している対象の色をそのまま使う。
         """
-        rule = Line(ORIGIN, RIGHT * 1.15, stroke_color=color, stroke_width=3)
-        lbl = jt(f"act {n} of 8 -- {name}", 12, color, caps=True)
-        block = VGroup(rule, lbl).arrange(DOWN, buff=0.13, aligned_edge=LEFT)
-        block.next_to(self.title, DOWN, buff=0.20).align_to(self.title, LEFT)
+        num = jt(f"{n:02d}", 30, color)
+        of = jt("/ 08", T_MICRO, C_DIM)
+        nm = jt(name, T_LABEL + 2, color, caps=True)
+        line = VGroup(num, of, nm).arrange(RIGHT, buff=0.24, aligned_edge=DOWN)
+        rule = Line(ORIGIN, RIGHT * (line.width + 0.1), stroke_color=color, stroke_width=3)
+        block = VGroup(rule, line).arrange(DOWN, buff=0.16, aligned_edge=LEFT)
+        block.next_to(self.title, DOWN, buff=0.26).align_to(self.title, LEFT)
         if self._act_head is None:
             self._act_head = block
             self.play(FadeIn(block, shift=RIGHT * 0.15), run_time=0.5)
@@ -314,9 +328,36 @@ class ModelMath(Scene):
                       FadeIn(block, shift=RIGHT * 0.12), run_time=0.45)
             self._act_head = block
 
+    @staticmethod
+    def _wrap(s, limit=58):
+        """Break one caption into at most two lines.
+
+        区切り記号があればそこで折る。単純に中央で折ると "-- and" のように
+        句のつながりを断つ位置に落ちて、二行目が言いかけから始まる。
+        """
+        if len(s) <= limit:
+            return [s]
+        for sep in (" -- ", ": ", ". ", "; ", ", "):
+            i = s.find(sep, int(len(s) * 0.25), int(len(s) * 0.78))
+            if i > 0:
+                return [s[:i + len(sep) - 1].strip(), s[i + len(sep):].strip()]
+        words, target = s.split(" "), len(s) / 2
+        head = words[0]
+        for i in range(2, len(words)):
+            trial = " ".join(words[:i])
+            if abs(len(trial) - target) >= abs(len(head) - target):
+                break
+            head = trial
+        return [head, s[len(head) + 1:]]
+
     def cap(self, s, color=WHITE, hold=0.5):
-        """Bottom caption. Cross-fades -- morphing between unrelated strings smears."""
-        new = jt(s, 21, color=color).to_edge(DOWN, buff=0.42)
+        """Bottom caption. Cross-fades -- morphing between unrelated strings smears.
+
+        1 行に詰めると字が小さくなるか端まで届く。2 行に折って、縁からも離す。
+        """
+        new = VGroup(*[jt(line, T_CAP, color=color) for line in self._wrap(s)])
+        new.arrange(DOWN, buff=0.20)
+        new.to_edge(DOWN, buff=0.46)
         if new.width > CAP_W:
             new.scale_to_fit_width(CAP_W)
         if self._cap is None:
@@ -349,43 +390,43 @@ class ModelMath(Scene):
         if doomed:
             self.play(*[FadeOut(m, shift=LEFT * 0.18) for m in doomed], run_time=run_time)
 
-    def build_map(self, column, labels, label_specs, layers, wires, ability, drop):
+    def build_map(self, column, labels, layers, wires, ability, drop):
         """Shrink the encoder into an inset on the right and keep it through acts 2-4.
 
         描き直した略図ではなく**実物をそのまま小さくする**。層の間だけ詰めて幅を
         落とし、結線は薄くして地の模様にする。枠と見出しを付けるのは、本文の隣に
         置いたときに「余った図」ではなく差し込み図として読ませるため。
+
+        ブロック名は載せない。色と位置で足りるうえ、名前の列に幅を取られると
+        **指す対象そのものが小さくなる**。
         """
         k = MAP_SCALE
         small = [column.copy().scale(k), layers[0].copy().scale(k),
                  layers[1].copy().scale(k), ability.copy().scale(k)]
-        VGroup(*small).arrange(RIGHT, buff=0.5)
+        VGroup(*small).arrange(RIGHT, buff=MAP_GAP)
         col, h1, h2, ab = small
         cells = VGroup(*[c for block in col for c in block])
         wire_targets = [edges(cells, h1, faint=True), edges(h1, h2, faint=True),
                         edges(h2, ab, faint=True)]
-        text = VGroup(*[jt(t, 13, c).next_to(b, LEFT, buff=0.30)
-                        for (t, c), b in zip(label_specs, col)])
-        inner = VGroup(text, col, *wire_targets, h1, h2, ab)
-        head = jt("ability encoder", 15, C_DIM, caps=True).next_to(inner, UP, buff=0.30)
+        inner = VGroup(col, *wire_targets, h1, h2, ab)
+        head = jt("ability encoder", T_NOTE, C_DIM, caps=True).next_to(inner, UP, buff=0.30)
         panel = SurroundingRectangle(VGroup(head, inner), color=C_DIM, buff=0.32,
                                      corner_radius=0.16, stroke_width=1.2)
         panel.set_fill(C_DIM, 0.04).set_stroke(opacity=0.35)
         VGroup(panel, head, inner).move_to(MAP_C)
-        VGroup(col, text).set_opacity(MAP_DIM)
+        col.set_opacity(MAP_DIM)
         VGroup(h1, h2, ab).set_opacity(MAP_DIM + 0.18)
 
         self.play(FadeOut(drop), FadeIn(panel), FadeIn(head),
+                  FadeOut(VGroup(*labels), shift=LEFT * 0.2),
                   *[Transform(part, target) for part, target in zip(column, col)],
-                  *[Transform(part, target) for part, target in zip(labels, text)],
                   Transform(layers[0], h1), Transform(layers[1], h2),
                   Transform(ability, ab),
                   *[Transform(part, target) for part, target in zip(wires, wire_targets)],
                   run_time=1.1)
         self._map_blocks = list(column)
-        self._map_labels = list(labels)
         # clear_stage が見るのは最上位の mobject なので、子ではなく親の column を渡す
-        self._map_parts = [column, *labels, *layers, *wires, ability, panel, head]
+        self._map_parts = [column, *layers, *wires, ability, panel, head]
         # 枠と見出しは幕 5 で全体図の 1 段目に畳む (差し込み図がそのまま箱になる)
         self._map_frame = (panel, head)
         self._map_box = None
@@ -395,11 +436,8 @@ class ModelMath(Scene):
 
         この大きさでは濃淡だけだとどこが光っているのか分からないので、囲みも足す。
         """
-        anims = []
-        for i, (block, label) in enumerate(zip(self._map_blocks, self._map_labels)):
-            level = 1.0 if i == idx else MAP_DIM
-            anims.append(block.animate.set_opacity(level))
-            anims.append(label.animate.set_opacity(level))
+        anims = [block.animate.set_opacity(1.0 if i == idx else MAP_DIM)
+                 for i, block in enumerate(self._map_blocks)]
         target = self._map_blocks[idx]
         box = SurroundingRectangle(target, buff=0.06, corner_radius=0.04, stroke_width=2,
                                    color=target[0].get_stroke_color())
@@ -417,26 +455,26 @@ class ModelMath(Scene):
         names_g, arrows = VGroup(), VGroup()
         for i, (sq, name) in enumerate(zip(col, names)):
             c = (name_color or [C_DIM] * len(names))[i]
-            t = jt(name, 17, c).next_to(sq, RIGHT, buff=1.1)
+            t = jt(name, T_LABEL, c).next_to(sq, RIGHT, buff=1.1)
             names_g.add(t)
             arrows.add(arr(sq.get_right(), t.get_left(), c, sw=1.6, buff=0.12))
-        heading = jt(head, 20, color)
+        heading = jt(head, T_HEAD, color)
         block = VGroup(heading, VGroup(col, arrows, names_g)).arrange(DOWN, buff=0.42)
         return block, col, arrows, names_g
 
     # ============================================================ 1. ability
     def act1_ability(self):
         self.set_act(1, "ability", C_ABILITY)
-        self.cap("One horse goes in, one vector comes out. The model calls it ability.",
+        self.cap("One horse in, one vector out. The model calls it ability.",
                  C_ABILITY)
 
         agg = vvec(vs(2, 4), C_AGG, cell=0.30)
         hist = vvec(vs(16, 4), C_HIST, cell=0.30)
         race = vvec(vs(5, 3), C_RACE, cell=0.30)
         concat = VGroup(agg, hist, race).arrange(DOWN, buff=0.07).move_to([-4.6, 0.0, 0])
-        la = jt("aggregate", 16, C_AGG).next_to(agg, LEFT, buff=0.22)
-        lh = jt("history", 16, C_HIST).next_to(hist, LEFT, buff=0.22)
-        lr = jt("race", 16, C_RACE).next_to(race, LEFT, buff=0.22)
+        la = jt("aggregate", T_LABEL, C_AGG).next_to(agg, LEFT, buff=0.22)
+        lh = jt("history", T_LABEL, C_HIST).next_to(hist, LEFT, buff=0.22)
+        lr = jt("race", T_LABEL, C_RACE).next_to(race, LEFT, buff=0.22)
         l_h1 = nlayer(5, WHITE, -1.4, span=1.20)
         l_h2 = nlayer(5, WHITE, 0.8, span=1.20)
         ability = vvec(vs(30, 4), C_ABILITY, cell=0.32).move_to([3.3, 0.0, 0])
@@ -446,9 +484,9 @@ class ModelMath(Scene):
         # 全結合なのだから、1 つの値ごとに引く
         in_cells = VGroup(*[cell for block in concat for cell in block])
         e1, e2, e3 = edges(in_cells, l_h1), edges(l_h1, l_h2), edges(l_h2, ability)
-        albl = jt("ability, 32-dim", 16, C_ABILITY).next_to(ability, DOWN, buff=0.20)
-        gelu = jt("each layer: linear, then GELU", 18, C_DIM)
-        noodds = jt("no odds anywhere in here -- ability is judged without the market's opinion",
+        albl = jt("ability, 32-dim", T_LABEL, C_ABILITY).next_to(ability, DOWN, buff=0.20)
+        gelu = jt("each layer: linear, then GELU", T_LABEL, C_DIM)
+        noodds = jt("no odds in here: ability is judged without the market's opinion",
                     18, C_ODDS)
         body = VGroup(concat, la, lh, lr, l_h1, l_h2, ability, e1, e2, e3, albl)
         gelu.next_to(body, UP, buff=0.34)
@@ -471,16 +509,14 @@ class ModelMath(Scene):
         self.wait(1.4)
 
         self.cap("Three kinds of input feed it. Each one is worth opening.", C_DIM)
-        self.build_map(concat, [la, lh, lr],
-                       [("aggregate", C_AGG), ("history", C_HIST), ("race", C_RACE)],
-                       (l_h1, l_h2), (e1, e2, e3), ability,
+        self.build_map(concat, [la, lh, lr], (l_h1, l_h2), (e1, e2, e3), ability,
                        VGroup(gelu, noodds, albl))
 
     # ============================================================ 2. aggregate
     def act2_aggregate(self):
         self.set_act(2, "aggregate", C_AGG)
         self.focus_map(0)
-        self.cap("The aggregate block: 46 columns, one race-day snapshot of the horse.", C_AGG)
+        self.cap("46 columns: one race-day snapshot of the horse.", C_AGG)
         names = ["`recent_avg_finish`", "`jockey_recent_win_rate`", "`horse_weight`",
                  "`days_since_last_race`", "`sire_progeny_win_rate`", "`odds_win`"]
         block, col, arrows, labels = self.labelled_column(
@@ -492,7 +528,7 @@ class ModelMath(Scene):
         self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(f))
                                 for a, f in zip(arrows, labels)], lag_ratio=0.14), run_time=1.4)
         self.wait(0.7)
-        self.cap("The price is in there too -- and it is the one column the encoder never sees.",
+        self.cap("The price is in there -- and the encoder never sees it.",
                  C_ODDS)
         self.play(Indicate(VGroup(col[5], arrows[5], labels[5]), color=C_ODDS, scale_factor=1.08),
                   run_time=0.8)
@@ -503,18 +539,19 @@ class ModelMath(Scene):
     def act3_history(self):
         self.set_act(3, "history", C_HIST)
         self.focus_map(1)
-        self.cap("The history block: every past run, one token each.", C_PAST)
-        tnames = ["finish / field size", "beaten margin", "last 3F", "class of the race"]
+        self.cap("Every past run, one token each.", C_PAST)
+        tnames = ["finish / field size", "beaten margin", "last 3F", "passing position",
+                  "weight carried", "distance", "class of the race", "days since"]
         block, tok, ta, tl = self.labelled_column(
             vs(20, 8), C_PAST, tnames, "one past run = 16 numbers", cell=0.30)
         fit_beside_map(block)
         self.play(TransformFromCopy(self._map_blocks[1], tok), FadeIn(block[0]), run_time=1.1)
         self.play(LaggedStart(*[AnimationGroup(GrowArrow(a), FadeIn(f))
-                                for a, f in zip(ta, tl)], lag_ratio=0.14), run_time=1.1)
-        self.wait(0.8)
+                                for a, f in zip(ta, tl)], lag_ratio=0.12), run_time=1.6)
+        self.wait(0.9)
         self.play(FadeOut(block[0]), FadeOut(tl), FadeOut(ta), run_time=0.5)
 
-        self.cap("A GRU folds that sequence -- up to 15 runs -- into one history vector.",
+        self.cap("A GRU folds the sequence into one history vector.",
                  C_HIST)
         # 地図の隣に置くぶん横幅が狭いので、鎖そのものを詰めて組む
         hid_x, cell_x = [-3.5, -1.85, -0.2, 1.6], [-2.68, -1.03, 0.62]
@@ -534,7 +571,7 @@ class ModelMath(Scene):
             xs.append(VGroup(xv, xl))
         eq = mt(r"h_t=(1-z_t)\odot h_{t-1}+z_t\odot \tilde{h}_t", WHITE, 0.62)
         box = SurroundingRectangle(hs[3], color=C_HIST, buff=0.12, corner_radius=0.08)
-        hlab = jt("history vector", 16, C_HIST).next_to(box, DOWN, buff=0.20)
+        hlab = jt("history vector", T_LABEL, C_HIST).next_to(box, DOWN, buff=0.20)
         chain = VGroup(*hs, *hl, cells, *xs, box, hlab)
         eq.next_to(chain, UP, buff=0.36)
         fit_beside_map(VGroup(chain, eq))
@@ -558,7 +595,7 @@ class ModelMath(Scene):
     def act4_race(self):
         self.set_act(4, "race", C_RACE)
         self.focus_map(2)
-        self.cap("The race block: seven columns that describe the race, not the horse.", C_RACE)
+        self.cap("Seven columns describe the race, not the horse.", C_RACE)
         names = ["`course`", "`distance`", "`surface`", "`weather`",
                  "`track_condition`", "`race_class`", "`n_runners`"]
         block, col, arrows, labels = self.labelled_column(
@@ -569,7 +606,7 @@ class ModelMath(Scene):
                                 for a, f in zip(arrows, labels)], lag_ratio=0.12), run_time=1.4)
         self.wait(0.9)
 
-        self.cap("Every horse in the race shares them, so the same vector is copied onto each.",
+        self.cap("Shared by the field, so every horse gets the same copy.",
                  C_RACE)
         stacks = VGroup()
         for i in range(4):
@@ -577,7 +614,7 @@ class ModelMath(Scene):
             h = vvec(vs(16 + i, 4), C_HIST, cell=0.18)
             r = vvec(vs(5, 7), C_RACE, cell=0.18)      # 4 頭とも同じ値 = 共有されている
             s = VGroup(a, h, r).arrange(DOWN, buff=0.05)
-            lab = jt(f"Horse {i + 1}", 14, C_DIM).next_to(s, DOWN, buff=0.16)
+            lab = jt(f"Horse {i + 1}", T_MICRO, C_DIM).next_to(s, DOWN, buff=0.16)
             stacks.add(VGroup(s, lab))
         stacks.arrange(RIGHT, buff=0.7)
         src = col.copy().next_to(stacks, LEFT, buff=1.3)
@@ -596,74 +633,120 @@ class ModelMath(Scene):
 
         幕 1-4 と同じ「全体を先に、部品を後で」を後半にも置く。これが無いと、
         エンコーダの話が終わった直後に attention とスコアが唐突に始まる。
+
+        エンコーダは紫の出どころを示すだけなので、渡し終わったら退場させる。
+        残す絵は「集合の中で読み合う」「値段が横から合流する」「確率が出る」の三つ。
         """
         self.set_act(5, "the pipeline", C_DIM)
-        self.cap("The encoder does that for every horse. This is where those vectors go.",
-                 C_ABILITY)
+        self.cap("Every horse now has one. This is where they go.", C_ABILITY)
 
-        enc = chip("ability encoder", C_ABILITY, 15, caps=True)
-        tf = chip("set transformer", C_Q, 15, caps=True)
-        head = chip("scoring head", C_SCORE, 15, caps=True)
-        stacks = []
-        for seed, color, tex in [(30, C_ABILITY, "a_i"), (60, C_ABILITY, "a_i'")]:
-            rows = VGroup(*[hvec(vs(seed + i, 4), color, cell=0.17) for i in range(4)])
-            rows.arrange(DOWN, buff=0.10)
-            stacks.append(VGroup(rows, mt(tex, color, 0.45).next_to(rows, DOWN, buff=0.16)))
-        scores = VGroup(*[valdot(v, C_SCORE, 0.26) for v in [0.9, 0.35, 0.6, 0.2]])
-        scores.arrange(DOWN, buff=0.10)
-        scores = VGroup(scores, mt("s_i", C_SCORE, 0.45).next_to(scores, DOWN, buff=0.16))
-        out = VGroup(jt("win", 16, C_SCORE), jt("place", 16, C_V), jt("combos", 16, C_ODDS))
-        out.arrange(DOWN, buff=0.18)
+        # --- 本番の配置 (エンコーダは入らない) -------------------------------
+        a_rows = VGroup(*[hvec(vs(30 + i, 4), C_ABILITY, cell=0.20) for i in range(4)])
+        a_rows.arrange(DOWN, buff=0.24)
+        horse_lbls = VGroup(*[jt(f"Horse {i + 1}", T_MICRO, C_DIM).next_to(a_rows[i], LEFT,
+                                                                          buff=0.26)
+                              for i in range(4)])
+        attn = VGroup(horse_lbls, a_rows)
 
-        # 段の間は広めに取る。詰めると矢印が切れ端になって流れが読めない
-        row = VGroup(enc, stacks[0], tf, stacks[1], head, scores, out).arrange(RIGHT, buff=0.52)
-        links = VGroup(*[arr(row[i].get_right(), row[i + 1].get_left(), C_DIM, sw=1.8, buff=0.08)
-                         for i in range(len(row) - 1)])
-        odds = hvec(vs(9, 2), C_ODDS, cell=0.22).next_to(head, DOWN, buff=0.55)
-        odds_lbl = jt("odds", 14, C_ODDS).next_to(odds, DOWN, buff=0.12)
-        odds_arr = arr(odds.get_top(), head.get_bottom(), C_ODDS, sw=2.0, buff=0.1)
-        note = jt("four rows = four horses in the race", 16, C_DIM)
-        body = VGroup(row, links, odds, odds_lbl, odds_arr)
-        note.next_to(body, DOWN, buff=0.40)
-        fit(VGroup(body, note))
+        merged = VGroup()
+        for i in range(4):
+            merged.add(VGroup(hvec(vs(60 + i, 4), C_ABILITY, cell=0.20),
+                              hvec(vs(9 + i, 2), C_ODDS, cell=0.20)).arrange(RIGHT, buff=0.22))
+        merged.arrange(DOWN, buff=0.24)
+        odds_brace = Brace(VGroup(*[m[1] for m in merged]), DOWN, buff=0.16, color=C_ODDS)
+        odds_lbl = jt("the odds, one price per horse", T_NOTE, C_ODDS)
+        odds_lbl.next_to(odds_brace, DOWN, buff=0.14)
 
-        # 右に出したままだった差し込み図が、そのまま全体図の 1 段目になる
+        h_mlp = nlayer(3, C_SCORE, 0.0, span=0.46, size=0.20)
+        s_col = VGroup(*[valdot(v, C_SCORE, 0.26) for v in [0.9, 0.35, 0.6, 0.2]])
+        s_col.arrange(DOWN, buff=0.24)
+
+        bars = VGroup()
+        for vals, color, name in [([0.46, 0.14, 0.28, 0.12], C_SCORE, "win"),
+                                  ([0.83, 0.42, 0.66, 0.38], C_V, "place"),
+                                  ([0.09, 0.05, 0.02], C_ODDS, "combos")]:
+            # 券種ごとに自分の最大値で正規化する。連系は絶対値が小さく、共通の
+            # 目盛りだと 3 本とも線に潰れる (実数は幕 7 で出す)
+            top = max(vals)
+            group = VGroup(*[Rectangle(width=0.16, height=0.62 * v / top, stroke_width=0,
+                                       fill_color=color, fill_opacity=0.85) for v in vals])
+            group.arrange(RIGHT, buff=0.07, aligned_edge=DOWN)
+            bars.add(VGroup(group, jt(name, T_MICRO, color).next_to(group, DOWN, buff=0.10)))
+        bars.arrange(DOWN, buff=0.30, aligned_edge=LEFT)
+
+        row = VGroup(attn, merged, h_mlp, s_col, bars).arrange(RIGHT, buff=1.15)
+        # 前後にいるのは同じ 4 頭。1 頭ぶんの束だけ明るくして、その馬の新しい
+        # ベクトルが 4 頭ぜんぶから来ていることを見せる (幕 6 で開く場所)
+        cross = VGroup()
+        for i in range(4):
+            for j in range(4):
+                cross.add(Line(a_rows[j].get_right(), merged[i][0].get_left(),
+                               stroke_color=C_Q, stroke_width=1.6 if i == 0 else 1.0,
+                               stroke_opacity=0.65 if i == 0 else 0.14))
+        odds_brace.next_to(VGroup(*[m[1] for m in merged]), DOWN, buff=0.16)
+        odds_lbl.next_to(odds_brace, DOWN, buff=0.14)
+        w_head = VGroup(edges(VGroup(*[m[1] for m in merged]), h_mlp), edges(h_mlp, s_col))
+        w_out = VGroup(*[arr(s_col[i].get_right(), bars.get_left(), C_DIM, sw=1.4, buff=0.14)
+                         for i in range(4)])
+        names = VGroup(jt("set transformer", T_NOTE, C_Q, caps=True),
+                       jt("scoring head", T_NOTE, C_SCORE, caps=True))
+        body = VGroup(attn, cross, merged, odds_brace, odds_lbl, w_head, h_mlp, s_col,
+                      w_out, bars)
+        names[0].next_to(attn, UP, buff=0.34)
+        names[1].next_to(VGroup(h_mlp, s_col), UP, buff=0.34)
+        note = jt("four rows = four horses in the race", T_NOTE, C_DIM)
+        note.next_to(body, DOWN, buff=0.30)
+        fit(VGroup(body, names, note))
+
+        # --- 差し込み図をほどいて 4 行を渡し、エンコーダは退場する -----------
         panel, head_lbl = self._map_frame
-        rest = [m for m in self._map_parts if m is not panel and m is not head_lbl]
-        self.play(FadeOut(VGroup(*rest)),
-                  ReplacementTransform(panel, enc[0]),
-                  ReplacementTransform(head_lbl, enc[1]), run_time=1.0)
-        self.play(GrowArrow(links[0]), FadeIn(stacks[0]), run_time=0.8)
-        self.wait(0.8)
+        col, h1, h2 = self._map_parts[0], self._map_parts[1], self._map_parts[2]
+        wires, ability = self._map_parts[3:6], self._map_parts[6]
+        enc = VGroup(col, h1, h2, ability, *wires).copy()
+        enc.scale(1.15).next_to(a_rows, LEFT, buff=1.5)
+        enc_lbl = jt("ability encoder", T_NOTE, C_ABILITY, caps=True).next_to(enc, UP, buff=0.34)
+        hand = VGroup(*[arr(enc.get_right(), a_rows[i].get_left(), C_ABILITY, sw=1.6, buff=0.15)
+                        for i in range(4)])
+        self.play(FadeOut(panel), FadeOut(head_lbl),
+                  *[Transform(o, t) for o, t in zip([col, h1, h2, ability, *wires], enc)],
+                  FadeIn(enc_lbl), run_time=1.1)
+        self.play(LaggedStart(*[GrowArrow(a) for a in hand], lag_ratio=0.12),
+                  FadeIn(a_rows), FadeIn(horse_lbls), run_time=1.0)
+        self.wait(1.0)
+        self.play(FadeOut(VGroup(col, h1, h2, ability, *wires, enc_lbl, hand),
+                          shift=LEFT * 0.3), run_time=0.8)
 
-        self.cap("First the horses read each other, and every vector is updated.", C_Q)
-        self.play(GrowArrow(links[1]), FadeIn(tf), run_time=0.7)
-        self.play(GrowArrow(links[2]), FadeIn(stacks[1]), run_time=0.7)
-        self.wait(0.8)
+        self.cap("Inside the race, every horse reads every other.", C_Q)
+        self.play(FadeIn(cross), FadeIn(names[0]),
+                  FadeIn(VGroup(*[m[0] for m in merged])), run_time=1.2)
+        self.wait(1.0)
 
-        self.cap("Then the price arrives, and the pair becomes one score per horse.", C_ODDS)
-        self.play(GrowArrow(links[3]), FadeIn(head),
-                  FadeIn(odds), FadeIn(odds_lbl), GrowArrow(odds_arr), run_time=0.9)
-        self.play(GrowArrow(links[4]), FadeIn(scores), run_time=0.7)
-        self.play(GrowArrow(links[5]), FadeIn(out), FadeIn(note), run_time=0.8)
+        self.cap("Then each horse's own price joins it.", C_ODDS)
+        self.play(FadeIn(VGroup(*[m[1] for m in merged]), shift=LEFT * 0.2),
+                  GrowFromCenter(odds_brace), FadeIn(odds_lbl), run_time=0.9)
+        self.wait(0.9)
+
+        self.cap("Head, score, and every bet type off the same numbers.", C_SCORE)
+        self.play(FadeIn(w_head[0]), FadeIn(h_mlp), FadeIn(names[1]), run_time=0.7)
+        self.play(FadeIn(w_head[1]), FadeIn(s_col), run_time=0.6)
+        self.play(LaggedStart(*[GrowArrow(a) for a in w_out], lag_ratio=0.1),
+                  LaggedStart(*[GrowFromEdge(b[0], DOWN) for b in bars], lag_ratio=0.2),
+                  *[FadeIn(b[1]) for b in bars], FadeIn(note), run_time=1.4)
         self.wait(1.2)
 
         self.cap("One horse in, one score out -- and the market touches it once.", C_DIM)
-        # 段を置いただけでは図のまま。一度だけ左から右へ流して、通り道だと見せる
-        pulse = [ShowPassingFlash(link.copy().set_stroke(WHITE, 5), time_width=0.9)
-                 for link in links]
-        lit = [Indicate(part, color=WHITE, scale_factor=1.06)
-               for part in [enc, stacks[0], tf, stacks[1], head, scores, out]]
-        self.play(LaggedStart(*[a for pair in zip(lit, pulse + [pulse[-1]])
-                                for a in pair], lag_ratio=0.18), run_time=2.6)
-        self.wait(1.0)
+        flashes = [ShowPassingFlash(w.copy().set_stroke(WHITE, 3), time_width=0.9)
+                   for w in [*cross, *w_head[0], *w_head[1], *w_out]]
+        self.play(LaggedStart(*flashes, lag_ratio=0.03), run_time=2.0)
+        self.wait(0.8)
 
-        self.cap("Those two boxes are what the next two acts open.", C_DIM)
-        self.play(Indicate(tf, color=C_Q, scale_factor=1.12),
-                  Indicate(head, color=C_SCORE, scale_factor=1.12), run_time=0.8)
+        self.cap("Those two are what the next two acts open.", C_DIM)
+        self.play(Indicate(VGroup(cross, names[0]), color=C_Q, scale_factor=1.08),
+                  Indicate(VGroup(h_mlp, names[1]), color=C_SCORE, scale_factor=1.08),
+                  run_time=0.9)
         self.wait(0.9)
         # ability の列は次の幕にそのまま渡す (幕をまたいでも同じ物だと分かる)
-        carried = self.carry(stacks[0][0])
+        carried = self.carry(a_rows)
         self.clear_stage(keep=[carried])
         self._carry_ability = carried
     # ============================================================ 6. attention
@@ -674,11 +757,11 @@ class ModelMath(Scene):
         weights = [0.62, 0.12, 0.18, 0.08]
 
         self.set_act(6, "attention", C_Q)
-        self.cap("A horse is only fast relative to the field, so each one reads the others.",
+        self.cap("Fast is relative, so each horse reads the others.",
                  C_ABILITY)
         A = VGroup(*[hvec(vs(30 + i, 6), C_ABILITY, cell=0.20).move_to([-4.6, ys[i], 0])
                      for i in range(n)])
-        names = VGroup(*[jt(f"Horse {i + 1}", 16, C_DIM).next_to(A[i], LEFT, buff=0.35)
+        names = VGroup(*[jt(f"Horse {i + 1}", T_LABEL, C_DIM).next_to(A[i], LEFT, buff=0.35)
                          for i in range(n)])
         fit(VGroup(A, names))
         self.play(ReplacementTransform(self._carry_ability, A),
@@ -690,7 +773,7 @@ class ModelMath(Scene):
         # 12 個の小さなベクトルが同時に現れて何を見ればよいか分からなくなる
         self.cap("One matrix W turns an ability into three vectors.", C_K)
         a1 = A[0].copy()
-        a1_lbl = jt("Horse 1", 16, C_DIM).next_to(a1, LEFT, buff=0.35)
+        a1_lbl = jt("Horse 1", T_LABEL, C_DIM).next_to(a1, LEFT, buff=0.35)
         w_box = opbox("W", C_DIM, 0.62).next_to(a1, RIGHT, buff=0.7)
         a_to_w = arr(a1.get_right(), w_box.get_left(), C_DIM, sw=2.0)
         trio = VGroup()
@@ -699,7 +782,7 @@ class ModelMath(Scene):
                                  ("v_1", C_V, "what it would contribute")]:
             vec = hvec(vs(40 + len(trio), 5), col, cell=0.20)
             lab = mt(nm, col, 0.5).next_to(vec, LEFT, buff=0.18)
-            mean = jt(meaning, 16, col).next_to(vec, RIGHT, buff=0.35)
+            mean = jt(meaning, T_LABEL, col).next_to(vec, RIGHT, buff=0.35)
             trio.add(VGroup(lab, vec, mean))
         trio.arrange(DOWN, buff=0.34, aligned_edge=LEFT).next_to(w_box, RIGHT, buff=0.8)
         w_to_t = VGroup(*[arr(w_box.get_right(), t[0].get_left(), C_DIM, sw=1.6) for t in trio])
@@ -715,7 +798,7 @@ class ModelMath(Scene):
 
         # 「照合 → 数字 → softmax → 重み」を数で見せる。矢印の太さだけで
         # 重みを表すと、何が計算されたのか読み取れない
-        self.cap("Horse 1's query is compared with every horse's key -- one number each.", C_Q)
+        self.cap("Match horse 1's query against every key: one number each.", C_Q)
         q = VGroup(mt("q_1", C_Q, 0.55), hvec(vs(40, 5), C_Q, cell=0.20)).arrange(RIGHT, buff=0.18)
         q.move_to([-5.0, 0.0, 0])
         krows, dots, nums = VGroup(), VGroup(), VGroup()
@@ -724,7 +807,7 @@ class ModelMath(Scene):
             k.arrange(RIGHT, buff=0.16).move_to([-1.9, ys[i], 0])
             krows.add(k)
             dots.add(arr(q.get_right(), k.get_left(), C_DIM, sw=1.8, buff=0.15))
-            nums.add(jt(f"{scores[i]:.2f}", 20, WHITE).next_to(k, RIGHT, buff=0.5))
+            nums.add(jt(f"{scores[i]:.2f}", T_HEAD, WHITE).next_to(k, RIGHT, buff=0.5))
         dot_lbl = mt(r"q_1\cdot k_j", C_DIM, 0.55).next_to(VGroup(*nums), UP, buff=0.45)
         fit(VGroup(q, krows, dots, nums, dot_lbl))
         self.play(FadeIn(q), LaggedStart(*[FadeIn(k) for k in krows], lag_ratio=0.1), run_time=0.9)
@@ -733,9 +816,9 @@ class ModelMath(Scene):
                                 for d, v in zip(dots, nums)], lag_ratio=0.18), run_time=1.6)
         self.wait(1.2)
 
-        self.cap("Softmax turns those numbers into weights that add up to one.", C_SCORE)
-        sm = chip("softmax", C_SCORE, 18).next_to(VGroup(*nums), RIGHT, buff=0.7)
-        wnums = VGroup(*[jt(f"{w:.2f}", 20, C_SCORE).next_to(sm, RIGHT, buff=0.7)
+        self.cap("Softmax turns them into weights that sum to one.", C_SCORE)
+        sm = chip("softmax", C_SCORE, T_LABEL).next_to(VGroup(*nums), RIGHT, buff=0.7)
+        wnums = VGroup(*[jt(f"{w:.2f}", T_HEAD, C_SCORE).next_to(sm, RIGHT, buff=0.7)
                          .set_y(nums[i].get_y()) for i, w in enumerate(weights)])
         extra = VGroup(sm, wnums)
         shown = VGroup(q, krows, dots, nums, dot_lbl)
@@ -752,7 +835,7 @@ class ModelMath(Scene):
         self.wait(1.4)
         self.clear_stage()
 
-        self.cap("Its new vector is every horse's Value, mixed in exactly those proportions.",
+        self.cap("Its new vector is the Values, mixed in those proportions.",
                  C_V)
         # 係数つきの和は 1 本の数式で出す。v をセル列で描くと項が 4 つ並んだ時点で
         # 横に伸びきり、fit() が全体を縮めて読めなくなる
@@ -761,7 +844,7 @@ class ModelMath(Scene):
         out_lbl = mt("a_1'", C_ABILITY, 0.7).next_to(out, LEFT, buff=0.2)
         eq = mt("=", WHITE, 0.8)
         line = VGroup(VGroup(out_lbl, out), eq, rhs).arrange(RIGHT, buff=0.45)
-        note = jt("the horses it pays attention to are the ones that shape its vector",
+        note = jt("the horses it attends to are the ones that shape its vector",
                   18, C_DIM).next_to(line, DOWN, buff=0.55)
         fit(VGroup(line, note))
         self.play(Write(rhs), run_time=1.1)
@@ -770,7 +853,7 @@ class ModelMath(Scene):
         self.wait(1.5)
         self.clear_stage()
 
-        self.cap("Every horse does that at once -- the four rows are the attention matrix.",
+        self.cap("Every horse at once: the attention matrix.",
                  C_SCORE)
         atts = [weights,
                 [0.14, 0.60, 0.16, 0.10],
@@ -787,17 +870,17 @@ class ModelMath(Scene):
                 if i == 0:
                     # 薄いセルの上では暗い字が沈むので、塗りの濃さで字色を変える
                     ink = BG if atts[i][j] > 0.35 else WHITE
-                    cellnums.add(jt(f"{atts[i][j]:.2f}", 15, ink, weight=BOLD).move_to(sq))
+                    cellnums.add(jt(f"{atts[i][j]:.2f}", T_NOTE, ink, weight=BOLD).move_to(sq))
         rlab = VGroup(*[mt(f"i={i + 1}", WHITE, 0.42).next_to(grid[i * n], LEFT, buff=0.14)
                         for i in range(n)])
         clab = VGroup(*[mt(f"j={j + 1}", WHITE, 0.42).next_to(grid[j], UP, buff=0.10)
                         for j in range(n)])
         row1 = SurroundingRectangle(VGroup(*grid[0:n]), color=C_Q, buff=0.04, corner_radius=0.04)
-        row1_l = jt("the weights we just computed", 16, C_Q)
+        row1_l = jt("the weights we just computed", T_LABEL, C_Q)
         att_eq = mt(r"\mathrm{Attention}(Q,K,V)=\mathrm{softmax}"
                     r"\!\left(\tfrac{QK^\top}{\sqrt d}\right)V", WHITE, 0.68)
         mask = VGroup(
-            jt("4 heads, 2 layers; padded slots are masked out", 17, C_DIM),
+            jt("4 heads, 2 layers; padded slots are masked out", T_LABEL, C_DIM),
             jt("an 8-horse race and an 18-horse race run through the same weights",
                17, C_DIM),
         ).arrange(DOWN, buff=0.16)
@@ -826,16 +909,16 @@ class ModelMath(Scene):
             abl = hvec(vs(30 + i, 8), C_ABILITY, cell=0.24)
             plus = mt(r"\oplus", WHITE, 0.62)
             odds = hvec(vs(9 + i, 2), C_ODDS, cell=0.24)
-            head = chip("head MLP", C_SCORE, 16)
+            head = chip("head MLP", C_SCORE, T_LABEL)
             a1 = mt(r"\rightarrow", WHITE, 0.7)
             sc = valdot(svals[i], C_SCORE, 0.52)
             slb = mt(f"s_{i + 1}", WHITE, 0.5).next_to(sc, RIGHT, buff=0.12)
             rows.add(VGroup(abl, plus, odds, head, a1, VGroup(sc, slb)).arrange(RIGHT, buff=0.32))
         rows.arrange(DOWN, buff=0.40)
         hdr = VGroup(
-            jt("ability", 16, C_ABILITY).next_to(rows[0][0], UP, buff=0.30),
-            jt("odds", 16, C_ODDS).next_to(rows[0][2], UP, buff=0.30),
-            jt("score", 16, C_SCORE).next_to(rows[0][5], UP, buff=0.30),
+            jt("ability", T_LABEL, C_ABILITY).next_to(rows[0][0], UP, buff=0.30),
+            jt("odds", T_LABEL, C_ODDS).next_to(rows[0][2], UP, buff=0.30),
+            jt("score", T_LABEL, C_SCORE).next_to(rows[0][5], UP, buff=0.30),
         )
         eq = mt(r"s_i=\mathrm{MLP}\big(\mathrm{LN}(a_i')\ \oplus\ \mathrm{odds}_i\big)", WHITE, 0.66)
         eq.next_to(rows, DOWN, buff=0.45)
@@ -843,13 +926,13 @@ class ModelMath(Scene):
         self.play(LaggedStart(*[FadeIn(r, shift=RIGHT * 0.2) for r in rows], lag_ratio=0.15),
                   FadeIn(hdr), run_time=1.3)
         self.play(Write(eq), run_time=0.9)
-        self.cap("Ability and market value stay separable -- that split is the whole architecture.",
+        self.cap("That split -- ability from price -- is the whole architecture.",
                  C_ABILITY)
         self.wait(1.2)
         carried = self.carry(VGroup(*[rows[i][5] for i in range(n)]))
         self.clear_stage(keep=[carried])
 
-        self.cap("One set of scores, one temperature -- and every bet type follows from it.",
+        self.cap("One set of scores, one temperature, every bet type.",
                  C_SCORE)
         col = VGroup()
         for i, v in enumerate(svals):
@@ -857,7 +940,7 @@ class ModelMath(Scene):
             lb = mt(f"s_{i + 1}", WHITE, 0.5).next_to(sc, RIGHT, buff=0.12)
             col.add(VGroup(sc, lb))
         col.arrange(DOWN, buff=0.26).move_to([-5.6, 0.1, 0])
-        tbox = chip("divide by T", C_Q, 18).move_to([-3.5, 0.1, 0])
+        tbox = chip("divide by T", C_Q, T_LABEL).move_to([-3.5, 0.1, 0])
         tarr = arr(col.get_right(), tbox.get_left(), C_Q, sw=2.4)
         win_lbl = mt(r"\mathrm{softmax}(s_i/T)", C_SCORE, 0.55)
         pl_lbl = mt(r"\mathrm{Plackett\!-\!Luce}(s/T)", C_V, 0.55)
@@ -865,21 +948,21 @@ class ModelMath(Scene):
         win_bars = probbars([0.46, 0.14, 0.28, 0.12], ["H1", "H2", "H3", "H4"], C_SCORE, hmax=1.15)
         pl_bars = probbars([0.83, 0.42, 0.66, 0.38], ["H1", "H2", "H3", "H4"], C_V, hmax=1.15)
         cmb = VGroup(
-            jt("H1-H3   8.1%", 16, C_ODDS),
-            jt("H1-H2   4.4%", 16, C_ODDS),
-            jt("H1-H3-H2   1.2%", 16, C_ODDS),
+            jt("H1-H3   8.1%", T_LABEL, C_ODDS),
+            jt("H1-H2   4.4%", T_LABEL, C_ODDS),
+            jt("H1-H3-H2   1.2%", T_LABEL, C_ODDS),
         ).arrange(DOWN, buff=0.14, aligned_edge=LEFT)
         rows2 = VGroup()
         for lbl, out, name, c in [(win_lbl, win_bars, "win", C_SCORE),
                                   (pl_lbl, pl_bars, "place, top 3", C_V),
                                   (cmb_lbl, cmb, "quinella, trio, trifecta", C_ODDS)]:
-            tag = jt(name, 15, c)
+            tag = jt(name, T_NOTE, c)
             body = VGroup(lbl, out).arrange(RIGHT, buff=0.7)
             tag.next_to(body, UP, buff=0.12).align_to(body, LEFT)
             rows2.add(VGroup(tag, body))
         rows2.arrange(DOWN, buff=0.52, aligned_edge=LEFT).next_to(tbox, RIGHT, buff=1.0)
         fan = VGroup(*[arr(tbox.get_right(), r.get_left(), C_DIM, sw=1.8) for r in rows2])
-        tnote = jt("one T for all of them, fitted by minimising the winner's NLL", 17, C_Q)
+        tnote = jt("one T for all of them, fitted by minimising the winner's NLL", T_LABEL, C_Q)
         stage = VGroup(col, tarr, tbox, fan, rows2)
         tnote.next_to(stage, DOWN, buff=0.34)
         fit(VGroup(stage, tnote))
@@ -900,18 +983,18 @@ class ModelMath(Scene):
         W の中身・止める場所・二段階に降りる。
         """
         self.set_act(8, "training", C_SCORE)
-        self.cap("Training is a loop: score the race, bet it, see what the money did, adjust.",
+        self.cap("Score the race, bet it, see what the money did, adjust.",
                  C_SCORE)
 
-        model = chip("the model", C_ABILITY, 17, caps=True)
-        model_sub = jt("encoder + transformer + head", 13, C_DIM)
+        model = chip("the model", C_ABILITY, T_LABEL, caps=True)
+        model_sub = jt("encoder + transformer + head", T_MICRO, C_DIM)
         scores = VGroup(*[valdot(v, C_SCORE, 0.26) for v in [0.9, 0.35, 0.6, 0.2]])
         scores.arrange(DOWN, buff=0.10)
         scores = VGroup(scores, mt("s_i", C_SCORE, 0.45).next_to(scores, DOWN, buff=0.14))
-        bet = chip("bet the race", C_ODDS, 17, caps=True)
-        bet_sub = jt("at the odds actually paid", 13, C_ODDS)
+        bet = chip("bet the race", C_ODDS, T_LABEL, caps=True)
+        bet_sub = jt("at the odds actually paid", T_MICRO, C_ODDS)
         money = mt("W", WHITE, 1.0)
-        money_sub = jt("what the money did", 13, C_DIM)
+        money_sub = jt("what the money did", T_MICRO, C_DIM)
 
         row = VGroup(model, scores, bet, money).arrange(RIGHT, buff=0.85)
         model_sub.next_to(model, DOWN, buff=0.16)
@@ -921,7 +1004,7 @@ class ModelMath(Scene):
                          for i in range(3)])
         back = CurvedArrow(money.get_bottom() + DOWN * 0.75, model.get_bottom() + DOWN * 0.75,
                            angle=-TAU / 7, color=C_SCORE, stroke_width=3, tip_length=0.2)
-        back_lbl = jt("adjust every weight in the direction that grew it", 16, C_SCORE)
+        back_lbl = jt("adjust every weight in the direction that grew the money", T_LABEL, C_SCORE)
         back_lbl.next_to(back, DOWN, buff=0.14)
         fit(VGroup(row, model_sub, bet_sub, money_sub, links, back, back_lbl))
 
@@ -941,9 +1024,10 @@ class ModelMath(Scene):
                   keep.animate.move_to([0.0, 1.85, 0]).scale(0.9), run_time=0.9)
         eq1 = mt(r"W \;=\; 1 + c\,\big(p_{\text{winner}}\cdot o_{\text{winner}} - 1\big)", WHITE, 0.82)
         eq2 = mt(r"\mathcal{L} \;=\; -\,\mathbb{E}\big[\log W\big]", WHITE, 0.82)
-        n1 = jt("o = the odds actually paid, not a feature", 17, C_ODDS)
-        n2 = jt("c = 0.25 keeps the odds inside the gradient; at c = 1 this collapses "
-                "into plain cross-entropy", 17, C_DIM)
+        n1 = jt("o = the odds actually paid, not a feature", T_LABEL, C_ODDS)
+        n2 = VGroup(jt("c = 0.25 keeps the odds inside the gradient", T_NOTE, C_DIM),
+                    jt("at c = 1 it collapses into plain cross-entropy", T_NOTE, C_DIM))
+        n2.arrange(DOWN, buff=0.14)
         block = VGroup(eq1, n1, eq2, n2).arrange(DOWN, buff=0.30)
         block.next_to(keep, DOWN, buff=0.55)
         fit(VGroup(keep, block), h=CONTENT_H - 0.2)
@@ -952,22 +1036,22 @@ class ModelMath(Scene):
         self.wait(1.6)
         self.clear_stage()
 
-        self.cap("So the model that gets kept is the one that pays, not the one that ranks best.",
+        self.cap("The model that gets kept is the one that pays.",
                  C_SCORE)
         ax_x = Line([-3.4, -1.35, 0], [3.6, -1.35, 0], stroke_color=C_DIM, stroke_width=2)
         ax_y = Line([-3.4, -1.35, 0], [-3.4, 1.45, 0], stroke_color=C_DIM, stroke_width=2)
-        xlab = jt("epochs", 16, C_DIM).next_to(ax_x, DOWN, buff=0.16)
+        xlab = jt("epochs", T_LABEL, C_DIM).next_to(ax_x, DOWN, buff=0.16)
         ndcg = curve([(-3.4, -1.1), (-2.0, -0.25), (-0.5, 0.35), (1.2, 0.7), (3.4, 0.85)], C_MARKET)
         roi = curve([(-3.4, -1.2), (-2.3, -0.1), (-1.3, 0.95), (0.1, 0.4), (1.6, -0.15),
                      (3.4, -0.6)], C_SCORE)
-        ndcg_l = jt("ranking accuracy", 16, C_MARKET).next_to(ndcg.get_end(), RIGHT, buff=0.18)
-        roi_l = jt("validation win ROI", 16, C_SCORE).next_to(roi.get_end(), RIGHT, buff=0.18)
+        ndcg_l = jt("ranking accuracy", T_LABEL, C_MARKET).next_to(ndcg.get_end(), RIGHT, buff=0.18)
+        roi_l = jt("validation win ROI", T_LABEL, C_SCORE).next_to(roi.get_end(), RIGHT, buff=0.18)
         peak = Dot([-1.3, 0.95, 0], color=C_SCORE, radius=0.09)
         drop = DashedLine([-1.3, 0.95, 0], [-1.3, -1.35, 0], stroke_color=C_SCORE,
                           stroke_width=2, dash_length=0.1).set_stroke(opacity=0.6)
-        stop_l = jt("early stop here", 16, C_SCORE).next_to(peak, UP, buff=0.16)
+        stop_l = jt("early stop here", T_LABEL, C_SCORE).next_to(peak, UP, buff=0.16)
         plot = VGroup(ax_x, ax_y, xlab, ndcg, roi, ndcg_l, roi_l, peak, drop, stop_l)
-        note = jt("`--monitor valid_tansho_roi`", 18, C_SCORE).next_to(plot, DOWN, buff=0.34)
+        note = jt("`--monitor valid_tansho_roi`", T_LABEL, C_SCORE).next_to(plot, DOWN, buff=0.34)
         fit(VGroup(plot, note))
         self.play(Create(ax_x), Create(ax_y), FadeIn(xlab), run_time=0.5)
         self.play(Create(ndcg), FadeIn(ndcg_l), run_time=1.0)
@@ -977,19 +1061,19 @@ class ModelMath(Scene):
         self.wait(1.6)
         self.clear_stage()
 
-        self.cap("In practice the loop is run twice, and only the second one is about money.",
+        self.cap("The loop runs twice. Only the second is about money.",
                  C_ABILITY)
-        s1 = chip("stage 1   plackett-luce", C_V, 17, caps=True)
-        s2 = chip("stage 2   multi", C_SCORE, 17, caps=True)
-        s1_sub = VGroup(jt("learn the finishing order", 16, C_DIM),
-                        jt("a proper scoring rule", 16, C_DIM)).arrange(DOWN, buff=0.14)
-        s2_sub = VGroup(jt("learn the money", 16, C_DIM),
-                        jt("`log_growth` + 0.01 `combo_nll`", 16, C_DIM)).arrange(DOWN, buff=0.14)
+        s1 = chip("stage 1   plackett-luce", C_V, T_LABEL, caps=True)
+        s2 = chip("stage 2   multi", C_SCORE, T_LABEL, caps=True)
+        s1_sub = VGroup(jt("learn the finishing order", T_LABEL, C_DIM),
+                        jt("a proper scoring rule", T_LABEL, C_DIM)).arrange(DOWN, buff=0.14)
+        s2_sub = VGroup(jt("learn the money", T_LABEL, C_DIM),
+                        jt("`log_growth` + 0.01 `combo_nll`", T_LABEL, C_DIM)).arrange(DOWN, buff=0.14)
         s1_sub.next_to(s1, DOWN, buff=0.22)
         s2_sub.next_to(s2, DOWN, buff=0.22)
         stages = VGroup(VGroup(s1, s1_sub), VGroup(s2, s2_sub)).arrange(RIGHT, buff=1.6)
         link = arr(stages[0].get_right(), stages[1].get_left(), C_DIM, sw=3.0, buff=0.15)
-        link_lbl = jt("`--init-from`", 15, C_DIM).next_to(link, UP, buff=0.14)
+        link_lbl = jt("`--init-from`", T_NOTE, C_DIM).next_to(link, UP, buff=0.14)
         fit(VGroup(stages, link, link_lbl))
         self.play(FadeIn(stages[0], shift=RIGHT * 0.2), run_time=0.8)
         self.wait(1.0)
