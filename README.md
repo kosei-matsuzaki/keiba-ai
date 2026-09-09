@@ -23,9 +23,9 @@
 
 *レース詳細 — 予想の根拠と実績データを 1 つの表に並べ、券種ごとの条件と点数で推奨買目を出す*
 
-[![モデルの計算過程（能力推定 → self-attention → 確率導出 → 買い目提案）を manim で可視化した解説動画](docs/images/model-explainer-poster.png)](docs/explainer/model-explainer.mp4)
+[![モデルの計算過程を manim で可視化した解説動画（8 幕・2 分 34 秒）。能力ベクトルの作り方 → Set Transformer の self-attention → オッズの合成と全券種の確率 → 学習則](docs/images/model-explainer-poster.png)](docs/explainer/model-explainer.mp4)
 
-*モデルの計算過程（能力推定 → self-attention → 確率導出 → 買い目提案）を manim で可視化した解説動画（サムネイルをクリックで再生・ダウンロード）*
+*モデルの計算過程を manim で可視化した解説動画（8 幕・2 分 34 秒）。能力ベクトルの作り方 → Set Transformer の self-attention → オッズの合成と全券種の確率 → 学習則（サムネイルをクリックで再生・ダウンロード）*
 
 **見どころ**
 
