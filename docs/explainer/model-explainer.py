@@ -720,7 +720,7 @@ class ModelMath(Scene):
         # 見出しは下に置く。上だと左上の幕見出しの 2 行目に見える
         enc_lbl = jt("ability encoder", T_NOTE, C_ABILITY, caps=True)
         enc_block = VGroup(enc, enc_lbl).arrange(DOWN, buff=0.30)
-        fit(VGroup(enc_block, attn).arrange(RIGHT, buff=2.4))
+        fit(VGroup(enc_block, attn).arrange(RIGHT, buff=1.1))
         back = final_h / attn.height
         # 幕 4 から地図がそのまま残っている。枠だけ外して定位置へ送る
         self.play(FadeOut(panel), FadeOut(head_lbl), FadeOut(self._map_box), FadeIn(enc_lbl),
@@ -728,8 +728,10 @@ class ModelMath(Scene):
 
         # エンコーダが出したその列を倒して 1 頭目にする。2 頭目からは、同じ
         # エンコーダをもう一度回した結果として順に出てくる
+        # 列が抜けた先の結線も一緒に畳む。残すと宙に伸びた線だけが並んで、
+        # どれが馬でどれが配線なのか読めなくなる
         self.play(Transform(ability, a_rows[0], path_arc=-PI / 2),
-                  FadeIn(horse_lbls[0]), run_time=1.2)
+                  FadeOut(wires[2]), FadeIn(horse_lbls[0]), run_time=1.2)
         self.play(LaggedStart(*[AnimationGroup(
             Indicate(VGroup(col, h1, h2), color=C_ABILITY, scale_factor=1.06),
             FadeIn(a_rows[i], shift=RIGHT * 0.25), FadeIn(horse_lbls[i]))
