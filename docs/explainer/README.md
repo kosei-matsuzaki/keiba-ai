@@ -7,7 +7,7 @@
 | ファイル | 中身 |
 | --- | --- |
 | [model-explainer.py](model-explainer.py) | manim のシーン定義 (`ModelMath`)。8 幕の中身は同クラスの docstring |
-| `model-explainer.mp4` | 上を 1080p30 で書き出したもの (12 MB・2分31秒)。リポジトリ直下の [README.md](../../README.md) からリンクしている |
+| `model-explainer.mp4` | 上を 1080p30 で書き出したもの (12 MB・2分34秒)。リポジトリ直下の [README.md](../../README.md) からリンクしている |
 
 ポスター画像は `docs/images/model-explainer-poster.png`（能力エンコーダの場面を
 書き出しから 1 枚抜いたもの）。

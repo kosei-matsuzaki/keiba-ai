@@ -626,7 +626,8 @@ class ModelMath(Scene):
         self.play(LaggedStart(*[AnimationGroup(GrowArrow(f), FadeIn(s))
                                 for f, s in zip(fans, stacks)], lag_ratio=0.2), run_time=1.5)
         self.wait(1.2)
-        self.clear_stage()
+        # 地図は残して次の幕へ渡す。ここで消すと幕 5 で出し直しになる
+        self.clear_stage(keep=self._map_parts)
     # ============================================================ 5. the pipeline
     def act5_pipeline(self):
         """Where the ability vectors go -- shown before the acts that open the stages.
@@ -702,19 +703,41 @@ class ModelMath(Scene):
         panel, head_lbl = self._map_frame
         col, h1, h2 = self._map_parts[0], self._map_parts[1], self._map_parts[2]
         wires, ability = self._map_parts[3:6], self._map_parts[6]
-        enc = VGroup(col, h1, h2, ability, *wires).copy()
-        enc.scale(1.15).next_to(a_rows, LEFT, buff=1.5)
-        enc_lbl = jt("ability encoder", T_NOTE, C_ABILITY, caps=True).next_to(enc, UP, buff=0.34)
-        hand = VGroup(*[arr(enc.get_right(), a_rows[i].get_left(), C_ABILITY, sw=1.6, buff=0.15)
-                        for i in range(4)])
-        self.play(FadeOut(panel), FadeOut(head_lbl),
-                  *[Transform(o, t) for o, t in zip([col, h1, h2, ability, *wires], enc)],
-                  FadeIn(enc_lbl), run_time=1.1)
-        self.play(LaggedStart(*[GrowArrow(a) for a in hand], lag_ratio=0.12),
-                  FadeIn(a_rows), FadeIn(horse_lbls), run_time=1.0)
-        self.wait(1.0)
-        self.play(FadeOut(VGroup(col, h1, h2, ability, *wires, enc_lbl, hand),
-                          shift=LEFT * 0.3), run_time=0.8)
+        parts = [col, h1, h2, ability, *wires]
+        # エンコーダが居るあいだは横をぜんぶ使う (どうせ渡し終えたら退場する)。
+        # 4 行の最終位置は控えておいて、退場と同時にそこへ戻す
+        final_center, final_h = attn.get_center().copy(), attn.height
+        # 地図は減光したままなので、複製ではなく組み直したものへ移す (幕 1 の明るさに戻る)
+        t_col = VGroup(vvec(vs(2, 4), C_AGG, cell=0.30), vvec(vs(16, 4), C_HIST, cell=0.30),
+                       vvec(vs(5, 3), C_RACE, cell=0.30)).arrange(DOWN, buff=0.07)
+        t_h1, t_h2 = nlayer(5, WHITE, 0.0, span=1.20), nlayer(5, WHITE, 0.0, span=1.20)
+        t_ab = vvec(vs(30, 4), C_ABILITY, cell=0.32)
+        VGroup(t_col, t_h1, t_h2, t_ab).arrange(RIGHT, buff=0.75)
+        t_cells = VGroup(*[c for block in t_col for c in block])
+        enc = VGroup(t_col, t_h1, t_h2, t_ab,
+                     edges(t_cells, t_h1, faint=True), edges(t_h1, t_h2, faint=True),
+                     edges(t_h2, t_ab, faint=True))
+        # 見出しは下に置く。上だと左上の幕見出しの 2 行目に見える
+        enc_lbl = jt("ability encoder", T_NOTE, C_ABILITY, caps=True)
+        enc_block = VGroup(enc, enc_lbl).arrange(DOWN, buff=0.30)
+        fit(VGroup(enc_block, attn).arrange(RIGHT, buff=2.4))
+        back = final_h / attn.height
+        # 幕 4 から地図がそのまま残っている。枠だけ外して定位置へ送る
+        self.play(FadeOut(panel), FadeOut(head_lbl), FadeOut(self._map_box), FadeIn(enc_lbl),
+                  *[Transform(o, t) for o, t in zip(parts, enc)], run_time=1.1)
+
+        # エンコーダが出したその列を倒して 1 頭目にする。2 頭目からは、同じ
+        # エンコーダをもう一度回した結果として順に出てくる
+        self.play(Transform(ability, a_rows[0], path_arc=-PI / 2),
+                  FadeIn(horse_lbls[0]), run_time=1.2)
+        self.play(LaggedStart(*[AnimationGroup(
+            Indicate(VGroup(col, h1, h2), color=C_ABILITY, scale_factor=1.06),
+            FadeIn(a_rows[i], shift=RIGHT * 0.25), FadeIn(horse_lbls[i]))
+            for i in range(1, 4)], lag_ratio=0.5), run_time=2.1)
+        self.wait(0.8)
+        self.play(FadeOut(VGroup(col, h1, h2, *wires, enc_lbl), shift=LEFT * 0.3),
+                  VGroup(attn, ability).animate.scale(back).move_to(final_center),
+                  run_time=1.0)
 
         self.cap("Inside the race, every horse reads every other.", C_Q)
         self.play(FadeIn(cross), FadeIn(names[0]),
